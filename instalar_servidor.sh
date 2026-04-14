@@ -41,6 +41,7 @@ apt-get install -y nodejs
 
 echo "📂 Configurando el entorno de la aplicación..."
 APP_DIR="/opt/srt-server"
+rm -rf $APP_DIR
 mkdir -p $APP_DIR
 
 # Descargamos la aplicación a su carpeta definitiva en linux (/opt/) desde GitHub
@@ -71,6 +72,7 @@ Restart=always
 User=root
 Environment=PATH=/usr/bin:/usr/local/bin
 Environment=NODE_ENV=production
+EnvironmentFile=/opt/srt-server/.env
 
 [Install]
 WantedBy=multi-user.target
