@@ -17,6 +17,7 @@ function switchTab(tabId) {
         document.getElementById('analyticsContainer').style.display = 'none';
         document.getElementById('systemContainer').style.display = 'none';
         document.getElementById('settingsContainer').style.display = 'none';
+        document.getElementById('storageContainer').style.display = 'none';
         document.getElementById('topbar-title').innerText = 'Streams Manager';
         document.getElementById('topbar-subtitle').innerText = 'Live endpoints control panel';
         document.getElementById('btn-add-input').style.display = 'inline-block';
@@ -25,6 +26,7 @@ function switchTab(tabId) {
         document.getElementById('analyticsContainer').style.display = 'block';
         document.getElementById('systemContainer').style.display = 'none';
         document.getElementById('settingsContainer').style.display = 'none';
+        document.getElementById('storageContainer').style.display = 'none';
         document.getElementById('topbar-title').innerText = 'Analytics & Telemetry';
         document.getElementById('topbar-subtitle').innerText = 'Deep network inspection tools';
         document.getElementById('btn-add-input').style.display = 'none';
@@ -35,6 +37,7 @@ function switchTab(tabId) {
         document.getElementById('analyticsContainer').style.display = 'none';
         document.getElementById('systemContainer').style.display = 'block';
         document.getElementById('settingsContainer').style.display = 'none';
+        document.getElementById('storageContainer').style.display = 'none';
         document.getElementById('topbar-title').innerText = 'System Dashboard';
         document.getElementById('topbar-subtitle').innerText = 'Host hardware & overview';
         document.getElementById('btn-add-input').style.display = 'none';
@@ -43,11 +46,23 @@ function switchTab(tabId) {
         document.getElementById('analyticsContainer').style.display = 'none';
         document.getElementById('systemContainer').style.display = 'none';
         document.getElementById('settingsContainer').style.display = 'block';
+        document.getElementById('storageContainer').style.display = 'none';
         document.getElementById('topbar-title').innerText = 'Settings / Setup';
         document.getElementById('topbar-subtitle').innerText = 'Access control & Configuration';
         document.getElementById('btn-add-input').style.display = 'none';
         
         fetchSettingsData();
+    } else if (tabId === 'storage') {
+        document.getElementById('streamsContainer').style.display = 'none';
+        document.getElementById('analyticsContainer').style.display = 'none';
+        document.getElementById('systemContainer').style.display = 'none';
+        document.getElementById('settingsContainer').style.display = 'none';
+        document.getElementById('storageContainer').style.display = 'block';
+        document.getElementById('topbar-title').innerText = 'Media Storage';
+        document.getElementById('topbar-subtitle').innerText = 'Local recordings & file manager';
+        document.getElementById('btn-add-input').style.display = 'none';
+        
+        fetchStorage();
     }
 }
 
@@ -425,9 +440,13 @@ function updateOutputFields() {
     const modeContainer = document.getElementById('out_mode_container');
     const ipContainer = document.getElementById('out_ip_container');
     const portContainer = document.getElementById('out_port_container');
+    const diskContainer = document.getElementById('out_disk_container');
     const ipLabel = document.getElementById('out_ip_label');
     const portLabel = document.getElementById('out_port_label');
     
+    // Default hiding
+    diskContainer.style.display = 'none';
+
     if (proto === 'srt') {
         modeContainer.style.display = 'block';
         portContainer.style.display = 'block';
@@ -452,6 +471,21 @@ function updateOutputFields() {
         portLabel.innerText = 'Generar Stream Key Propio';
         document.getElementById('out_port').placeholder = 'ej: streaming_final';
         document.getElementById('out_port').type = 'text';
+    } else if (proto === 'disk') {
+        modeContainer.style.display = 'none';
+        portContainer.style.display = 'none';
+        ipContainer.style.display = 'none';
+        diskContainer.style.display = 'block';
+        
+        // Cargar discos para el dropdown
+        fetch('/api/disks').then(r=>r.json()).then(disks => {
+            const select = document.getElementById('out_disk');
+            select.innerHTML = disks.map(d => `<option value="${d.path}">${d.name}</option>`).join('');
+        });
+        
+        if (!document.getElementById('out_location').value) {
+            document.getElementById('out_location').value = 'rec_' + new Date().getTime() + '.mp4';
+        }
     } else {
         modeContainer.style.display = 'none';
         portContainer.style.display = 'block';
@@ -552,6 +586,126 @@ async function submitLatency(e) {
     }
 }
 
+// ===================================
+// FILE MANAGEMENT LOGIC
+// ===================================
+async function fetchStorage() {
+    try {
+        const res = await fetch('/api/disks');
+        const disks = await res.json();
+        
+        // Populate Grid
+        const grid = document.getElementById('storageDisksGrid');
+        grid.innerHTML = '';
+        const select = document.getElementById('storageDiskSelect');
+        const currentSelection = select.value;
+        select.innerHTML = '';
+        
+        if (disks.length === 0) {
+            grid.innerHTML = '<div style="grid-column: span 3; text-align:center; padding: 20px; color:var(--text-muted);">No hay discos externos conectados.</div>';
+            return;
+        }
+
+        disks.forEach(d => {
+            // UI Grid
+            grid.innerHTML += `
+                <div class="analytics-card" style="box-shadow: 0 4px 10px rgba(0,0,0,0.5);">
+                    <div class="acard-title"><i class="fa-solid fa-hard-drive"></i> ${d.name}</div>
+                    <div class="acard-badge" style="background:var(--accent-blue);">Activo</div>
+                    <div style="font-size: 0.8rem; margin-top: 10px; color: var(--text-muted); text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${d.path}</div>
+                </div>
+            `;
+            // Select Population
+            const opt = document.createElement('option');
+            opt.value = d.id;
+            opt.innerText = d.name;
+            select.appendChild(opt);
+        });
+
+        // Maintain selection or def to first
+        if (currentSelection && disks.find(d => d.id === currentSelection)) {
+            select.value = currentSelection;
+        } else {
+            select.selectedIndex = 0;
+        }
+        
+        fetchFiles();
+        
+    } catch(e) { console.error('fetchStorage failed', e); }
+}
+
+async function fetchFiles() {
+    const parentDisk = document.getElementById('storageDiskSelect').value;
+    if (!parentDisk) return;
+    try {
+        const res = await fetch(`/api/files?disk=${encodeURIComponent(parentDisk)}`);
+        const files = await res.json();
+        
+        const tbody = document.getElementById('storageFilesList');
+        tbody.innerHTML = '';
+        
+        if (files.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding: 20px; color:var(--text-muted);">No hay grabaciones en este disco.</td></tr>';
+            return;
+        }
+
+        files.forEach(f => {
+            const sizeMB = (f.size / (1024*1024)).toFixed(1);
+            const dStr = new Date(f.date).toLocaleString('es-ES', { dateStyle:'short', timeStyle:'short' });
+            const sName = f.name;
+            
+            tbody.innerHTML += `
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05); transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='transparent'">
+                    <td style="padding: 12px 10px; color: var(--text-main); font-weight: 500;"><i class="fa-regular fa-file-video" style="color:var(--accent-blue); margin-right:8px;"></i>${sName}</td>
+                    <td style="padding: 12px 10px;">${sizeMB} MB</td>
+                    <td style="padding: 12px 10px;">${dStr}</td>
+                    <td style="padding: 12px 10px; text-align:right;">
+                        <button onclick="previewFile('${f.url}', '${f.name}')" class="action-btn toggle-enabled" title="Previsualizar" style="background:var(--accent-blue);"><i class="fa-solid fa-play"></i></button>
+                        <a href="${f.url}" download="${f.name}" class="action-btn toggle-enabled" title="Descargar" style="text-decoration:none; display:inline-flex; align-items:center; justify-content:center; margin-left: 5px;"><i class="fa-solid fa-download"></i></a>
+                        <button onclick="deleteFile('${f.url}')" class="action-btn terminate" title="Eliminar" style="margin-left: 5px;"><i class="fa-solid fa-trash"></i></button>
+                    </td>
+                </tr>
+            `;
+        });
+    } catch(e) { console.error('fetchFiles failed', e); }
+}
+
+async function deleteFile(urlPath) {
+    if (confirm("¿Estás seguro de eliminar esta grabación de forma permanente?")) {
+        try {
+            await fetch('/api/files/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ filepath: urlPath })
+            });
+            fetchFiles();
+        } catch(e) { alert("Error deleting."); }
+    }
+}
+
+function previewFile(url, fname) {
+    document.getElementById('previewTitle').innerText = fname;
+    const video = document.getElementById('previewVideo');
+    video.src = url;
+    openModal('previewModal');
+    video.play();
+}
+
+// Ensure video stops when modal is closed
+const oldCloseModal = closeModal;
+closeModal = function(id) {
+    if (id === 'previewModal') {
+        const video = document.getElementById('previewVideo');
+        video.pause();
+        video.src = "";
+    }
+    oldCloseModal(id);
+};
+
+// Initial calls
+fetchData();
+initChart();
+
 function openEditOutput(id) {
     const out = outputs.find(o => o.id === id);
     if (!out) return;
@@ -574,6 +728,22 @@ function openEditOutput(id) {
     } else if (out.url.startsWith('rtmp://127.0.0.1:1935/out/')) {
         document.getElementById('out_protocol').value = 'rtmp_local';
         document.getElementById('out_port').value = out.url.replace('rtmp://127.0.0.1:1935/out/', '');
+    } else if (out.url.startsWith('disk://')) {
+        document.getElementById('out_protocol').value = 'disk';
+        const fullDiskUrl = out.url.replace('disk://', '');
+        const lastSlash = fullDiskUrl.lastIndexOf('/') > fullDiskUrl.lastIndexOf('\\') ? fullDiskUrl.lastIndexOf('/') : fullDiskUrl.lastIndexOf('\\');
+        document.getElementById('out_location').value = fullDiskUrl.substring(lastSlash + 1);
+        
+        // Wait briefly for updateOutputFields to populate the disk select, then select the right one
+        setTimeout(() => {
+            const select = document.getElementById('out_disk');
+            const pathMatch = fullDiskUrl.substring(0, lastSlash);
+            if (select) {
+                Array.from(select.options).forEach(opt => {
+                    if (pathMatch.includes(opt.value)) select.value = opt.value;
+                });
+            }
+        }, 150);
     } else if (out.url.startsWith('rtmp')) {
         document.getElementById('out_protocol').value = 'rtmp';
         const lastSlash = out.url.lastIndexOf('/');
@@ -648,7 +818,14 @@ async function submitOutput(e) {
     const port = document.getElementById('out_port').value;
     let outUrl = '';
 
-    if (proto === 'rtmp') {
+    if (proto === 'disk') {
+        const disk = document.getElementById('out_disk').value;
+        const location = document.getElementById('out_location').value || 'rec_' + Date.now() + '.mp4';
+        let filename = location;
+        if (!filename.match(/\.(mp4|mkv|ts)$/i)) filename += '.mp4';
+        const slash = disk.endsWith('/') || disk.endsWith('\\') ? '' : '/';
+        outUrl = `disk://${disk}${slash}${filename}`;
+    } else if (proto === 'rtmp') {
         const ip = document.getElementById('out_ip').value;
         const key = document.getElementById('out_port').value;
         outUrl = ip.endsWith('/') ? `${ip}${key}` : `${ip}/${key}`;
@@ -663,6 +840,31 @@ async function submitOutput(e) {
         const ip = document.getElementById('out_ip').value || '127.0.0.1';
         outUrl = `udp://${ip}:${port}`;
     }
+
+    const data = {
+        channel: parseInt(document.getElementById('out_channel').value),
+        url: outUrl,
+        location: document.getElementById('out_location').value
+    };
+
+    const isEdit = document.getElementById('out_is_edit').value === 'true';
+    if(isEdit) {
+        const oId = document.getElementById('out_edit_id').value;
+        await fetch(`/api/outputs/${oId}`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
+        });
+    } else {
+        await fetch('/api/outputs', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
+        });
+    }
+    
+    closeModal('outputModal');
+    e.target.reset();
+    document.getElementById('out_is_edit').value = 'false';
+    document.querySelector('#outputModal .modal-header h3').innerText = 'Add Output';
+    updateOutputFields();
+}
 async function fetchSettingsData() {
     try {
         const [resUsers, resPorts] = await Promise.all([
@@ -748,29 +950,6 @@ async function deleteUser(username) {
         await fetch(`/api/users/${username}`, { method: 'DELETE' });
         fetchSettingsData();
     } catch(e) { console.error(e); }
-}
-    const data = {
-        channel: parseInt(document.getElementById('out_channel').value),
-        location: document.getElementById('out_location').value,
-        url: outUrl
-    };
-    
-    const isEdit = document.getElementById('out_is_edit').value === 'true';
-    if(isEdit) {
-        const oId = document.getElementById('out_edit_id').value;
-        await fetch(`/api/outputs/${oId}`, {
-            method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
-        });
-    } else {
-        await fetch('/api/outputs', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
-        });
-    }
-
-    closeModal('outputModal');
-    e.target.reset();
-    document.getElementById('out_is_edit').value = 'false';
-    updateOutputFields();
 }
 
 async function toggleInput(channel) {
