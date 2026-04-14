@@ -240,16 +240,29 @@ function startOutput(outputObj) {
     const localUdpIn = `udp://127.0.0.1:${localPort}?fifo_size=50000000&overrun_nonfatal=1`;
 
     const isRtmp = url.startsWith('rtmp');
-    const format = isRtmp ? 'flv' : 'mpegts';
+    const isDisk = url.startsWith('disk://');
+    let format = 'mpegts';
+    let destUrl = url;
+    
+    if (isRtmp) format = 'flv';
+    if (isDisk) {
+        format = 'mp4';
+        destUrl = url.replace('disk://', '');
+    }
 
     const args = [
         '-hide_banner',
         '-y',
         '-i', localUdpIn,
-        '-c', 'copy',
-        '-f', format,
-        url
+        '-c', 'copy'
     ];
+    
+    if (isDisk) {
+        args.push('-movflags', '+faststart'); // Optimize MP4 for web playback
+    }
+    
+    args.push('-f', format);
+    args.push(destUrl);
 
     console.log(`[STARTING OUTPUT ${id}] ${ffmpegCmd} ${args.join(' ')}`);
 

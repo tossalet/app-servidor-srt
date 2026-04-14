@@ -3,6 +3,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
 const cors = require('cors');
+const fs = require('fs');
 const db = require('./db');
 const streamManager = require('./streamManager');
 const sysMonitor = require('./sysMonitor');
@@ -15,10 +16,17 @@ streamManager.setIo(io);
 sysMonitor.setIo(io);
 rtmpServer.startRtmpServer();
 
+// Media Root for USB Recording and Playback
+const mediaRoot = process.platform === 'win32' ? path.join(__dirname, 'media') : '/media';
+if (!fs.existsSync(mediaRoot)) {
+    try { fs.mkdirSync(mediaRoot, { recursive: true }); } catch (e) {}
+}
+
 // Middleware
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+app.use('/media', express.static(mediaRoot));
 
 // Simple API status endpoint
 app.get('/api/status', (req, res) => {
@@ -248,6 +256,81 @@ app.delete('/api/users/:username', (req, res) => {
         if (err) return res.status(500).json({ error: err.message });
         res.json({ deleted: this.changes });
     });
+});
+
+/* =======================================
+ *  REST API: FILES / STORAGE
+ * ======================================= */
+app.get('/api/disks', (req, res) => {
+    // Escanea /media para encontrar carpetas USB
+    try {
+        if (!fs.existsSync(mediaRoot)) return res.json([]);
+        const drives = fs.readdirSync(mediaRoot, { withFileTypes: true })
+            .filter(dirent => dirent.isDirectory())
+            .map(dirent => ({
+                id: dirent.name,
+                name: dirent.name,
+                path: path.join(mediaRoot, dirent.name)
+            }));
+        // Si no hay discos y estamos en dev/win32, devolvemos el root local para testing
+        if (drives.length === 0 && process.platform === 'win32') {
+            drives.push({ id: 'local_test', name: 'Disco Prueba', path: mediaRoot });
+        }
+        res.json(drives);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.get('/api/files', (req, res) => {
+    const parentDisk = req.query.disk || '';
+    const scanPath = path.join(mediaRoot, parentDisk);
+    
+    // Seguridad: Prevenir escalado de directorios
+    if (!scanPath.startsWith(mediaRoot)) return res.status(403).json({ error: 'Ruta no permitida' });
+    
+    try {
+        if (!fs.existsSync(scanPath)) return res.json([]);
+        const files = [];
+        
+        // Scan recursivo simple o de 1 nivel
+        const items = fs.readdirSync(scanPath, { withFileTypes: true });
+        for (const item of items) {
+            if (item.isFile() && item.name.match(/\.(mp4|mkv|ts|flv)$/i)) {
+                const stat = fs.statSync(path.join(scanPath, item.name));
+                files.push({
+                    name: item.name,
+                    size: stat.size,
+                    date: stat.mtime,
+                    // URL relativa para acceso HTTP (ej: /media/usb0/archivo.mp4)
+                    url: `/media/${parentDisk ? parentDisk + '/' : ''}${item.name}`, 
+                    absolutePath: path.join(scanPath, item.name)
+                });
+            }
+        }
+        res.json(files.sort((a,b) => b.date - a.date)); // Fechas más recientes primero
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/files/delete', (req, res) => {
+    const { filepath } = req.body;
+    if (!filepath || !filepath.startsWith('/media')) return res.status(400).json({ error: 'Ruta invalida' });
+    
+    // Map web url to absolute path
+    const absolutePath = process.platform === 'win32' ? 
+        path.join(mediaRoot, filepath.replace('/media/', '')) : 
+        filepath;
+
+    if (!absolutePath.startsWith(mediaRoot)) return res.status(403).json({ error: 'Sandbox escape detected' });
+
+    try {
+        fs.unlinkSync(absolutePath);
+        res.json({ success: true });
+    } catch(e) {
+        res.status(500).json({ error: e.message });
+    }
 });
 
 app.get('/api/ports', (req, res) => {
