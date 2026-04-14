@@ -40,7 +40,7 @@ function startInput(inputObj) {
     }
 
     const ffmpegCmd = getFFmpegPath();
-    const localUdpOut = `udp://127.0.0.1:${udpsrv}?pkt_size=1316`;
+    const localUdpOut = `udp://127.0.0.1:${udpsrv}?pkt_size=1316&buffer_size=8388608`;
 
     // Base args: Read from URL
     const args = [
@@ -55,7 +55,9 @@ function startInput(inputObj) {
     args.push('-map', '0:a?');
     args.push('-c:v', 'copy');
     args.push('-c:a', 'copy');
-    args.push('-bsf:v', 'h264_mp4toannexb'); // Force bitstream conversion for RTMP->MPEGTS
+    if (url.startsWith('rtmp')) {
+        args.push('-bsf:v', 'h264_mp4toannexb'); // Force bitstream conversion only for RTMP to avoid corrupting native SRT
+    }
     args.push('-f', 'mpegts');
     args.push('-muxdelay', '0.1'); // Fix TS mux errors with missing audio/video sync
     args.push(localUdpOut);
@@ -133,6 +135,8 @@ function startInput(inputObj) {
     
     // Bind to the udpsrv generated port to receive FFmpeg feed
     router.bind(udpsrv, '127.0.0.1', () => {
+        try { router.setRecvBufferSize(8388608); } catch(e){} // 8MB buffer to prevent Node UDP packet drop
+        try { router.setSendBufferSize(8388608); } catch(e){}
         console.log(`[ROUTER] Channel ${channel} bound on UDP ${udpsrv}`);
     });
     
@@ -237,7 +241,7 @@ function startOutput(outputObj) {
     activeInputs[channel].router.subscribers.add(localPort);
 
     const ffmpegCmd = getFFmpegPath();
-    const localUdpIn = `udp://127.0.0.1:${localPort}?fifo_size=50000000&overrun_nonfatal=1`;
+    const localUdpIn = `udp://127.0.0.1:${localPort}?fifo_size=50000000&overrun_nonfatal=1&buffer_size=8388608`;
 
     const isRtmp = url.startsWith('rtmp');
     const isDisk = url.startsWith('disk://');
