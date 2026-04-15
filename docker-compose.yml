@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  tsst-server:
+    build: .
+    image: tsst-server:latest
+    container_name: tsst_server
+    restart: always
+    network_mode: "host" # Crucial for SRT/UDP port allocations without heavy iptables
+    volumes:
+      - tsst_data:/usr/src/app/data
+      - /media:/media # Permite al contenedor acceder a todos los USBs montados en el host
+    environment:
+      - NODE_ENV=production
+
+volumes:
+  tsst_data:
