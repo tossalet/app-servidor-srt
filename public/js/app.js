@@ -617,13 +617,13 @@ async function fetchStorage() {
             `;
             // Select Population
             const opt = document.createElement('option');
-            opt.value = d.id;
+            opt.value = d.path; // Enviamos absolPath limpio a /api/files
             opt.innerText = d.name;
             select.appendChild(opt);
         });
 
         // Maintain selection or def to first
-        if (currentSelection && disks.find(d => d.id === currentSelection)) {
+        if (currentSelection && disks.find(d => d.path === currentSelection)) {
             select.value = currentSelection;
         } else {
             select.selectedIndex = 0;
@@ -702,9 +702,6 @@ closeModal = function(id) {
     oldCloseModal(id);
 };
 
-// Initial calls
-fetchData();
-initChart();
 
 function openEditOutput(id) {
     const out = outputs.find(o => o.id === id);
