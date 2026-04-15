@@ -265,13 +265,28 @@ app.get('/api/disks', (req, res) => {
     // Escanea /media para encontrar carpetas USB
     try {
         if (!fs.existsSync(mediaRoot)) return res.json([]);
-        const drives = fs.readdirSync(mediaRoot, { withFileTypes: true })
-            .filter(dirent => dirent.isDirectory())
-            .map(dirent => ({
-                id: dirent.name,
-                name: dirent.name,
-                path: path.join(mediaRoot, dirent.name)
-            }));
+        let drives = [];
+        const items = fs.readdirSync(mediaRoot, { withFileTypes: true });
+        items.forEach(dirent => {
+            if (dirent.isDirectory()) {
+                const subPath = path.join(mediaRoot, dirent.name);
+                // Si estamos en Raspberry nativa, los discos se montan en /media/<usuario>/<USB_NAME>
+                try {
+                    const subItems = fs.readdirSync(subPath, { withFileTypes: true });
+                    let hasSubs = false;
+                    subItems.forEach(sub => {
+                        if (sub.isDirectory() && sub.name !== 'System Volume Information') {
+                            drives.push({ id: dirent.name + '_' + sub.name, name: sub.name, path: path.join(subPath, sub.name) });
+                            hasSubs = true;
+                        }
+                    });
+                    if (!hasSubs) drives.push({ id: dirent.name, name: dirent.name, path: subPath });
+                } catch(e) { 
+                    drives.push({ id: dirent.name, name: dirent.name, path: subPath });
+                }
+            }
+        });
+
         // Si no hay discos y estamos en dev/win32, devolvemos el root local para testing
         if (drives.length === 0 && process.platform === 'win32') {
             drives.push({ id: 'local_test', name: 'Disco Prueba', path: mediaRoot });

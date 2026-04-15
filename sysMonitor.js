@@ -16,7 +16,7 @@ function startMonitoring() {
             const [cpu, mem, net] = await Promise.all([
                 si.currentLoad(),
                 si.mem(),
-                si.networkStats('*') // Asterisco fuerza la lectura de TODAS las IPs y Tarjetas (Soluciona Windows bug)
+                si.networkStats('default') // 'default' previene escaneo recursivo brutal de redes virtuales Docker en Linux
             ]);
 
             // Filter network interfaces byte traffic
