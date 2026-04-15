@@ -8,6 +8,7 @@ const db = require('./db');
 const streamManager = require('./streamManager');
 const sysMonitor = require('./sysMonitor');
 const rtmpServer = require('./rtmpServer');
+const si = require('systeminformation');
 
 const app = express();
 const server = http.createServer(app);
@@ -261,36 +262,33 @@ app.delete('/api/users/:username', (req, res) => {
 /* =======================================
  *  REST API: FILES / STORAGE
  * ======================================= */
-app.get('/api/disks', (req, res) => {
-    // Escanea /media para encontrar carpetas USB
+app.get('/api/disks', async (req, res) => {
     try {
-        if (!fs.existsSync(mediaRoot)) return res.json([]);
         let drives = [];
-        const items = fs.readdirSync(mediaRoot, { withFileTypes: true });
-        items.forEach(dirent => {
-            if (dirent.isDirectory()) {
-                const subPath = path.join(mediaRoot, dirent.name);
-                // Si estamos en Raspberry nativa, los discos se montan en /media/<usuario>/<USB_NAME>
-                try {
-                    const subItems = fs.readdirSync(subPath, { withFileTypes: true });
-                    let hasSubs = false;
-                    subItems.forEach(sub => {
-                        if (sub.isDirectory() && sub.name !== 'System Volume Information') {
-                            drives.push({ id: dirent.name + '_' + sub.name, name: sub.name, path: path.join(subPath, sub.name) });
-                            hasSubs = true;
-                        }
-                    });
-                    if (!hasSubs) drives.push({ id: dirent.name, name: dirent.name, path: subPath });
-                } catch(e) { 
-                    drives.push({ id: dirent.name, name: dirent.name, path: subPath });
-                }
+        
+        // Escáner dinámico multi-plataforma real (Evita trampas de carpetas vacías /media/usb0 sin montar)
+        const fsSizes = await si.fsSize();
+        
+        fsSizes.forEach(f => {
+            // En Linux, ignorar particiones internas base y quedarnos con externos (media/mnt). En Windows, coger discos secundarios
+            if (f.mount && (f.mount.startsWith('/media') || f.mount.startsWith('/mnt') || (process.platform === 'win32' && f.mount !== 'C:\\' && f.mount !== 'C:'))) {
+                drives.push({
+                    id: f.mount.replace(/[:\\\/]/g, '_'), // ID seguro
+                    name: `[${f.fs}] ${f.mount}`, // ej: [sda1] /media/pi/USB
+                    path: f.mount
+                });
             }
         });
 
-        // Si no hay discos y estamos en dev/win32, devolvemos el root local para testing
-        if (drives.length === 0 && process.platform === 'win32') {
-            drives.push({ id: 'local_test', name: 'Disco Prueba', path: mediaRoot });
+        // Fallback robusto/Manual: Si no hay discos detectados por hardware, metemos nuestro default
+        if (drives.length === 0) {
+            if (process.platform === 'win32') {
+                drives.push({ id: 'local_test', name: 'Disco Prueba', path: mediaRoot });
+            } else if (fs.existsSync(mediaRoot)) { // Unix fallback
+                drives.push({ id: 'local_unix', name: 'Ruta Host Local', path: mediaRoot });
+            }
         }
+        
         res.json(drives);
     } catch (e) {
         res.status(500).json({ error: e.message });
@@ -298,11 +296,9 @@ app.get('/api/disks', (req, res) => {
 });
 
 app.get('/api/files', (req, res) => {
-    const parentDisk = req.query.disk || '';
-    const scanPath = path.join(mediaRoot, parentDisk);
-    
-    // Seguridad: Prevenir escalado de directorios
-    if (!scanPath.startsWith(mediaRoot)) return res.status(403).json({ error: 'Ruta no permitida' });
+    // ParentDisk es ahora una ruta ABSOLUTA enviada desde el frontend
+    const scanPath = req.query.disk;
+    if (!scanPath) return res.json([]);
     
     try {
         if (!fs.existsSync(scanPath)) return res.json([]);
@@ -312,14 +308,15 @@ app.get('/api/files', (req, res) => {
         const items = fs.readdirSync(scanPath, { withFileTypes: true });
         for (const item of items) {
             if (item.isFile() && item.name.match(/\.(mp4|mkv|ts|flv)$/i)) {
-                const stat = fs.statSync(path.join(scanPath, item.name));
+                const absolutePath = path.join(scanPath, item.name);
+                const stat = fs.statSync(absolutePath);
                 files.push({
                     name: item.name,
                     size: stat.size,
                     date: stat.mtime,
-                    // URL relativa para acceso HTTP (ej: /media/usb0/archivo.mp4)
-                    url: `/media/${parentDisk ? parentDisk + '/' : ''}${item.name}`, 
-                    absolutePath: path.join(scanPath, item.name)
+                    // Devolvemos el absolutePath bruto, y usaremos una url especial para cargar videos absolutos
+                    url: `/api/media/play?path=${encodeURIComponent(absolutePath)}`, 
+                    absolutePath: absolutePath
                 });
             }
         }
@@ -329,16 +326,23 @@ app.get('/api/files', (req, res) => {
     }
 });
 
+// Play endpoint para bypasear la restriccion del static de /media a carpetas absolutas del OS como /mnt/usb
+app.get('/api/media/play', (req, res) => {
+    const fpath = req.query.path;
+    if (!fpath || !fs.existsSync(fpath)) return res.status(404).send('Not found');
+    res.sendFile(fpath);
+});
+
 app.post('/api/files/delete', (req, res) => {
     const { filepath } = req.body;
-    if (!filepath || !filepath.startsWith('/media')) return res.status(400).json({ error: 'Ruta invalida' });
     
-    // Map web url to absolute path
-    const absolutePath = process.platform === 'win32' ? 
-        path.join(mediaRoot, filepath.replace('/media/', '')) : 
-        filepath;
+    // filepath podria venir como /api/media/play?path=...
+    let absolutePath = filepath;
+    if(filepath && filepath.includes('?path=')) {
+        absolutePath = decodeURIComponent(filepath.split('?path=')[1]);
+    }
 
-    if (!absolutePath.startsWith(mediaRoot)) return res.status(403).json({ error: 'Sandbox escape detected' });
+    if (!absolutePath || !fs.existsSync(absolutePath)) return res.status(400).json({ error: 'Ruta invalida o no existe' });
 
     try {
         fs.unlinkSync(absolutePath);
