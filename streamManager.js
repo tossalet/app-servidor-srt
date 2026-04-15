@@ -262,7 +262,7 @@ function startOutput(outputObj) {
     ];
     
     if (isDisk) {
-        args.push('-movflags', '+faststart'); // Optimize MP4 for web playback
+        args.push('-movflags', '+frag_keyframe+empty_moov'); // Fragmented MP4 for live writing without RAM bloat
     }
     
     args.push('-f', format);
