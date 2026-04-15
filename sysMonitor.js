@@ -9,26 +9,17 @@ function setIo(io) {
 }
 
 function startMonitoring() {
-    setInterval(async () => {
+    async function loop() {
         if (!ioInstance) return;
 
         try {
-            const [cpu, mem, net] = await Promise.all([
+            const [cpu, mem] = await Promise.all([
                 si.currentLoad(),
-                si.mem(),
-                si.networkStats('default') // 'default' previene escaneo recursivo brutal de redes virtuales Docker en Linux
+                si.mem()
             ]);
 
-            // Filter network interfaces byte traffic
+            // Red (desactivado en Pi Edge por fuga de CPU OS)
             let txSeq = 0, rxSeq = 0;
-            if (net && net.length > 0) {
-                net.forEach(iface => {
-                    if (iface.operstate === 'up' || iface.tx_sec > 0 || iface.rx_sec > 0) {
-                        txSeq += iface.tx_sec || 0;
-                        rxSeq += iface.rx_sec || 0;
-                    }
-                });
-            }
 
             // Count streams logically from DB
             db.all('SELECT enabled FROM inputs', [], (err, inps) => {
@@ -61,7 +52,11 @@ function startMonitoring() {
         } catch (e) {
             console.error("System Polling Error", e);
         }
-    }, 2500); // Pool every 2.5s for stability
+
+        setTimeout(loop, 2500);
+    }
+    
+    loop(); // init
 }
 
 module.exports = { setIo };
