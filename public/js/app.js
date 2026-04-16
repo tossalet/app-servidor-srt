@@ -710,6 +710,7 @@ function openEditOutput(id) {
     document.getElementById('out_is_edit').value = 'true';
     document.getElementById('out_edit_id').value = id;
     document.getElementById('out_location').value = out.location;
+    document.getElementById('out_vcodec').value = out.vcodec || 'copy';
     
     // Parse url broadly
     if (out.url.startsWith('srt')) {
@@ -841,7 +842,8 @@ async function submitOutput(e) {
     const data = {
         channel: parseInt(document.getElementById('out_channel').value),
         url: outUrl,
-        location: document.getElementById('out_location').value
+        location: document.getElementById('out_location').value,
+        vcodec: document.getElementById('out_vcodec').value || 'copy'
     };
 
     const isEdit = document.getElementById('out_is_edit').value === 'true';
