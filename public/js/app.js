@@ -248,8 +248,8 @@ async function fetchData() {
         }
 
         const [resIn, resOut] = await Promise.all([
-            fetch('/api/inputs'),
-            fetch('/api/outputs')
+            fetch('/api/inputs', { cache: 'no-store' }),
+            fetch('/api/outputs', { cache: 'no-store' })
         ]);
         inputs = await resIn.json();
         outputs = await resOut.json();
