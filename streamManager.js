@@ -245,8 +245,12 @@ function startOutput(outputObj) {
     // Generate unique local UDP port for this specific output receiver
     const localPort = 20000 + Math.floor(Math.random() * 30000); // 20000-50000 range
     
-    // Subscribe this output to the Input UDP Router
-    activeInputs[channel].router.subscribers.add(localPort);
+    // Subscribe this output to the Input UDP Router (Delayed by 1s to prevent ICMP Storm Unreachable Kernel Error)
+    setTimeout(() => {
+        if (activeInputs[channel] && activeInputs[channel].router) {
+            activeInputs[channel].router.subscribers.add(localPort);
+        }
+    }, 1000);
 
     const ffmpegCmd = getFFmpegPath();
     const localUdpIn = `udp://127.0.0.1:${localPort}?fifo_size=50000000&overrun_nonfatal=1`;
