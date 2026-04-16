@@ -81,8 +81,11 @@ function startInput(inputObj) {
     }
 
     console.log(`[STARTING INPUT ${channel}] ${ffmpegCmd} ${args.join(' ')}`);
-
     const child = spawn(ffmpegCmd, args);
+
+    child.on('error', (err) => {
+        console.error(`[FATAL IN-${channel}] FFmpeg missing or crashed:`, err.message);
+    });
 
     child.stderr.on('data', (data) => {
         const out = data.toString();
@@ -135,11 +138,14 @@ function startInput(inputObj) {
     
     // Bind to the udpsrv generated port to receive FFmpeg feed
     router.bind(udpsrv, '127.0.0.1', () => {
-        try { router.setRecvBufferSize(8388608); } catch(e){} // 8MB buffer to prevent Node UDP packet drop
-        try { router.setSendBufferSize(8388608); } catch(e){}
         console.log(`[ROUTER] Channel ${channel} bound on UDP ${udpsrv}`);
     });
     
+    // Error boundary fatal para ENOBUFS en Raspberry
+    router.on('error', (err) => {
+        console.error(`[ROUTER ${channel}] UDP Socket Error (Kernel buffer full?):`, err.message);
+    });
+
     // Multiplex payload to all subscribers
     router.on('message', (msg) => {
         for (const port of router.subscribers) {
@@ -241,7 +247,7 @@ function startOutput(outputObj) {
     activeInputs[channel].router.subscribers.add(localPort);
 
     const ffmpegCmd = getFFmpegPath();
-    const localUdpIn = `udp://127.0.0.1:${localPort}?fifo_size=50000000&overrun_nonfatal=1&buffer_size=8388608`;
+    const localUdpIn = `udp://127.0.0.1:${localPort}?overrun_nonfatal=1`;
 
     const isRtmp = url.startsWith('rtmp');
     const isDisk = url.startsWith('disk://');
@@ -271,6 +277,10 @@ function startOutput(outputObj) {
     console.log(`[STARTING OUTPUT ${id}] ${ffmpegCmd} ${args.join(' ')}`);
 
     const child = spawn(ffmpegCmd, args);
+
+    child.on('error', (err) => {
+        console.error(`[FATAL OUT-${outId}] FFmpeg missing or crashed:`, err.message);
+    });
 
     child.stderr.on('data', (data) => {
         console.log(`[OUT-${id}] ${data.toString().trim()}`);
