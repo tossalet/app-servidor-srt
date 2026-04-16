@@ -16,13 +16,13 @@ function startMonitoring() {
             const [cpu, mem, net] = await Promise.all([
                 si.currentLoad(),
                 si.mem(),
-                si.networkStats('default')
+                si.networkStats() // Auto-detect interfaces instead of 'default' string
             ]);
 
             let txSeq = 0, rxSeq = 0;
             if (net && net.length > 0) {
                 net.forEach(iface => {
-                    if (iface.operstate === 'up' || iface.tx_sec > 0 || iface.rx_sec > 0) {
+                    if (iface.operstate === 'up' && iface.iface !== 'lo') {
                         txSeq += iface.tx_sec || 0;
                         rxSeq += iface.rx_sec || 0;
                     }
