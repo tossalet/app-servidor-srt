@@ -40,7 +40,7 @@ function startInput(inputObj) {
     }
 
     const ffmpegCmd = getFFmpegPath();
-    const localUdpOut = `udp://127.0.0.1:${udpsrv}?pkt_size=1316&buffer_size=8388608`;
+    const localUdpOut = `udp://127.0.0.1:${udpsrv}?pkt_size=1316`;
 
     // Base args: Read from URL
     const args = [
@@ -249,7 +249,7 @@ function startOutput(outputObj) {
     activeInputs[channel].router.subscribers.add(localPort);
 
     const ffmpegCmd = getFFmpegPath();
-    const localUdpIn = `udp://127.0.0.1:${localPort}?fifo_size=50000000&overrun_nonfatal=1&buffer_size=8388608`;
+    const localUdpIn = `udp://127.0.0.1:${localPort}?fifo_size=50000000&overrun_nonfatal=1`;
 
     const isRtmp = url.startsWith('rtmp');
     const isDisk = url.startsWith('disk://');
