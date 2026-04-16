@@ -13,13 +13,21 @@ function startMonitoring() {
         if (!ioInstance) return;
 
         try {
-            const [cpu, mem] = await Promise.all([
+            const [cpu, mem, net] = await Promise.all([
                 si.currentLoad(),
-                si.mem()
+                si.mem(),
+                si.networkStats('default')
             ]);
 
-            // Red (desactivado en Pi Edge por fuga de CPU OS)
             let txSeq = 0, rxSeq = 0;
+            if (net && net.length > 0) {
+                net.forEach(iface => {
+                    if (iface.operstate === 'up' || iface.tx_sec > 0 || iface.rx_sec > 0) {
+                        txSeq += iface.tx_sec || 0;
+                        rxSeq += iface.rx_sec || 0;
+                    }
+                });
+            }
 
             // Count streams logically from DB
             db.all('SELECT enabled FROM inputs', [], (err, inps) => {
