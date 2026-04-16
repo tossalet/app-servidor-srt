@@ -23,6 +23,11 @@ if (!fs.existsSync(mediaRoot)) {
     try { fs.mkdirSync(mediaRoot, { recursive: true }); } catch (e) {}
 }
 
+const thumbsDir = path.join(__dirname, 'public', 'thumbs');
+if (!fs.existsSync(thumbsDir)) {
+    try { fs.mkdirSync(thumbsDir, { recursive: true }); } catch(e){}
+}
+
 // Middleware
 app.use(cors());
 app.use(express.json());
