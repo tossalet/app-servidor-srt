@@ -47,8 +47,8 @@ function startMonitoring() {
                         memUsed: (mem.active / (1024*1024*1024)).toFixed(2), // GB
                         memTotal: (mem.total / (1024*1024*1024)).toFixed(2), // GB
                         memPercent: ((mem.active / mem.total) * 100).toFixed(1),
-                        netTx: (txSeq / (1024*1024)).toFixed(2), // MB/s
-                        netRx: (rxSeq / (1024*1024)).toFixed(2), // MB/s
+                        netTx: ((txSeq * 8) / (1024*1024)).toFixed(2), // Mbps
+                        netRx: ((rxSeq * 8) / (1024*1024)).toFixed(2), // Mbps
                         streamsTotal,
                         streamsActive,
                         streamsError

@@ -163,7 +163,7 @@ app.get('/api/outputs', (req, res) => {
 });
 
 app.post('/api/outputs', (req, res) => {
-    const { channel, url, location, remote, enabled } = req.body;
+    const { channel, url, location, remote, enabled, vcodec } = req.body;
     if (!channel) return res.status(400).json({ error: "Input 'channel' is required" });
     
     // We need the udpsrv of the parent channel to link them
@@ -171,9 +171,9 @@ app.post('/api/outputs', (req, res) => {
         if (err || !parentRaw) return res.status(400).json({ error: "Parent input not found" });
 
         const udpsrv = parentRaw.udpsrv;
-        const query = `INSERT INTO outputs (channel, url, location, remote, enabled, udpsrv) 
-                       VALUES (?, ?, ?, ?, ?, ?)`;
-        const params = [ channel, url || '', location || '', remote || '', enabled !== false ? 1 : 0, udpsrv ];
+        const query = `INSERT INTO outputs (channel, url, location, remote, enabled, udpsrv, vcodec) 
+                       VALUES (?, ?, ?, ?, ?, ?, ?)`;
+        const params = [ channel, url || '', location || '', remote || '', enabled !== false ? 1 : 0, udpsrv, vcodec || 'copy' ];
         
         db.run(query, params, function(err) {
             if (err) return res.status(500).json({ error: err.message });
@@ -211,8 +211,8 @@ app.post('/api/outputs/:id/toggle', (req, res) => {
 
 app.put('/api/outputs/:id', (req, res) => {
     const id = req.params.id;
-    const { url, location } = req.body;
-    db.run(`UPDATE outputs SET url = ?, location = ? WHERE id = ?`, [url, location, id], function(err) {
+    const { url, location, vcodec } = req.body;
+    db.run(`UPDATE outputs SET url = ?, location = ?, vcodec = ? WHERE id = ?`, [url, location, vcodec || 'copy', id], function(err) {
         if (err) return res.status(500).json({ error: err.message });
         
         // Restart the process if it was running with new data

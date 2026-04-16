@@ -44,8 +44,12 @@ function initDB() {
             remote TEXT NOT NULL DEFAULT '',
             enabled INTEGER NOT NULL DEFAULT 1,
             udpsrv INTEGER NOT NULL DEFAULT 0,
+            vcodec TEXT NOT NULL DEFAULT 'copy',
             FOREIGN KEY (channel) REFERENCES inputs (channel)
         )`);
+
+        // Migration for existing databases
+        db.run("ALTER TABLE outputs ADD COLUMN vcodec TEXT NOT NULL DEFAULT 'copy'", () => {});
 
         // Table ports
         db.run(`CREATE TABLE IF NOT EXISTS ports (

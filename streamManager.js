@@ -262,12 +262,21 @@ function startOutput(outputObj) {
         destUrl = url.replace('disk://', '');
     }
 
+    const vcodec = outObj.vcodec || 'copy';
+
     const args = [
         '-hide_banner',
         '-y',
-        '-i', localUdpIn,
-        '-c', 'copy'
+        '-i', localUdpIn
     ];
+    
+    if (vcodec === 'copy') {
+        args.push('-c', 'copy');
+    } else {
+        args.push('-c:v', vcodec);
+        args.push('-preset', 'ultrafast');
+        args.push('-c:a', 'copy');
+    }
     
     if (isDisk) {
         args.push('-movflags', '+frag_keyframe+empty_moov'); // Fragmented MP4 for live writing without RAM bloat
