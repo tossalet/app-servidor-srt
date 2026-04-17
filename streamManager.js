@@ -152,13 +152,11 @@ function startInput(inputObj) {
     });
 
     // Multiplex payload to all subscribers using the isolated DEDICATED TX SOCKET
+    // Highly optimized using empty fallback callback instead of try/catch to avoid V8 de-optimization
+    const noop = () => {};
     router.on('message', (msg) => {
         for (const port of router.subscribers) {
-            try {
-                sender.send(msg, port, '127.0.0.1');
-            } catch (e) {
-                // Ignore synchronous send errors 
-            }
+            sender.send(msg, port, '127.0.0.1', noop);
         }
     });
 
@@ -250,12 +248,8 @@ function startOutput(outputObj) {
     // Generate unique local UDP port for this specific output receiver
     const localPort = 20000 + Math.floor(Math.random() * 30000); // 20000-50000 range
     
-    // Subscribe this output to the Input UDP Router (Delayed by 1s to prevent ICMP Storm Unreachable Kernel Error)
-    setTimeout(() => {
-        if (activeInputs[channel] && activeInputs[channel].router) {
-            activeInputs[channel].router.subscribers.add(localPort);
-        }
-    }, 1000);
+    // We assign child process FIRST so we can measure if it dies instantly
+    let processStarted = false;
 
     const ffmpegCmd = getFFmpegPath();
     const localUdpIn = `udp://127.0.0.1:${localPort}?overrun_nonfatal=1`;
@@ -297,6 +291,16 @@ function startOutput(outputObj) {
     console.log(`[STARTING OUTPUT ${id}] ${ffmpegCmd} ${args.join(' ')}`);
 
     const child = spawn(ffmpegCmd, args);
+    processStarted = true;
+    
+    // Subscribe this output ONLY IF ffmpeg survives the first 1.5 seconds.
+    // If it dies early (e.g. bad remote RTMP) and we still subscribe, NodeJS floods a dead port causing Kernel ICMP Storms!
+    setTimeout(() => {
+        if (child.exitCode === null && activeInputs[channel] && activeInputs[channel].router) {
+            activeInputs[channel].router.subscribers.add(localPort);
+            console.log(`[OUT-${id}] Validated and successfully subscribed to local UDP ${localPort}`);
+        }
+    }, 1500);
 
     child.on('error', (err) => {
         console.error(`[FATAL OUT-${outId}] FFmpeg missing or crashed:`, err.message);
