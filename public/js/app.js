@@ -343,6 +343,10 @@ function renderStreams() {
                 <div class="stream-header">
                     <div class="left-section">
                         <button class="btn-expand" onclick="toggleExpand(${input.channel})"><i class="fa-solid fa-chevron-down"></i></button>
+                        <div id="led-${input.channel}" class="connection-led ${input.enabled ? 'active yellow' : 'error'} tooltip">
+                            <i class="fa-solid fa-lightbulb"></i>
+                            <span class="tooltiptext">${input.enabled ? 'Enabled' : 'Disabled'}</span>
+                        </div>
                         <div class="badge-protocol ${protocolBadge}">${protocolText}</div>
                         <span id="codec-${input.channel}" class="badge-protocol udp" style="background:#4b5563;">H.26X</span>
                         <span class="stream-name" style="display:flex; flex-direction:column; line-height:1.2;">
@@ -362,10 +366,6 @@ function renderStreams() {
                         </div>
                     </div>
                     <div class="right-section">
-                        <div id="led-${input.channel}" class="connection-led ${input.enabled ? 'active yellow' : 'error'} tooltip">
-                            <i class="fa-solid fa-lightbulb"></i>
-                            <span class="tooltiptext">${input.enabled ? 'Enabled' : 'Disabled'}</span>
-                        </div>
                         <div class="control-actions">
                             <button class="action-btn toggle-enabled tooltip" onclick="toggleInput(${input.channel})">
                                 <i class="fa-solid ${input.enabled ? 'fa-toggle-on' : 'fa-toggle-off'}"></i>
@@ -399,16 +399,16 @@ function renderStreams() {
                     ${inputOutputs.map(out => `
                         <div class="output-row">
                             <div class="left-section sub">
+                                <div id="led-out_${out.id}" class="connection-led ${out.enabled ? 'active yellow' : 'error'} tooltip" style="margin-right: -5px;">
+                                    <i class="fa-solid fa-lightbulb"></i>
+                                    <span class="tooltiptext">${out.enabled ? 'Enabled' : 'Disabled'}</span>
+                                </div>
                                 <span class="stream-name" style="display:flex; flex-direction:column; line-height:1.2;">
                                     ${out.location || out.url}
                                     <span style="font-size:0.70rem; color:var(--text-muted); font-family:monospace; font-weight:normal; user-select:all;">${out.url.replace(/127\.0\.0\.1|0\.0\.0\.0/g, serverIp)}</span>
                                 </span>
                             </div>
                             <div class="mid-section">
-                                <div id="led-out_${out.id}" class="connection-led ${out.enabled ? 'active yellow' : 'error'} tooltip" style="margin-right: 15px;">
-                                    <i class="fa-solid fa-lightbulb"></i>
-                                    <span class="tooltiptext">${out.enabled ? 'Enabled' : 'Disabled'}</span>
-                                </div>
                                 <div class="stat-item ${!out.enabled ? 'disabled' : ''}">
                                     <i class="fa-solid fa-clock"></i> <span id="time-out_${out.id}">--:--:--</span>
                                 </div>
