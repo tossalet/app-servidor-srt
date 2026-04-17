@@ -148,7 +148,7 @@ function updateTelemetryChart() {
         const mappedData = sortedTimes.map(t => dataMap.has(t) ? dataMap.get(t) : null);
 
         return {
-            label: inpInfo ? \`CH \${ch} (\${inpInfo.name})\` : \`Channel \${ch}\`,
+            label: inpInfo ? `CH ${ch} (${inpInfo.name})` : `Channel ${ch}`,
             data: mappedData,
             borderColor: color,
             backgroundColor: color.replace(')', ', 0.1)').replace('rgb', 'rgba'),
