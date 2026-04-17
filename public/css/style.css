@@ -167,6 +167,9 @@ button { cursor: pointer; border: none; font-family: var(--font-body); transitio
 .action-btn.toggle-enabled i.fa-toggle-on { color: var(--color-green); font-size: 1.2em;}
 .action-btn.toggle-enabled i.fa-toggle-off { color: var(--text-muted); font-size: 1.2em;}
 
+.action-btn.delete-btn:hover { color: var(--color-red); border-color: rgba(239, 68, 68, 0.3); background: rgba(239, 68, 68, 0.1); }
+.action-btn.edit-btn:hover { color: var(--accent-blue); border-color: rgba(96, 165, 250, 0.3); background: rgba(96, 165, 250, 0.1); }
+
 .action-btn.watchdog.alert-on { color: var(--color-red); box-shadow: 0 0 10px rgba(239, 68, 68, 0.5); }
 .action-btn.watchdog.alert-off { color: var(--color-green); }
 

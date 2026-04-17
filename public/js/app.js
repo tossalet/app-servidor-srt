@@ -288,7 +288,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const thumbs = document.querySelectorAll('.thumb-container img');
         thumbs.forEach(img => {
             const baseSrc = img.dataset.src;
-            if (baseSrc) {
+            if (baseSrc && img.classList.contains('preview-active')) {
                 const tempImg = new Image();
                 tempImg.onload = () => { img.src = tempImg.src; };
                 tempImg.onerror = () => { img.src = '/images/bars.svg'; };
@@ -371,7 +371,7 @@ function renderStreams() {
                                 <i class="fa-solid ${input.enabled ? 'fa-toggle-on' : 'fa-toggle-off'}"></i>
                                 <span class="tooltiptext">Toggle Input</span>
                             </button>
-                            <button class="action-btn delete-btn" onclick="openEditInput(${input.channel})"><i class="fa-solid fa-pen"></i></button>
+                            <button class="action-btn edit-btn" onclick="openEditInput(${input.channel})"><i class="fa-solid fa-pen"></i></button>
                             <button class="action-btn delete-btn" onclick="deleteInput(${input.channel})"><i class="fa-solid fa-trash"></i></button>
                             <button class="btn-secondary add-output" onclick="openOutputModal(${input.channel})"><i class="fa-solid fa-arrow-right-to-bracket"></i> Add Output</button>
                         </div>
@@ -381,7 +381,7 @@ function renderStreams() {
                 <div class="stream-outputs" id="outputs-container-${input.channel}">
                     <div class="thumb-container" style="padding: 1rem 1.5rem; background: rgba(0,0,0,0.3); border-bottom: 1px solid rgba(255,255,255,0.05); display: flex; gap: 20px; align-items: center;">
                         <div style="position:relative; width:160px; height:90px; border-radius:6px; overflow:hidden; border:1px solid rgba(255,255,255,0.1); box-shadow: 0 4px 10px rgba(0,0,0,0.5);">
-                            <img data-src="/thumbs/thumb_${input.channel}.jpg" src="/thumbs/thumb_${input.channel}.jpg?t=${Date.now()}" onerror="this.onerror=null; this.src='/images/bars.svg';" style="width:100%; height:100%; object-fit:cover; ${input.preview_enabled ? '' : 'filter: grayscale(100%) opacity(30%); blur(2px);'}" />
+                            <img class="${input.preview_enabled && input.enabled ? 'preview-active' : ''}" data-src="/thumbs/thumb_${input.channel}.jpg" src="${input.preview_enabled && input.enabled ? '/thumbs/thumb_' + input.channel + '.jpg?t=' + Date.now() : '/images/bars.svg'}" onerror="this.onerror=null; this.src='/images/bars.svg';" style="width:100%; height:100%; object-fit:cover; ${input.preview_enabled && input.enabled ? '' : 'filter: grayscale(100%) opacity(30%); blur(2px);'}" />
                             <button onclick="togglePreview(${input.channel})" class="action-btn" style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); background:rgba(0,0,0,0.6); padding:8px 12px; border:none; color:${input.preview_enabled ? 'var(--color-green)' : '#fff'}; border-radius:4px; font-size:1.2rem; cursor:pointer; opacity: 0.8; transition:0.2s;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.8" title="${input.preview_enabled ? 'Desactivar Previsualización (Ahorro CPU)' : 'Activar Previsualización'}">
                                 <i class="fa-solid ${input.preview_enabled ? 'fa-eye' : 'fa-eye-slash'}"></i>
                             </button>
@@ -405,24 +405,26 @@ function renderStreams() {
                                 </span>
                             </div>
                             <div class="mid-section">
+                                <div id="led-out_${out.id}" class="connection-led ${out.enabled ? 'active yellow' : 'error'} tooltip" style="margin-right: 15px;">
+                                    <i class="fa-solid fa-lightbulb"></i>
+                                    <span class="tooltiptext">${out.enabled ? 'Enabled' : 'Disabled'}</span>
+                                </div>
+                                <div class="stat-item ${!out.enabled ? 'disabled' : ''}">
+                                    <i class="fa-solid fa-clock"></i> <span id="time-out_${out.id}">--:--:--</span>
+                                </div>
+                                <div class="stat-item ${!out.enabled ? 'disabled' : ''}">
+                                    <i class="fa-solid fa-gauge-high"></i> <span class="monospaced" id="bitrate-out_${out.id}">-- Mbps</span>
+                                </div>
                                 <div class="quality-bar">
                                     <div class="fill ${out.enabled ? 'yellow' : 'red'}" id="qbar-out_${out.id}" style="width: ${out.enabled ? '100%' : '0%'}"></div>
                                 </div>
                             </div>
-                            <div class="right-section sub-controls" style="gap: 15px;">
-                                <div class="stat-item ${!out.enabled ? 'disabled' : ''}" style="display:flex; gap: 8px; font-size: 0.8rem; color:var(--text-muted);">
-                                    <span><i class="fa-solid fa-clock"></i> <span id="time-out_${out.id}">--:--:--</span></span>
-                                    <span><i class="fa-solid fa-gauge-high"></i> <span class="monospaced" id="bitrate-out_${out.id}">-- Mbps</span></span>
-                                </div>
-                                <div id="led-out_${out.id}" class="connection-led ${out.enabled ? 'active yellow' : 'error'} tooltip">
-                                    <i class="fa-solid fa-lightbulb"></i>
-                                    <span class="tooltiptext">${out.enabled ? 'Enabled' : 'Disabled'}</span>
-                                </div>
+                            <div class="right-section sub-controls">
                                 <div class="control-actions">
                                     <button class="action-btn toggle-enabled" onclick="toggleOutput(${out.id})">
                                         <i class="fa-solid ${out.enabled ? 'fa-toggle-on' : 'fa-toggle-off'}"></i>
                                     </button>
-                                    <button class="action-btn delete-btn" onclick="openEditOutput(${out.id})"><i class="fa-solid fa-pen"></i></button>
+                                    <button class="action-btn edit-btn" onclick="openEditOutput(${out.id})"><i class="fa-solid fa-pen"></i></button>
                                     <button class="action-btn delete-btn" onclick="deleteOutput(${out.id})"><i class="fa-solid fa-trash"></i></button>
                                 </div>
                             </div>
