@@ -293,7 +293,7 @@ function startOutput(outputObj) {
     let processStarted = false;
 
     const ffmpegCmd = getFFmpegPath();
-    const localUdpIn = `udp://127.0.0.1:${localPort}?overrun_nonfatal=1`;
+    const localUdpIn = `udp://127.0.0.1:${localPort}?pkt_size=1316&buffer_size=8388608&overrun_nonfatal=1`;
 
     const isRtmp = url.startsWith('rtmp');
     const isDisk = url.startsWith('disk://');
@@ -306,7 +306,7 @@ function startOutput(outputObj) {
         destUrl = url.replace('disk://', '');
     }
 
-    const vcodec = outObj.vcodec || 'copy';
+    const vcodec = outputObj.vcodec || 'copy';
 
     const args = [
         '-hide_banner',
@@ -344,12 +344,11 @@ function startOutput(outputObj) {
     }, 1500);
 
     child.on('error', (err) => {
-        console.error(`[FATAL OUT-${outId}] FFmpeg missing or crashed:`, err.message);
+        console.error(`[FATAL OUT-${id}] FFmpeg missing or crashed:`, err.message);
     });
 
-    child.stderr.on('data', (data) => {
-        console.log(`[OUT-${id}] ${data.toString().trim()}`);
-    });
+    // Suppress heavy logs to avoid single-thread V8 freezing on packet drops
+    child.stderr.on('data', (data) => {});
 
     let intentionalStop = false;
     child.markIntentionalStop = () => { intentionalStop = true; };
