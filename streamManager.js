@@ -258,7 +258,7 @@ function startOutput(outputObj) {
     }, 1000);
 
     const ffmpegCmd = getFFmpegPath();
-    const localUdpIn = `udp://127.0.0.1:${localPort}?fifo_size=50000000&overrun_nonfatal=1`;
+    const localUdpIn = `udp://127.0.0.1:${localPort}?overrun_nonfatal=1`;
 
     const isRtmp = url.startsWith('rtmp');
     const isDisk = url.startsWith('disk://');
