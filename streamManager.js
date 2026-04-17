@@ -62,14 +62,7 @@ function startInput(inputObj) {
     args.push('-muxdelay', '0.1'); // Fix TS mux errors with missing audio/video sync
     args.push(localUdpOut);
 
-    // Thumbnail Output: 1 frame every 5 secs, low perf impact
-    const extPath = path.join(__dirname, 'public', 'thumbs', `thumb_${channel}.jpg`);
-    args.push('-map', '0:v?');
-    args.push('-r', '1/5');
-    args.push('-update', '1');
-    args.push('-q:v', '5');
-    args.push('-f', 'image2');
-    args.push(extPath);
+    // Visual Preview Generation is now strictly decoupled into its own independent ffmpeg process!
 
     // Watchdog Output: decode audio, silence detect, drop to null sink
     if (audiowtdg === 1 && wtdgsecs > 0) {
@@ -180,6 +173,8 @@ function startInput(inputObj) {
         // Remove thumbnail so UI flips to TV Bars
         const extPath = path.join(__dirname, 'public', 'thumbs', `thumb_${channel}.jpg`);
         fs.unlink(extPath, (err) => {});
+        
+        stopPreview(channel);
 
         // Auto-Restart Logic (If not deliberately stopped by user)
         if (!intentionalStop) {
@@ -202,8 +197,54 @@ function startInput(inputObj) {
         }
     });
 
-    activeInputs[channel] = { process: child, router: router, lastUpdate: Date.now(), inputObj: inputObj, isStopping: false };
+    activeInputs[channel] = { process: child, router: router, lastUpdate: Date.now(), inputObj: inputObj, isStopping: false, prevProcess: null, prevPort: null };
+    
+    if (inputObj.preview_enabled !== 0) {
+        startPreview(channel);
+    }
+
     return true;
+}
+
+function startPreview(channel) {
+    if (!activeInputs[channel] || !activeInputs[channel].router) return;
+    if (activeInputs[channel].prevProcess) stopPreview(channel);
+
+    const prevPort = 30000 + Math.floor(Math.random() * 30000);
+    activeInputs[channel].prevPort = prevPort;
+    activeInputs[channel].router.subscribers.add(prevPort);
+
+    const extPath = path.join(__dirname, 'public', 'thumbs', `thumb_${channel}.jpg`);
+    const ffmpegCmd = getFFmpegPath();
+    const args = [
+        '-hide_banner', '-y',
+        '-i', `udp://127.0.0.1:${prevPort}?overrun_nonfatal=1`,
+        '-map', '0:v?',
+        '-r', '1/5',
+        '-update', '1',
+        '-q:v', '5',
+        '-f', 'image2',
+        extPath
+    ];
+
+    const child = spawn(ffmpegCmd, args);
+    activeInputs[channel].prevProcess = child;
+
+    child.on('close', () => {
+        if (activeInputs[channel] && activeInputs[channel].router && activeInputs[channel].prevPort === prevPort) {
+            activeInputs[channel].router.subscribers.delete(prevPort);
+            activeInputs[channel].prevProcess = null;
+        }
+    });
+}
+
+function stopPreview(channel) {
+    const inp = activeInputs[channel];
+    if (inp && inp.prevProcess) {
+        inp.prevProcess.kill('SIGKILL');
+        if (inp.router && inp.prevPort) inp.router.subscribers.delete(inp.prevPort);
+        inp.prevProcess = null;
+    }
 }
 
 /**
@@ -388,9 +429,13 @@ setInterval(() => {
 }, 1000);
 
 module.exports = {
-    setIo,
+    setIoInstance,
     startInput,
     stopInput,
     startOutput,
-    stopOutput
+    stopOutput,
+    startPreview,
+    stopPreview,
+    activeInputs,
+    activeOutputs
 };
