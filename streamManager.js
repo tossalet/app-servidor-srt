@@ -126,7 +126,11 @@ function startInput(inputObj) {
 
     // Setup UDP Multiplexer in Node.js
     const router = dgram.createSocket('udp4');
+    const sender = dgram.createSocket('udp4'); // DEDICATED TX SOCKET to prevent ICMP Error poisoning!
     router.subscribers = new Set();
+    
+    // Auto-tune sending buffer for the dedicated TX socket
+    try { sender.setSendBufferSize(8388608); } catch(e){}
 
     // Recover existing active outputs if this is a restart
     for (const outId in activeOutputs) {
@@ -139,7 +143,6 @@ function startInput(inputObj) {
     // Bind to the udpsrv generated port to receive FFmpeg feed
     router.bind(udpsrv, '127.0.0.1', () => {
         try { router.setRecvBufferSize(8388608); } catch(e){} // 8MB buffer to prevent Node UDP packet drop
-        try { router.setSendBufferSize(8388608); } catch(e){}
         console.log(`[ROUTER] Channel ${channel} bound on UDP ${udpsrv}`);
     });
     
@@ -148,20 +151,21 @@ function startInput(inputObj) {
         console.error(`[ROUTER ${channel}] UDP Socket Error (Kernel buffer full?):`, err.message);
     });
 
-    // Multiplex payload to all subscribers
+    // Multiplex payload to all subscribers using the isolated DEDICATED TX SOCKET
     router.on('message', (msg) => {
         for (const port of router.subscribers) {
             try {
-                router.send(msg, port, '127.0.0.1');
+                sender.send(msg, port, '127.0.0.1');
             } catch (e) {
-                // Ignore send errors if local port is dead
+                // Ignore synchronous send errors 
             }
         }
     });
 
-    // Swallown async datagram errors (like ICMP Port Unreachable during Output restarts)
-    router.on('error', (err) => {
-        // We don't want the server to crash if a subscriber's socket resets
+    // Swallow async datagram errors
+    router.on('error', (err) => {});
+    sender.on('error', (err) => {
+        // ICMP Port Unreachable errors land here cleanly, without poisoning the router RX loop!
     });
     
     let intentionalStop = false;
@@ -171,6 +175,7 @@ function startInput(inputObj) {
         console.log(`Input ${channel} exited with code ${code}`);
         // Shutdown router safely
         try { router.close(); } catch (e) {}
+        try { sender.close(); } catch (e) {}
         
         if (telemetryCache[channel]) delete telemetryCache[channel]; // Limpiar RAM historico
         
