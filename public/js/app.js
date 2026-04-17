@@ -151,14 +151,14 @@ function updateTelemetryChart() {
     telemetryChart.data.datasets = activeChannels.map((ch, index) => {
         const color = chartColors[index % chartColors.length];
         
-        let labelName = \`Channel \${ch}\`;
+        let labelName = `Channel ${ch}`;
         if (ch.toString().startsWith('out_')) {
             const numId = parseInt(ch.toString().replace('out_', ''));
             const outInfo = outputs.find(o => o.id === numId);
-            if (outInfo) labelName = \`OUT_\${numId} (\${(outInfo.location || outInfo.url).substring(0, 20)})\`;
+            if (outInfo) labelName = `OUT_${numId} (${(outInfo.location || outInfo.url).substring(0, 20)})`;
         } else {
             const inpInfo = inputs.find(i => i.channel.toString() === ch.toString());
-            if (inpInfo) labelName = \`IN_\${ch} (\${inpInfo.name})\`;
+            if (inpInfo) labelName = `IN_${ch} (${inpInfo.name})`;
         }
         
         // Mapear datos a la base de tiempo unificada (0 si no existe para ese tick)
