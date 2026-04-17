@@ -40,7 +40,7 @@ function startInput(inputObj) {
     }
 
     const ffmpegCmd = getFFmpegPath();
-    const localUdpOut = `udp://127.0.0.1:${udpsrv}?pkt_size=1316`;
+    const localUdpOut = `udp://127.0.0.1:${udpsrv}?pkt_size=1316&buffer_size=8388608`;
 
     // Base args: Read from URL
     const args = [
