@@ -571,8 +571,8 @@ function openEditInput(channel) {
     document.getElementById('inp_edit_channel').value = channel;
     
     document.getElementById('inp_name').value = input.name;
-    document.getElementById('inp_audiowtdg').checked = input.audiowtdg === 1;
-    document.getElementById('inp_wtdgsecs').value = input.wtdgsecs || 2;
+    document.getElementById('inp_name').value = input.name;
+    // Watchdog config fields removed
     
     // Parse url broadly
     if (input.url.startsWith('srt')) {
@@ -643,9 +643,7 @@ async function submitLatency(e) {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
                 url: newUrl,
-                name: inputData.name,
-                audiowtdg: inputData.audiowtdg,
-                wtdgsecs: inputData.wtdgsecs
+                name: inputData.name
             })
         });
         closeModal('latencyModal');
@@ -854,9 +852,7 @@ async function submitInput(e) {
 
     const data = {
         name: document.getElementById('inp_name').value,
-        url: outUrl,
-        audiowtdg: document.getElementById('inp_audiowtdg').checked,
-        wtdgsecs: parseInt(document.getElementById('inp_wtdgsecs').value)
+        url: outUrl
     };
     
     const isEdit = document.getElementById('inp_is_edit').value === 'true';
