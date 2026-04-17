@@ -324,7 +324,12 @@ function renderStreams() {
                 
                 <div class="stream-outputs" id="outputs-container-${input.channel}">
                     <div class="thumb-container" style="padding: 1rem 1.5rem; background: rgba(0,0,0,0.3); border-bottom: 1px solid rgba(255,255,255,0.05); display: flex; gap: 20px; align-items: center;">
-                        <img data-src="/thumbs/thumb_${input.channel}.jpg" src="/thumbs/thumb_${input.channel}.jpg?t=${Date.now()}" onerror="this.onerror=null; this.src='/images/bars.svg';" style="width:160px; height:90px; object-fit:cover; border-radius:6px; border:1px solid rgba(255,255,255,0.1); box-shadow: 0 4px 10px rgba(0,0,0,0.5);" />
+                        <div style="position:relative; width:160px; height:90px; border-radius:6px; overflow:hidden; border:1px solid rgba(255,255,255,0.1); box-shadow: 0 4px 10px rgba(0,0,0,0.5);">
+                            <img data-src="/thumbs/thumb_${input.channel}.jpg" src="/thumbs/thumb_${input.channel}.jpg?t=${Date.now()}" onerror="this.onerror=null; this.src='/images/bars.svg';" style="width:100%; height:100%; object-fit:cover; ${input.preview_enabled ? '' : 'filter: grayscale(100%) opacity(30%); blur(2px);'}" />
+                            <button onclick="togglePreview(${input.channel})" class="action-btn" style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); background:rgba(0,0,0,0.6); padding:8px 12px; border:none; color:${input.preview_enabled ? 'var(--color-green)' : '#fff'}; border-radius:4px; font-size:1.2rem; cursor:pointer; opacity: 0.8; transition:0.2s;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.8" title="${input.preview_enabled ? 'Desactivar Previsualización (Ahorro CPU)' : 'Activar Previsualización'}">
+                                <i class="fa-solid ${input.preview_enabled ? 'fa-eye' : 'fa-eye-slash'}"></i>
+                            </button>
+                        </div>
                         <div style="font-size:0.85rem; color:var(--text-muted); line-height: 1.4; display:flex; flex-direction:column; gap:5px;">
                             <p><strong>Parámetros de Recepción:</strong></p>
                             <div style="display:flex; align-items:center; gap: 10px;">
@@ -953,11 +958,19 @@ async function deleteUser(username) {
 
 async function toggleInput(channel) {
     await fetch(`/api/inputs/${channel}/toggle`, { method: 'POST' });
+    fetchData();
 }
 
-async function deleteInput(channel) {
+async function togglePreview(channelId) {
+    try {
+        await fetch(`/api/inputs/${channelId}/preview`, { method: 'POST' });
+        // UI assumes success directly and waits for websocket, but we can optimistically disable polling for it
+    } catch(e) { console.error('Error toggling preview', e); }
+}
+
+async function deleteInput(channelId) {
     if(confirm('Are you sure you want to delete this input and all its outputs?')) {
-        await fetch(`/api/inputs/${channel}`, { method: 'DELETE' });
+        await fetch(`/api/inputs/${channelId}`, { method: 'DELETE' });
     }
 }
 
