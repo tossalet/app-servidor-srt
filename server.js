@@ -116,6 +116,26 @@ app.post('/api/inputs/:channel/toggle', (req, res) => {
     });
 });
 
+app.post('/api/inputs/:channel/preview', (req, res) => {
+    const channelId = req.params.channel;
+    db.get('SELECT preview_enabled FROM inputs WHERE channel = ?', [channelId], (err, row) => {
+        if (err || !row) return res.status(404).json({ error: 'Not found' });
+        const newState = row.preview_enabled ? 0 : 1;
+        db.run('UPDATE inputs SET preview_enabled = ? WHERE channel = ?', [newState, channelId], function(err) {
+            if (err) return res.status(500).json({ error: err.message });
+            io.emit('db_update', { event: 'inputs_changed' });
+            
+            // Start or stop the actual visual ffmpeg processor independently 
+            if (newState === 1) {
+                streamManager.startPreview(channelId);
+            } else {
+                streamManager.stopPreview(channelId);
+            }
+            res.json({ preview_enabled: newState });
+        });
+    });
+});
+
 app.put('/api/inputs/:channel', (req, res) => {
     const channelId = req.params.channel;
     const { url, name, audiowtdg, wtdgsecs } = req.body;
