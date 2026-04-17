@@ -428,7 +428,7 @@ setInterval(() => {
 }, 1000);
 
 module.exports = {
-    setIoInstance,
+    setIo,
     startInput,
     stopInput,
     startOutput,
