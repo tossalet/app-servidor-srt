@@ -4,8 +4,10 @@ const socket = io();
 let inputs = [];
 let outputs = [];
 let telemetryChart = null;
-let selectedAnalyticsChannel = '';
+let selectedAnalyticsChannels = new Set();
+let frontendTelemetryCache = {};
 let serverIp = window.location.hostname;
+const chartColors = ['#60A5FA', '#34d399', '#f87171', '#fbbf24', '#c084fc', '#f472b6', '#38bdf8', '#a3e635'];
 
 // SPA Navigation
 function switchTab(tabId) {
@@ -72,22 +74,20 @@ function initChart() {
         type: 'line',
         data: {
             labels: [],
-            datasets: [{
-                label: 'Video Bitrate (kbits/s)',
-                data: [],
-                borderColor: '#60A5FA',
-                backgroundColor: 'rgba(96, 165, 250, 0.1)',
-                borderWidth: 2,
-                tension: 0.4,
-                fill: true,
-                pointRadius: 0
-            }]
+            datasets: []
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
             animation: false,
-            plugins: { legend: { display: false } },
+            interaction: { mode: 'index', intersect: false },
+            plugins: { 
+                legend: { 
+                    display: true, 
+                    labels: { color: 'rgba(255,255,255,0.7)', font: { family: 'Inter', size: 11 } }
+                },
+                tooltip: { backgroundColor: 'rgba(0,0,0,0.8)' }
+            },
             scales: {
                 x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.4)', maxTicksLimit: 10 } },
                 y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.4)' }, min: 0 }
@@ -105,7 +105,7 @@ function populateAnalyticsGrid() {
         if (i.enabled) {
             hasStreams = true;
             grid.innerHTML += `
-                <div class="analytics-card ${selectedAnalyticsChannel == i.channel ? 'selected' : ''}" onclick="selectAnalyticsChannel('${i.channel}')">
+                <div class="analytics-card ${selectedAnalyticsChannels.has(i.channel.toString()) ? 'selected' : ''}" onclick="toggleAnalyticsChannel('${i.channel}')">
                     <div class="acard-title">${i.name}</div>
                     <div class="acard-badge">CH ${i.channel}</div>
                 </div>
@@ -118,15 +118,59 @@ function populateAnalyticsGrid() {
     }
 }
 
-function selectAnalyticsChannel(channelId) {
-    selectedAnalyticsChannel = channelId;
-    populateAnalyticsGrid(); // Refresca las clases "selected"
+function updateTelemetryChart() {
+    if (!telemetryChart) return;
     
-    if(!selectedAnalyticsChannel && telemetryChart) {
-        telemetryChart.data.labels = [];
-        telemetryChart.data.datasets[0].data = [];
-        telemetryChart.update();
+    let allTimesSet = new Set();
+    const activeChannels = Array.from(selectedAnalyticsChannels);
+    
+    // Recopilar la base de tiempo común de los canales seleccionados
+    activeChannels.forEach(ch => {
+        if(frontendTelemetryCache[ch]) {
+            frontendTelemetryCache[ch].forEach(dp => allTimesSet.add(dp.t));
+        }
+    });
+    
+    const sortedTimes = Array.from(allTimesSet).sort();
+    telemetryChart.data.labels = sortedTimes;
+    
+    // Reconstruir datasets superpuestos
+    telemetryChart.data.datasets = activeChannels.map((ch, index) => {
+        const inpInfo = inputs.find(i => i.channel.toString() === ch.toString());
+        const color = chartColors[index % chartColors.length];
+        
+        // Mapear datos a la base de tiempo unificada (0 si no existe para ese tick)
+        const dataMap = new Map();
+        if(frontendTelemetryCache[ch]) {
+            frontendTelemetryCache[ch].forEach(dp => dataMap.set(dp.t, dp.y));
+        }
+        
+        const mappedData = sortedTimes.map(t => dataMap.has(t) ? dataMap.get(t) : null);
+
+        return {
+            label: inpInfo ? \`CH \${ch} (\${inpInfo.name})\` : \`Channel \${ch}\`,
+            data: mappedData,
+            borderColor: color,
+            backgroundColor: color.replace(')', ', 0.1)').replace('rgb', 'rgba'),
+            borderWidth: 2,
+            tension: 0.4,
+            fill: false, // Superimposed graphs shouldn't be fully solid filled to avoid hiding each other
+            pointRadius: 0
+        };
+    });
+    
+    telemetryChart.update();
+}
+
+function toggleAnalyticsChannel(channelId) {
+    const chStr = channelId.toString();
+    if (selectedAnalyticsChannels.has(chStr)) {
+        selectedAnalyticsChannels.delete(chStr);
+    } else {
+        selectedAnalyticsChannels.add(chStr);
     }
+    populateAnalyticsGrid(); // Refresca las clases "selected"
+    updateTelemetryChart();
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -162,11 +206,12 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
         
-        // Pushing to the chart dynamically!
-        if (data.history && data.channel.toString() === selectedAnalyticsChannel.toString() && telemetryChart) {
-            telemetryChart.data.labels = data.history.map(h => h.t);
-            telemetryChart.data.datasets[0].data = data.history.map(h => h.y);
-            telemetryChart.update();
+        // Backend pushes historical telemetry for each update
+        if (data.history) {
+            frontendTelemetryCache[data.channel.toString()] = data.history;
+            if (selectedAnalyticsChannels.has(data.channel.toString())) {
+                updateTelemetryChart();
+            }
         }
     });
 

@@ -407,8 +407,8 @@ setInterval(() => {
     const now = Date.now();
     for (const channel in activeInputs) {
         const inp = activeInputs[channel];
-        if (inp && inp.lastUpdate && (now - inp.lastUpdate > 2000)) {
-            // Ha pasado más de 2 segundos sin respuesta de FFMPEG, registrar 0 de ancho de banda
+        if (inp && inp.lastUpdate && (now - inp.lastUpdate > 5000)) {
+            // Ha pasado más de 5 segundos sin respuesta de FFMPEG, registrar 0 de ancho de banda
             if (!telemetryCache[channel]) telemetryCache[channel] = [];
             telemetryCache[channel].push({ t: new Date().toLocaleTimeString(), y: 0 });
             if (telemetryCache[channel].length > 60) telemetryCache[channel].shift();
