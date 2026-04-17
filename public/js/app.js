@@ -107,9 +107,22 @@ function populateAnalyticsGrid() {
             grid.innerHTML += `
                 <div class="analytics-card ${selectedAnalyticsChannels.has(i.channel.toString()) ? 'selected' : ''}" onclick="toggleAnalyticsChannel('${i.channel}')">
                     <div class="acard-title">${i.name}</div>
-                    <div class="acard-badge">CH ${i.channel}</div>
+                    <div class="acard-badge">IN_${i.channel}</div>
                 </div>
             `;
+            
+            // Render corresponding Output cards right next to their Input
+            const inputOutputs = outputs.filter(o => o.channel === i.channel && o.enabled);
+            inputOutputs.forEach(o => {
+                const outId = 'out_' + o.id;
+                const locName = o.location ? o.location : o.url;
+                grid.innerHTML += `
+                    <div class="analytics-card ${selectedAnalyticsChannels.has(outId) ? 'selected' : ''}" onclick="toggleAnalyticsChannel('${outId}')" style="margin-left: 20px; border-left: 3px solid rgba(255,255,255,0.2);">
+                        <div class="acard-title" style="font-size:0.8rem; opacity:0.8;">${locName.substring(0,30)}</div>
+                        <div class="acard-badge" style="background: rgba(255,255,255,0.1);">OUT_${o.id}</div>
+                    </div>
+                `;
+            });
         }
     });
     
@@ -136,8 +149,17 @@ function updateTelemetryChart() {
     
     // Reconstruir datasets superpuestos
     telemetryChart.data.datasets = activeChannels.map((ch, index) => {
-        const inpInfo = inputs.find(i => i.channel.toString() === ch.toString());
         const color = chartColors[index % chartColors.length];
+        
+        let labelName = \`Channel \${ch}\`;
+        if (ch.toString().startsWith('out_')) {
+            const numId = parseInt(ch.toString().replace('out_', ''));
+            const outInfo = outputs.find(o => o.id === numId);
+            if (outInfo) labelName = \`OUT_\${numId} (\${(outInfo.location || outInfo.url).substring(0, 20)})\`;
+        } else {
+            const inpInfo = inputs.find(i => i.channel.toString() === ch.toString());
+            if (inpInfo) labelName = \`IN_\${ch} (\${inpInfo.name})\`;
+        }
         
         // Mapear datos a la base de tiempo unificada (0 si no existe para ese tick)
         const dataMap = new Map();
@@ -148,7 +170,7 @@ function updateTelemetryChart() {
         const mappedData = sortedTimes.map(t => dataMap.has(t) ? dataMap.get(t) : null);
 
         return {
-            label: inpInfo ? `CH ${ch} (${inpInfo.name})` : `Channel ${ch}`,
+            label: labelName,
             data: mappedData,
             borderColor: color,
             backgroundColor: color.replace(')', ', 0.1)').replace('rgb', 'rgba'),
@@ -205,7 +227,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 ledElem.className = 'connection-led error tooltip'; // red
             }
         }
-        
+        if (data.codec) {
+            const codecElem = document.getElementById(`codec-${data.channel}`);
+            if (codecElem && data.codec.length > 0) codecElem.innerText = data.codec;
+        }
+
         // Backend pushes historical telemetry for each update
         if (data.history) {
             frontendTelemetryCache[data.channel.toString()] = data.history;
@@ -215,19 +241,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    socket.on('watchdog_alert', (data) => {
-        const btnElem = document.getElementById(`wtdg-btn-${data.channel}`);
-        const ledElem = document.getElementById(`led-${data.channel}`);
-        if(btnElem) {
-            if (data.status === 'silence') {
-                btnElem.className = 'action-btn watchdog tooltip alert-on';
-                if(ledElem) ledElem.className = 'connection-led active yellow tooltip';
-            } else {
-                btnElem.className = 'action-btn watchdog tooltip alert-off';
-                if(ledElem) ledElem.className = 'connection-led active tooltip';
-            }
-        }
-    });
+
 
     socket.on('sys_stats', (stats) => {
         // CPU
@@ -330,6 +344,7 @@ function renderStreams() {
                     <div class="left-section">
                         <button class="btn-expand" onclick="toggleExpand(${input.channel})"><i class="fa-solid fa-chevron-down"></i></button>
                         <div class="badge-protocol ${protocolBadge}">${protocolText}</div>
+                        <span id="codec-${input.channel}" class="badge-protocol udp" style="background:#4b5563;">H.26X</span>
                         <span class="stream-name" style="display:flex; flex-direction:column; line-height:1.2;">
                             ${input.name || 'Channel ' + input.channel}
                             <span style="font-size:0.70rem; color:var(--accent-blue); font-family:monospace; font-weight:normal; user-select:all;">${input.url.replace(/127\.0\.0\.1|0\.0\.0\.0/g, serverIp)}</span>
@@ -355,10 +370,6 @@ function renderStreams() {
                             <button class="action-btn toggle-enabled tooltip" onclick="toggleInput(${input.channel})">
                                 <i class="fa-solid ${input.enabled ? 'fa-toggle-on' : 'fa-toggle-off'}"></i>
                                 <span class="tooltiptext">Toggle Input</span>
-                            </button>
-                            <button id="wtdg-btn-${input.channel}" class="action-btn watchdog tooltip ${input.audiowtdg ? 'alert-off' : ''}" style="${!input.audiowtdg ? 'opacity:0.2' : ''}">
-                                <i class="fa-solid fa-shield-dog"></i>
-                                <span class="tooltiptext">Watchdog</span>
                             </button>
                             <button class="action-btn delete-btn" onclick="openEditInput(${input.channel})"><i class="fa-solid fa-pen"></i></button>
                             <button class="action-btn delete-btn" onclick="deleteInput(${input.channel})"><i class="fa-solid fa-trash"></i></button>
@@ -395,11 +406,18 @@ function renderStreams() {
                             </div>
                             <div class="mid-section">
                                 <div class="quality-bar">
-                                    <div class="fill ${out.enabled ? 'green' : 'red'}" style="width: ${out.enabled ? '100%' : '0%'}"></div>
+                                    <div class="fill ${out.enabled ? 'yellow' : 'red'}" id="qbar-out_${out.id}" style="width: ${out.enabled ? '100%' : '0%'}"></div>
                                 </div>
                             </div>
-                            <div class="right-section sub-controls">
-                                <div class="connection-led ${out.enabled ? 'active' : 'error'}"><i class="fa-solid fa-lightbulb"></i></div>
+                            <div class="right-section sub-controls" style="gap: 15px;">
+                                <div class="stat-item ${!out.enabled ? 'disabled' : ''}" style="display:flex; gap: 8px; font-size: 0.8rem; color:var(--text-muted);">
+                                    <span><i class="fa-solid fa-clock"></i> <span id="time-out_${out.id}">--:--:--</span></span>
+                                    <span><i class="fa-solid fa-gauge-high"></i> <span class="monospaced" id="bitrate-out_${out.id}">-- Mbps</span></span>
+                                </div>
+                                <div id="led-out_${out.id}" class="connection-led ${out.enabled ? 'active yellow' : 'error'} tooltip">
+                                    <i class="fa-solid fa-lightbulb"></i>
+                                    <span class="tooltiptext">${out.enabled ? 'Enabled' : 'Disabled'}</span>
+                                </div>
                                 <div class="control-actions">
                                     <button class="action-btn toggle-enabled" onclick="toggleOutput(${out.id})">
                                         <i class="fa-solid ${out.enabled ? 'fa-toggle-on' : 'fa-toggle-off'}"></i>

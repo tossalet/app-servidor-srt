@@ -64,14 +64,7 @@ function startInput(inputObj) {
 
     // Visual Preview Generation is now strictly decoupled into its own independent ffmpeg process!
 
-    // Watchdog Output: decode audio, silence detect, drop to null sink
-    if (audiowtdg === 1 && wtdgsecs > 0) {
-        args.push('-map', '0:a?');
-        args.push('-vn'); // no video
-        args.push('-af', `silencedetect=noise=-50dB:d=${wtdgsecs}`);
-        args.push('-f', 'null');
-        args.push('-');
-    }
+
 
     console.log(`[STARTING INPUT ${channel}] ${ffmpegCmd} ${args.join(' ')}`);
     const child = spawn(ffmpegCmd, args);
@@ -86,6 +79,12 @@ function startInput(inputObj) {
         // Match FFmpeg stats
         const bitrateMatch = out.match(/bitrate=\s*([\d.]+kbits\/s)/);
         const timeMatch = out.match(/time=([\d:.]+)/);
+        
+        // Match Codec (usually printed once dynamically at trace start)
+        const codecMatch = out.match(/Video:\s*([a-zA-Z0-9]+)/);
+        if (codecMatch && activeInputs[channel]) {
+            activeInputs[channel].codec = codecMatch[1].toUpperCase();
+        }
         
         if (bitrateMatch && ioInstance) {
             if (activeInputs[channel]) activeInputs[channel].lastUpdate = Date.now();
@@ -102,18 +101,9 @@ function startInput(inputObj) {
                 bitrate: brText,
                 time: timeMatch ? timeMatch[1] : '--:--:--',
                 active: true,
+                codec: activeInputs[channel] ? activeInputs[channel].codec : '',
                 history: telemetryCache[channel] // Payload con curva precargada
             });
-        }
-
-        // audio watchdog alerts
-        if (out.includes('silence_start')) {
-            console.log(`[ALARM IN-${channel}] Audio Silence Detected!`);
-            if (ioInstance) ioInstance.emit('watchdog_alert', { channel, status: 'silence' });
-        }
-        if (out.includes('silence_end')) {
-            console.log(`[ALARM IN-${channel}] Audio Returned.`);
-            if (ioInstance) ioInstance.emit('watchdog_alert', { channel, status: 'clear' });
         }
     });
 
@@ -347,8 +337,32 @@ function startOutput(outputObj) {
         console.error(`[FATAL OUT-${id}] FFmpeg missing or crashed:`, err.message);
     });
 
-    // Suppress heavy logs to avoid single-thread V8 freezing on packet drops
-    child.stderr.on('data', (data) => {});
+    // Suppress heavy console logs but quietly parse bitrate metrics for UI telemetry without blocking V8
+    child.stderr.on('data', (data) => {
+        const out = data.toString();
+        const bitrateMatch = out.match(/bitrate=\s*([\d.]+kbits\/s)/);
+        const timeMatch = out.match(/time=([\d:.]+)/);
+        
+        if (bitrateMatch && ioInstance) {
+            const outChan = 'out_' + id;
+            if (activeOutputs[id]) activeOutputs[id].lastUpdate = Date.now();
+            
+            if (!telemetryCache[outChan]) telemetryCache[outChan] = [];
+            const brText = bitrateMatch[1];
+            const br = parseFloat(brText); // ej. "4500.5kbits/s" -> 4500.5
+            
+            telemetryCache[outChan].push({ t: new Date().toLocaleTimeString(), y: br || 0 });
+            if (telemetryCache[outChan].length > 60) telemetryCache[outChan].shift();
+            
+            ioInstance.emit('stats', {
+                channel: outChan,
+                bitrate: brText,
+                time: timeMatch ? timeMatch[1] : '--:--:--',
+                active: true,
+                history: telemetryCache[outChan]
+            });
+        }
+    });
 
     let intentionalStop = false;
     child.markIntentionalStop = () => { intentionalStop = true; };
@@ -374,7 +388,7 @@ function startOutput(outputObj) {
         }
     });
 
-    activeOutputs[id] = { process: child, localPort: localPort, parentChannel: channel, outputObj: outputObj };
+    activeOutputs[id] = { process: child, localPort: localPort, parentChannel: channel, outputObj: outputObj, lastUpdate: Date.now() };
     return true;
 }
 
@@ -408,7 +422,6 @@ setInterval(() => {
     for (const channel in activeInputs) {
         const inp = activeInputs[channel];
         if (inp && inp.lastUpdate && (now - inp.lastUpdate > 5000)) {
-            // Ha pasado más de 5 segundos sin respuesta de FFMPEG, registrar 0 de ancho de banda
             if (!telemetryCache[channel]) telemetryCache[channel] = [];
             telemetryCache[channel].push({ t: new Date().toLocaleTimeString(), y: 0 });
             if (telemetryCache[channel].length > 60) telemetryCache[channel].shift();
@@ -417,12 +430,34 @@ setInterval(() => {
                 ioInstance.emit('stats', {
                     channel: channel,
                     bitrate: '0.0kbits/s',
-                    time: '--:--:--', // Frozen time
+                    time: '--:--:--', 
                     active: true,
                     history: telemetryCache[channel]
                 });
             }
-            inp.lastUpdate = now; // Retrigger the heartbeat check window
+            inp.lastUpdate = now; 
+        }
+    }
+    
+    // Heartbeat for Active Outputs
+    for (const id in activeOutputs) {
+        const outp = activeOutputs[id];
+        const outChan = 'out_' + id;
+        if (outp && outp.lastUpdate && (now - outp.lastUpdate > 5000)) {
+            if (!telemetryCache[outChan]) telemetryCache[outChan] = [];
+            telemetryCache[outChan].push({ t: new Date().toLocaleTimeString(), y: 0 });
+            if (telemetryCache[outChan].length > 60) telemetryCache[outChan].shift();
+            
+            if (ioInstance) {
+                ioInstance.emit('stats', {
+                    channel: outChan,
+                    bitrate: '0.0kbits/s',
+                    time: '--:--:--', 
+                    active: true,
+                    history: telemetryCache[outChan]
+                });
+            }
+            outp.lastUpdate = now;
         }
     }
 }, 1000);
