@@ -292,8 +292,10 @@ function startOutput(outputObj) {
     
     if (isRtmp) format = 'flv';
     if (isDisk) {
-        format = 'mp4';
         destUrl = url.replace('disk://', '');
+        if (destUrl.endsWith('.ts')) format = 'mpegts';
+        else if (destUrl.endsWith('.mkv')) format = 'matroska';
+        else format = 'mp4';
     }
 
     const vcodec = outputObj.vcodec || 'copy';
@@ -312,8 +314,8 @@ function startOutput(outputObj) {
         args.push('-c:a', 'copy');
     }
     
-    if (isDisk) {
-        args.push('-movflags', '+frag_keyframe+empty_moov'); // Fragmented MP4 for live writing without RAM bloat
+    if (isDisk && format === 'mp4') {
+        args.push('-movflags', '+frag_keyframe+empty_moov'); // Solo se usa mp4 fragmentado si el formato es mp4
     }
     
     args.push('-f', format);

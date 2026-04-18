@@ -560,7 +560,7 @@ function updateOutputFields() {
         });
         
         if (!document.getElementById('out_location').value) {
-            document.getElementById('out_location').value = 'rec_' + new Date().getTime() + '.mp4';
+            document.getElementById('out_location').value = 'rec_' + new Date().getTime() + '.ts';
         }
     } else {
         modeContainer.style.display = 'none';
@@ -892,7 +892,7 @@ async function submitOutput(e) {
         const disk = document.getElementById('out_disk').value;
         const location = document.getElementById('out_location').value || 'rec_' + Date.now() + '.mp4';
         let filename = location;
-        if (!filename.match(/\.(mp4|mkv|ts)$/i)) filename += '.mp4';
+        if (!filename.match(/\.(mp4|mkv|ts)$/i)) filename += '.ts';
         const slash = disk.endsWith('/') || disk.endsWith('\\') ? '' : '/';
         outUrl = `disk://${disk}${slash}${filename}`;
     } else if (proto === 'rtmp') {
