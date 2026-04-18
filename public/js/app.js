@@ -10,6 +10,71 @@ let serverIp = window.location.hostname;
 const chartColors = ['#60A5FA', '#34d399', '#f87171', '#fbbf24', '#c084fc', '#f472b6', '#38bdf8', '#a3e635'];
 
 // SPA Navigation
+let currentDashboardFilter = 'all';
+
+function setDashboardFilter(filter) {
+    currentDashboardFilter = filter;
+    renderDashboardStreams();
+}
+
+function renderDashboardStreams() {
+    const container = document.getElementById('dashboard-filter-results');
+    if (!container) return;
+    
+    let html = '';
+    
+    // Evaluate inputs
+    inputs.forEach(i => {
+        // Obtenemos el último valor de bitrate de la telemetría (si existe) para saber si de verdad recibe señal
+        const history = frontendTelemetryCache[i.channel.toString()];
+        const lastBitrate = (history && history.length > 0) ? history[history.length - 1].y : 0;
+        const isOnline = i.enabled && lastBitrate > 0;
+        
+        let statusClass = isOnline ? 'ok' : (i.enabled ? 'warning' : '');
+        if (!i.enabled) statusClass = 'error';
+        let statusText = isOnline ? 'Online (Receiving)' : (i.enabled ? 'Waiting for Signal' : 'Offline / Disabled');
+        
+        const isOfflineCategory = !isOnline; // Si está esperando señal o apagado, es offline/erróneo
+        
+        if (currentDashboardFilter === 'active' && !isOnline) return;
+        if (currentDashboardFilter === 'offline' && !isOfflineCategory) return;
+        
+        html += `
+            <div class="sys-stat-card ${statusClass}" style="padding:12px 15px; border-left: 4px solid \${isOnline ? 'var(--color-green)' : (i.enabled ? 'var(--color-yellow)' : 'var(--color-red)')};">
+                <div style="font-size:0.7rem; opacity:0.7; font-family:monospace;">INPUT ${i.channel} • ${i.url.split('://')[0].toUpperCase()}</div>
+                <div style="font-size:1rem; font-weight:600; margin:5px 0;">${i.name}</div>
+                <div style="font-size:0.8rem; display:flex; align-items:center; gap:5px;">
+                    <i class="fa-solid \${isOnline ? 'fa-circle-check' : (i.enabled ? 'fa-spinner fa-spin' : 'fa-circle-xmark')}"></i> \${statusText}
+                </div>
+            </div>
+        `;
+    });
+    
+    // Evaluate outputs
+    outputs.forEach(o => {
+        let isOnline = o.enabled; // Outputs son activos por el mero hecho de estar enabled
+        let statusClass = isOnline ? 'ok' : 'error';
+        let statusText = isOnline ? 'Active (Routing)' : 'Offline / Disabled';
+        
+        if (currentDashboardFilter === 'active' && !isOnline) return;
+        if (currentDashboardFilter === 'offline' && isOnline) return;
+        
+        html += `
+            <div class="sys-stat-card ${statusClass}" style="padding:12px 15px; border-left: 4px solid \${isOnline ? 'var(--color-green)' : 'var(--color-red)'}; background:rgba(255,255,255,0.02);">
+                <div style="font-size:0.7rem; opacity:0.7; font-family:monospace;">OUTPUT ${o.id} • ${o.url.split('://')[0].toUpperCase()}</div>
+                <div style="font-size:0.85rem; font-weight:500; margin:5px 0; word-break:break-all;">${(o.location || o.url).substring(0, 45)}</div>
+                <div style="font-size:0.8rem; display:flex; align-items:center; gap:5px;">
+                    <i class="fa-solid \${isOnline ? 'fa-satellite-dish' : 'fa-plug-circle-xmark'}"></i> \${statusText}
+                </div>
+            </div>
+        `;
+    });
+    
+    if (html === '') html = '<div style="color:var(--text-muted); padding:20px; text-align:center; width:100%;">No hay elementos en esta categoría.</div>';
+    
+    container.innerHTML = html;
+}
+
 function switchTab(tabId) {
     document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
     document.getElementById('nav-' + tabId).classList.add('active');
@@ -196,6 +261,7 @@ function toggleAnalyticsChannel(channelId) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+    switchTab('system'); // Iniciar en el Dashboard
     fetchData();
     initChart();
 
@@ -266,9 +332,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 updateTelemetryChart();
             }
         }
+        // Render streams list locally on dash
+        renderDashboardStreams();
     });
-
-
 
     socket.on('sys_stats', (stats) => {
         // CPU

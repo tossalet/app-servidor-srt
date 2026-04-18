@@ -22,8 +22,8 @@
                 </div>
             </div>
             <nav class="nav-menu">
-                <a href="#" class="nav-item active" id="nav-streams" onclick="switchTab('streams')"><i class="fa-solid fa-network-wired"></i> Streams</a>
-                <a href="#" class="nav-item" id="nav-system" onclick="switchTab('system')"><i class="fa-solid fa-sliders"></i> System</a>
+                <a href="#" class="nav-item active" id="nav-system" onclick="switchTab('system')"><i class="fa-solid fa-gauge-high"></i> Dashboard</a>
+                <a href="#" class="nav-item" id="nav-streams" onclick="switchTab('streams')"><i class="fa-solid fa-network-wired"></i> Streams</a>
                 <a href="#" class="nav-item" id="nav-analytics" onclick="switchTab('analytics')"><i class="fa-solid fa-chart-line"></i> Analytics</a>
                 <a href="#" class="nav-item" id="nav-storage" onclick="switchTab('storage')"><i class="fa-solid fa-hard-drive"></i> Storage</a>
                 <a href="#" class="nav-item" id="nav-settings" onclick="switchTab('settings')"><i class="fa-solid fa-gear"></i> Settings</a>
@@ -96,7 +96,14 @@
                     <canvas id="bitrateChart" style="width:100%; height:100%;"></canvas>
                 </div>
             </section>
-            <section class="system-container" id="systemContainer" style="display:none; padding-bottom: 2rem;">
+            <section class="system-container" id="systemContainer">
+                <div class="storage-header" style="padding: 1.5rem; background: rgba(0,0,0,0.2); border-radius: 12px; margin-bottom: 1.5rem;">
+                    <h2 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 0.5rem; display:flex; align-items:center; gap:10px;">
+                        <i class="fa-solid fa-gauge-high"></i> Global Dashboard
+                    </h2>
+                    <p style="color:var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">Visión general del estado del hardware y ruteo de señales del Servidor SRT.</p>
+                </div>
+                
                 <div class="system-grid">
                     <div class="sys-card">
                         <h3><i class="fa-solid fa-microchip"></i> CPU Load</h3>
@@ -127,20 +134,26 @@
                 </div>
 
                 <div class="system-overview-grid" style="margin-top:20px;">
-                    <div class="sys-stat-card">
+                    <div class="sys-stat-card" style="cursor:pointer;" onclick="setDashboardFilter('all')">
                         <div class="sys-sc-title">Total Configured Routes</div>
                         <div class="sys-sc-value" id="sys_routes_total">--</div>
                     </div>
-                    <div class="sys-stat-card ok">
+                    <div class="sys-stat-card ok" style="cursor:pointer;" onclick="setDashboardFilter('active')">
                         <div class="sys-sc-title">Active Running Streams</div>
                         <div class="sys-sc-value" id="sys_routes_ok" style="color:var(--color-green);">--</div>
                     </div>
-                    <div class="sys-stat-card error">
+                    <div class="sys-stat-card error" style="cursor:pointer;" onclick="setDashboardFilter('offline')">
                         <div class="sys-sc-title">Offline / Disabled</div>
                         <div class="sys-sc-value" id="sys_routes_err" style="color:var(--color-red);">--</div>
                     </div>
                 </div>
+
+                <div id="dashboard-filter-results" style="margin-top: 20px; display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 15px;">
+                    <!-- JavaScript will populate the filtered streams here -->
+                </div>
             </section>
+            
+            <section class="streams-container" id="streamsContainer" style="display:none;">
 
             <section class="settings-container" id="settingsContainer" style="display:none; padding-bottom: 2rem;">
                 <div class="settings-grid" style="display:grid; grid-template-columns: 1fr 1fr; gap:20px;">
