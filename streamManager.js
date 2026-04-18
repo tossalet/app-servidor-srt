@@ -293,9 +293,17 @@ function startOutput(outputObj) {
     if (isRtmp) format = 'flv';
     if (isDisk) {
         destUrl = url.replace('disk://', '');
-        if (destUrl.endsWith('.ts')) format = 'mpegts';
-        else if (destUrl.endsWith('.mkv')) format = 'matroska';
-        else format = 'mp4';
+        
+        // INTERVENCIÓN CRÍTICA:
+        // Si el usuario fuerza .mp4 manual, se bloquea el FFmpeg porque el multiplexador mp4
+        // se congela esperando metadatos de un UDP en directo, causando que el buffer UDP se llene y 
+        // Node.js sufra contrapresión, provocando microcortes en el resto de streams.
+        // Forzamos la terminación en .ts de forma silenciosa para blindar el servidor.
+        if (!destUrl.toLowerCase().endsWith('.ts')) {
+            destUrl = destUrl.replace(/\.(mp4|mkv|mov|flv)$/i, '') + '.ts';
+        }
+        
+        format = 'mpegts';
     }
 
     const vcodec = outputObj.vcodec || 'copy';
