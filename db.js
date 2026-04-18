@@ -60,8 +60,12 @@ function initDB() {
             chanMin INTEGER NOT NULL DEFAULT 1,
             chanMax INTEGER NOT NULL DEFAULT 20000,
             udpMin INTEGER NOT NULL DEFAULT 1024,
-            udpMax INTEGER NOT NULL DEFAULT 49151
+            udpMax INTEGER NOT NULL DEFAULT 49151,
+            rtmpPort INTEGER NOT NULL DEFAULT 1935
         )`);
+
+        // Migration for ports
+        db.run("ALTER TABLE ports ADD COLUMN rtmpPort INTEGER NOT NULL DEFAULT 1935", () => {});
 
         // Table users
         db.run(`CREATE TABLE IF NOT EXISTS users (

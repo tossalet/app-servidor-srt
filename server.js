@@ -15,7 +15,11 @@ const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
 streamManager.setIo(io);
 sysMonitor.setIo(io);
-rtmpServer.startRtmpServer();
+db.get('SELECT rtmpPort FROM ports LIMIT 1', (err, row) => {
+    let port = 1935;
+    if (row && row.rtmpPort) port = row.rtmpPort;
+    rtmpServer.startRtmpServer(port);
+});
 
 // Media Root for USB Recording and Playback
 const mediaRoot = process.platform === 'win32' ? path.join(__dirname, 'media') : '/media';
@@ -393,10 +397,39 @@ app.get('/api/ports', (req, res) => {
 });
 
 app.put('/api/ports', (req, res) => {
-    const { chanMin, chanMax, udpMin, udpMax } = req.body;
-    db.run('UPDATE ports SET chanMin=?, chanMax=?, udpMin=?, udpMax=?', [chanMin, chanMax, udpMin, udpMax], function(err) {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json({ updated: true });
+    const { chanMin, chanMax, udpMin, udpMax, rtmpPort } = req.body;
+    
+    // Obtenemos el viejo rtmpPort para saber si hay que hacer regex replace en BBDD
+    db.get('SELECT rtmpPort FROM ports LIMIT 1', [], (err, row) => {
+        const oldRtmpPort = row ? row.rtmpPort : 1935;
+        const newRtmpPort = rtmpPort || oldRtmpPort;
+        
+        db.run('UPDATE ports SET chanMin=?, chanMax=?, udpMin=?, udpMax=?, rtmpPort=?', 
+            [chanMin, chanMax, udpMin, udpMax, newRtmpPort], function(err) {
+            
+            if (err) return res.status(500).json({ error: err.message });
+            
+            // Si el puerto RTMP fue modificado, migramos las URLs!
+            if (newRtmpPort != oldRtmpPort) {
+                console.log(`[RTMP MIGRATOR] Migrando de ${oldRtmpPort} a ${newRtmpPort}...`);
+                const oldHost = `rtmp://127.0.0.1:${oldRtmpPort}/`;
+                const newHost = `rtmp://127.0.0.1:${newRtmpPort}/`;
+                
+                db.serialize(() => {
+                    db.run(`UPDATE inputs SET url = REPLACE(url, ?, ?) WHERE url LIKE ?`, [oldHost, newHost, `${oldHost}%`]);
+                    db.run(`UPDATE outputs SET url = REPLACE(url, ?, ?) WHERE url LIKE ?`, [oldHost, newHost, `${oldHost}%`]);
+                    
+                    // Reiniciar el NodeMediaServer subyacente de forma caliente
+                    rtmpServer.restartRtmpServer(newRtmpPort);
+                    
+                    // Emitir alerta a todos los dashoards para auto-refresh forzado de urls
+                    setTimeout(() => io.emit('db_update', { event: 'inputs_changed' }), 500);
+                    setTimeout(() => io.emit('db_update', { event: 'outputs_changed' }), 500);
+                });
+            }
+            
+            res.json({ updated: true });
+        });
     });
 });
 

@@ -9,6 +9,9 @@ let frontendTelemetryCache = {};
 let serverIp = window.location.hostname;
 const chartColors = ['#60A5FA', '#34d399', '#f87171', '#fbbf24', '#c084fc', '#f472b6', '#38bdf8', '#a3e635'];
 
+// Boot configuration
+fetch('/api/ports').then(r=>r.json()).then(d=>{ window.currentRtmpPort = d.rtmpPort || 1935; }).catch(()=>{ window.currentRtmpPort = 1935; });
+
 // SPA Navigation
 let currentDashboardFilter = null;
 
@@ -1044,7 +1047,7 @@ async function submitInput(e) {
         outUrl = ip.endsWith('/') ? `${ip}${key}` : `${ip}/${key}`;
     } else if (proto === 'rtmp_local') {
         const key = document.getElementById('inp_port').value || 'canal_1';
-        outUrl = `rtmp://127.0.0.1:1935/live/${key}`;
+        outUrl = `rtmp://127.0.0.1:${window.currentRtmpPort || 1935}/live/${key}`;
     } else {
         outUrl = document.getElementById('inp_ip').value || '';
     }
@@ -1092,7 +1095,7 @@ async function submitOutput(e) {
         outUrl = ip.endsWith('/') ? `${ip}${key}` : `${ip}/${key}`;
     } else if (proto === 'rtmp_local') {
         const key = document.getElementById('out_port').value || 'streaming_final';
-        outUrl = `rtmp://127.0.0.1:1935/out/${key}`;
+        outUrl = `rtmp://127.0.0.1:${window.currentRtmpPort || 1935}/out/${key}`;
     } else if (proto === 'srt') {
         const mode = document.getElementById('out_mode').value;
         const ip = (mode === 'listener') ? '0.0.0.0' : document.getElementById('out_ip').value;
@@ -1142,6 +1145,8 @@ async function fetchSettingsData() {
             document.getElementById('cfg_chanMax').value = ports.chanMax;
             document.getElementById('cfg_udpMin').value = ports.udpMin;
             document.getElementById('cfg_udpMax').value = ports.udpMax;
+            document.getElementById('cfg_rtmpPort').value = ports.rtmpPort || 1935;
+            window.currentRtmpPort = ports.rtmpPort || 1935;
         }
 
         // Render Users
@@ -1170,7 +1175,8 @@ async function savePorts(e) {
         chanMin: parseInt(document.getElementById('cfg_chanMin').value),
         chanMax: parseInt(document.getElementById('cfg_chanMax').value),
         udpMin: parseInt(document.getElementById('cfg_udpMin').value),
-        udpMax: parseInt(document.getElementById('cfg_udpMax').value)
+        udpMax: parseInt(document.getElementById('cfg_udpMax').value),
+        rtmpPort: parseInt(document.getElementById('cfg_rtmpPort').value)
     };
     try {
         await fetch('/api/ports', {
