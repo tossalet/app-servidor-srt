@@ -74,10 +74,10 @@ app.post('/api/inputs', (req, res) => {
             udpsrv = Math.floor(Math.random() * (max - min + 1)) + min;
         }
         
-        const query = `INSERT INTO inputs (url, name, provider, location, remote, audiowtdg, wtdgsecs, enabled, udpsrv) 
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+        const query = `INSERT INTO inputs (url, name, provider, location, remote, enabled, udpsrv) 
+                       VALUES (?, ?, ?, ?, ?, ?, ?)`;
         const params = [ url || '', name || 'Stream', provider || 'TodoStreaming', location || '', remote || '', 
-                         audiowtdg ? 1 : 0, wtdgsecs || 0, enabled !== false ? 1 : 0, udpsrv ];
+                         enabled !== false ? 1 : 0, udpsrv ];
         
         db.run(query, params, function(err) {
             if (err) return res.status(500).json({ error: err.message });
@@ -138,10 +138,10 @@ app.post('/api/inputs/:channel/preview', (req, res) => {
 
 app.put('/api/inputs/:channel', (req, res) => {
     const channelId = req.params.channel;
-    const { url, name, audiowtdg, wtdgsecs } = req.body;
-    const query = `UPDATE inputs SET url = ?, name = ?, audiowtdg = ?, wtdgsecs = ? WHERE channel = ?`;
+    const { url, name } = req.body;
+    const query = `UPDATE inputs SET url = ?, name = ? WHERE channel = ?`;
     
-    db.run(query, [url, name, audiowtdg ? 1 : 0, wtdgsecs, channelId], function(err) {
+    db.run(query, [url, name, channelId], function(err) {
         if (err) return res.status(500).json({ error: err.message });
         
         // Restart the process if it was running with new data

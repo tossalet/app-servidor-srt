@@ -339,7 +339,7 @@ function renderStreams() {
         if (latencyMatch) latencyText = latencyMatch[1] + ' ms';
 
         const inputHTML = `
-            <div class="stream-card expand-mode" id="input-card-${input.channel}">
+            <div class="stream-card" id="input-card-${input.channel}">
                 <div class="stream-header">
                     <div class="left-section">
                         <button class="btn-expand" onclick="toggleExpand(${input.channel})"><i class="fa-solid fa-chevron-down"></i></button>
