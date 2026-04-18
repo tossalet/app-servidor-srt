@@ -559,8 +559,11 @@ function updateOutputFields() {
             select.innerHTML = disks.map(d => `<option value="${d.path}">${d.name}</option>`).join('');
         });
         
-        if (!document.getElementById('out_location').value) {
-            document.getElementById('out_location').value = 'rec_' + new Date().getTime() + '.mp4';
+        if (!document.getElementById('out_location').value || document.getElementById('out_location').value.startsWith('rec_')) {
+            const channel = document.getElementById('out_channel').value;
+            const inData = inputs.find(i => i.channel == channel);
+            let inName = inData && inData.name ? inData.name.replace(/[^a-zA-Z0-9_\-]/g, '_') : ('CH' + channel);
+            document.getElementById('out_location').value = inName + '_Grabacion.mp4';
         }
     } else {
         modeContainer.style.display = 'none';

@@ -297,6 +297,21 @@ function startOutput(outputObj) {
     if (isRtmp) format = 'flv';
     if (isDisk) {
         destUrl = url.replace('disk://', '');
+        
+        // AUTO-TIMESTAMP TO PREVENT OVERWRITES:
+        // Inject current datetime into filename: NombreInput_20260418_223500.mp4
+        const now = new Date();
+        const df = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}`;
+        
+        const lastSlash = Math.max(destUrl.lastIndexOf('/'), destUrl.lastIndexOf('\\'));
+        const lastDot = destUrl.lastIndexOf('.');
+        
+        if (lastDot > lastSlash) {
+            destUrl = destUrl.substring(0, lastDot) + '_' + df + destUrl.substring(lastDot);
+        } else {
+            destUrl += '_' + df + '.mp4';
+        }
+
         if (destUrl.toLowerCase().endsWith('.ts')) format = 'mpegts';
         else if (destUrl.toLowerCase().endsWith('.mkv')) format = 'matroska';
         else format = 'mp4';
