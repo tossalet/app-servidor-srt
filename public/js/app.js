@@ -45,7 +45,7 @@ function renderDashboardStreams() {
         
         html += `
             <div class="sys-stat-card ${statusClass}" style="padding:12px 15px; border-left: 4px solid ${isOnline ? 'var(--color-green)' : (i.enabled ? 'var(--color-yellow)' : 'var(--color-red)')};">
-                <div style="font-size:0.7rem; opacity:0.7; font-family:monospace;">INPUT ${i.channel} • ${i.url.split('://')[0].toUpperCase()}</div>
+                <div style="font-size:0.7rem; opacity:0.7; font-family:monospace;">${i.url.split('://')[0].toUpperCase()}</div>
                 <div style="font-size:1rem; font-weight:600; margin:5px 0;">${i.name}</div>
                 <div style="font-size:1.1rem;">
                     <i class="fa-solid ${isOnline ? 'fa-circle-check' : (i.enabled ? 'fa-spinner fa-spin' : 'fa-circle-xmark')}"></i>
@@ -64,7 +64,7 @@ function renderDashboardStreams() {
         
         html += `
             <div class="sys-stat-card ${statusClass}" style="padding:12px 15px; border-left: 4px solid ${isOnline ? 'var(--color-green)' : 'var(--color-red)'}; background:rgba(255,255,255,0.02);">
-                <div style="font-size:0.7rem; opacity:0.7; font-family:monospace;">OUTPUT ${o.id} • ${o.url.split('://')[0].toUpperCase()}</div>
+                <div style="font-size:0.7rem; opacity:0.7; font-family:monospace;">${o.url.split('://')[0].toUpperCase()}</div>
                 <div style="font-size:0.85rem; font-weight:500; margin:5px 0; word-break:break-all;">${(o.location || o.url).substring(0, 45)}</div>
                 <div style="font-size:1.1rem;">
                     <i class="fa-solid ${isOnline ? 'fa-satellite-dish' : 'fa-plug-circle-xmark'}"></i>
@@ -271,6 +271,38 @@ document.addEventListener('DOMContentLoaded', () => {
     // Socket listeners
     socket.on('db_update', (data) => {
         console.log("DB Update:", data.event);
+        
+        // Optimización brutal: Si solo ha cambiado la previsualización, modificamos el DOM directamente
+        // Así evitamos destruir el HTML de las las otras cámaras y perder sus estados (ej. barras vs imagen)
+        if (data.event === 'preview_changed') {
+            const inp = inputs.find(i => i.channel == data.channel);
+            if (inp) inp.preview_enabled = data.preview_enabled;
+            
+            const img = document.getElementById(`thumb-img-${data.channel}`);
+            if (img) {
+                if (data.preview_enabled && inp.enabled) {
+                    img.classList.add('preview-active');
+                    if (img.classList.contains('has-signal')) {
+                        img.style.filter = 'none'; // Restaurar color
+                    }
+                } else {
+                    img.classList.remove('preview-active');
+                    if (img.src.includes('thumb_')) {
+                        img.style.filter = 'grayscale(100%) opacity(40%) blur(1px)';
+                    }
+                }
+                
+                // Buscar el botón justo al lado y actualizar su icono
+                const btn = img.nextElementSibling;
+                if (btn && btn.tagName === 'BUTTON') {
+                    btn.style.color = data.preview_enabled ? 'var(--color-green)' : '#fff';
+                    btn.title = data.preview_enabled ? 'Desactivar Previsualización (Ahorro CPU)' : 'Activar Previsualización';
+                    btn.innerHTML = `<i class="fa-solid ${data.preview_enabled ? 'fa-eye' : 'fa-eye-slash'}"></i>`;
+                }
+            }
+            return; // Salir! No hacemos fetchData ni repintamos todo el DOM.
+        }
+        
         fetchData();
     });
 

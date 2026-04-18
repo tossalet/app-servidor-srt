@@ -123,7 +123,7 @@ app.post('/api/inputs/:channel/preview', (req, res) => {
         const newState = row.preview_enabled ? 0 : 1;
         db.run('UPDATE inputs SET preview_enabled = ? WHERE channel = ?', [newState, channelId], function(err) {
             if (err) return res.status(500).json({ error: err.message });
-            io.emit('db_update', { event: 'inputs_changed' });
+            io.emit('db_update', { event: 'preview_changed', channel: channelId, preview_enabled: newState });
             
             // Start or stop the actual visual ffmpeg processor independently 
             if (newState === 1) {
