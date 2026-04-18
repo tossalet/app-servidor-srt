@@ -389,18 +389,32 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (!imgElem.classList.contains('has-signal')) {
                     imgElem.classList.add('has-signal');
                     imgElem.style.filter = isPreviewLive ? 'none' : 'grayscale(100%) opacity(40%) blur(1px)';
+                    
+                    if (!isPreviewLive) {
+                        fetch(`/api/inputs/${data.channel}/snapshot`, { method: 'POST' }).catch(e => console.error(e));
+                    }
                 }
-                if (!isPreviewLive && !imgElem.src.includes('thumb_')) {
-                    // Restaurar foto estática single-frame SOLAMENTE si estaba en barras (no estaba mostrando thumb)
-                    imgElem.src = `/thumbs/thumb_${data.channel}.jpg?t=${Math.floor(Date.now()/5000)}`;
+                
+                if (isPreviewLive) {
+                    // Update live
+                    imgElem.src = `/thumbs/thumb_${data.channel}.jpg?t=${Date.now()}`;
+                } else if (!imgElem.src.includes('thumb_')) {
+                    // Restaurar foto estática single-frame a prueba de fallos y sin parpadeos
+                    const temp = new Image();
+                    temp.onload = () => { imgElem.src = temp.src; };
+                    temp.src = `/thumbs/thumb_${data.channel}.jpg?t=${Math.floor(Date.now()/5000)}`;
                 }
             } else {
                 // No hay señal real
                 if (imgElem.classList.contains('has-signal')) imgElem.classList.remove('has-signal');
-                imgElem.src = '/images/bars.svg';
-                imgElem.style.filter = 'none';
+                // Nos aseguramos de mantener las barras
+                if (!imgElem.src.includes('bars.svg')) {
+                    imgElem.src = '/images/bars.svg';
+                    imgElem.style.filter = 'none';
+                }
             }
         }
+        
         if (data.codec) {
             const codecElem = document.getElementById(`codec-${data.channel}`);
             if (codecElem && data.codec.length > 0) codecElem.innerText = data.codec;

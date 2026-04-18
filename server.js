@@ -130,10 +130,18 @@ app.post('/api/inputs/:channel/preview', (req, res) => {
                 streamManager.startPreview(channelId);
             } else {
                 streamManager.stopPreview(channelId);
+                // Extraer un fotograma congelado al pararlo
+                setTimeout(() => streamManager.startPreview(channelId, true), 1000);
             }
             res.json({ preview_enabled: newState });
         });
     });
+});
+
+app.post('/api/inputs/:channel/snapshot', (req, res) => {
+    const channelId = req.params.channel;
+    streamManager.startPreview(channelId, true);
+    res.json({ status: 'Snapshot requested' });
 });
 
 app.put('/api/inputs/:channel', (req, res) => {
