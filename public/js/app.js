@@ -302,6 +302,55 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             return; // Salir! No hacemos fetchData ni repintamos todo el DOM.
         }
+        if (data.event === 'input_toggled') {
+            const inp = inputs.find(i => i.channel == data.channel);
+            if (inp) inp.enabled = data.enabled;
+            
+            // LED
+            const led = document.getElementById(`led-${data.channel}`);
+            if (led) {
+                led.className = `connection-led ${data.enabled ? 'active yellow' : 'error'} tooltip`;
+                const tt = led.querySelector('.tooltiptext');
+                if (tt) tt.innerText = data.enabled ? 'Enabled' : 'Disabled';
+            }
+            // Toggle Icon
+            const btn = document.querySelector(`#input-card-${data.channel} .toggle-enabled i`);
+            if (btn) btn.className = `fa-solid ${data.enabled ? 'fa-toggle-on' : 'fa-toggle-off'}`;
+            // Quality Bar
+            const qbar = document.getElementById(`qbar-${data.channel}`);
+            if (qbar) {
+                qbar.className = `fill ${data.enabled ? 'yellow' : 'red'}`;
+                qbar.style.width = data.enabled ? '100%' : '0%';
+            }
+            // Si lo deshabilitamos (OFF), la imagen pasa forzosamente a barras
+            if (!data.enabled) {
+                const img = document.getElementById(`thumb-img-${data.channel}`);
+                if (img) {
+                    img.src = '/images/bars.svg';
+                    img.style.filter = 'none';
+                    img.classList.remove('has-signal');
+                }
+            }
+            if (currentDashboardFilter !== null) renderDashboardStreams();
+            return;
+        }
+        if (data.event === 'output_toggled') {
+            const out = outputs.find(o => o.id == data.id);
+            if (out) out.enabled = data.enabled;
+            // LED
+            const led = document.getElementById(`led-out_${data.id}`);
+            if (led) {
+                led.className = `connection-led ${data.enabled ? 'active yellow' : 'error'} tooltip`;
+                const tt = led.querySelector('.tooltiptext');
+                if (tt) tt.innerText = data.enabled ? 'Enabled' : 'Disabled';
+            }
+            // Toggle Icon
+            const btn = document.querySelector(`#outputs-container-${out ? out.channel : ''} button[onclick="toggleOutput(${data.id})"] i`);
+            if (btn) btn.className = `fa-solid ${data.enabled ? 'fa-toggle-on' : 'fa-toggle-off'}`;
+            
+            if (currentDashboardFilter !== null) renderDashboardStreams();
+            return;
+        }
         
         fetchData();
     });
@@ -512,7 +561,7 @@ function renderStreams() {
                 <div class="stream-outputs" id="outputs-container-${input.channel}">
                     <div class="thumb-container" style="padding: 1rem 1.5rem; background: rgba(0,0,0,0.3); border-bottom: 1px solid rgba(255,255,255,0.05); display: flex; gap: 20px; align-items: center;">
                         <div style="position:relative; width:160px; height:90px; border-radius:6px; overflow:hidden; border:1px solid rgba(255,255,255,0.1); box-shadow: 0 4px 10px rgba(0,0,0,0.5);">
-                            <img id="thumb-img-${input.channel}" class="${input.preview_enabled && input.enabled ? 'preview-active' : ''}" data-src="/thumbs/thumb_${input.channel}.jpg" src="${input.enabled ? '/thumbs/thumb_' + input.channel + '.jpg' + (input.preview_enabled ? '?t=' + Date.now() : '') : '/images/bars.svg'}" onerror="this.onerror=null; this.src='/images/bars.svg';" style="width:100%; height:100%; object-fit:cover; filter: ${input.preview_enabled && input.enabled ? 'none' : 'grayscale(100%) opacity(40%) blur(1px)'}; transition: filter 0.3s;" />
+                            <img id="thumb-img-${input.channel}" class="${input.preview_enabled && input.enabled ? 'preview-active' : ''}" data-src="/thumbs/thumb_${input.channel}.jpg" src="${input.enabled ? '/thumbs/thumb_' + input.channel + '.jpg' + (input.preview_enabled ? '?t=' + Date.now() : '') : '/images/bars.svg'}" onerror="if(!this.src.includes('bars.svg')){this.src='/images/bars.svg';}" style="width:100%; height:100%; object-fit:cover; filter: ${input.preview_enabled && input.enabled ? 'none' : 'grayscale(100%) opacity(40%) blur(1px)'}; transition: filter 0.3s;" />
                             <button onclick="togglePreview(${input.channel})" class="action-btn" style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); background:rgba(0,0,0,0.6); padding:8px 12px; border:none; color:${input.preview_enabled ? 'var(--color-green)' : '#fff'}; border-radius:4px; font-size:1.2rem; cursor:pointer; opacity: 0.8; transition:0.2s;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.8" title="${input.preview_enabled ? 'Desactivar Previsualización (Ahorro CPU)' : 'Activar Previsualización'}">
                                 <i class="fa-solid ${input.preview_enabled ? 'fa-eye' : 'fa-eye-slash'}"></i>
                             </button>

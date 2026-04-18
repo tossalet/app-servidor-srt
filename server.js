@@ -102,7 +102,7 @@ app.post('/api/inputs/:channel/toggle', (req, res) => {
         if (err || !row) return res.status(404).json({ error: 'Not found' });
         const newEnabled = row.enabled ? 0 : 1;
         db.run('UPDATE inputs SET enabled = ? WHERE channel = ?', [newEnabled, channelId], function(err) {
-            io.emit('db_update', { event: 'inputs_changed' });
+            io.emit('db_update', { event: 'input_toggled', channel: channelId, enabled: newEnabled });
             res.json({ enabled: newEnabled });
             if (newEnabled) {
                 // Must get updated row to spawn
@@ -216,7 +216,7 @@ app.post('/api/outputs/:id/toggle', (req, res) => {
         if (err || !row) return res.status(404).json({ error: 'Not found' });
         const newEnabled = row.enabled ? 0 : 1;
         db.run('UPDATE outputs SET enabled = ? WHERE id = ?', [newEnabled, id], function(err) {
-            io.emit('db_update', { event: 'outputs_changed' });
+            io.emit('db_update', { event: 'output_toggled', id: id, enabled: newEnabled });
             res.json({ enabled: newEnabled });
             if (newEnabled) {
                 db.get('SELECT * FROM outputs WHERE id = ?', [id], (err, newRow) => {
