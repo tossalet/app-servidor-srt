@@ -293,17 +293,9 @@ function startOutput(outputObj) {
     if (isRtmp) format = 'flv';
     if (isDisk) {
         destUrl = url.replace('disk://', '');
-        
-        // INTERVENCIÓN CRÍTICA:
-        // Si el usuario fuerza .mp4 manual, se bloquea el FFmpeg porque el multiplexador mp4
-        // se congela esperando metadatos de un UDP en directo, causando que el buffer UDP se llene y 
-        // Node.js sufra contrapresión, provocando microcortes en el resto de streams.
-        // Forzamos la terminación en .ts de forma silenciosa para blindar el servidor.
-        if (!destUrl.toLowerCase().endsWith('.ts')) {
-            destUrl = destUrl.replace(/\.(mp4|mkv|mov|flv)$/i, '') + '.ts';
-        }
-        
-        format = 'mpegts';
+        if (destUrl.toLowerCase().endsWith('.ts')) format = 'mpegts';
+        else if (destUrl.toLowerCase().endsWith('.mkv')) format = 'matroska';
+        else format = 'mp4';
     }
 
     const vcodec = outputObj.vcodec || 'copy';
@@ -311,6 +303,7 @@ function startOutput(outputObj) {
     const args = [
         '-hide_banner',
         '-y',
+        '-fflags', '+genpts', // Critical for UDP to MP4 timebase
         '-i', localUdpIn
     ];
     
@@ -322,8 +315,14 @@ function startOutput(outputObj) {
         args.push('-c:a', 'copy');
     }
     
+    // Critical bitstream filter for AAC audio inside MP4 container from raw UDP streams
+    if (format === 'mp4') {
+        args.push('-bsf:a', 'aac_adtstoasc');
+        args.push('-max_muxing_queue_size', '1024'); // Prevent FFmpeg hanging on thread queue
+    }
+    
     if (isDisk && format === 'mp4') {
-        args.push('-movflags', '+frag_keyframe+empty_moov'); // Solo se usa mp4 fragmentado si el formato es mp4
+        args.push('-movflags', '+frag_keyframe+empty_moov+default_base_moof'); // MP4 fragmentado rocoso
     }
     
     args.push('-f', format);
