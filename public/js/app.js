@@ -320,6 +320,10 @@ async function fetchData() {
 }
 
 function renderStreams() {
+    // Preserve UI State
+    const expandedIds = new Set();
+    document.querySelectorAll('.stream-card.expand-mode').forEach(c => expandedIds.add(c.id));
+
     const container = document.getElementById('streamsContainer');
     container.innerHTML = '';
     
@@ -338,8 +342,10 @@ function renderStreams() {
         const latencyMatch = input.url.match(/latency=(\d+)/);
         if (latencyMatch) latencyText = latencyMatch[1] + ' ms';
 
+        const isExpandedClass = expandedIds.has(`input-card-${input.channel}`) ? 'expand-mode' : '';
+
         const inputHTML = `
-            <div class="stream-card" id="input-card-${input.channel}">
+            <div class="stream-card ${isExpandedClass}" id="input-card-${input.channel}">
                 <div class="stream-header">
                     <div class="left-section">
                         <button class="btn-expand" onclick="toggleExpand(${input.channel})"><i class="fa-solid fa-chevron-down"></i></button>
