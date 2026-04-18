@@ -73,7 +73,14 @@ function startInput(inputObj) {
         console.error(`[FATAL IN-${channel}] FFmpeg missing or crashed:`, err.message);
     });
 
+    let lastParseTime = 0;
+    
     child.stderr.on('data', (data) => {
+        const now = Date.now();
+        // THRESHOLD LIMIT: Solo analizamos expresiones regulares 2 veces por segundo para evitar saturar NodeJS y tirar paquetes UDP!
+        if (now - lastParseTime < 500) return;
+        lastParseTime = now;
+        
         const out = data.toString();
         
         // Match FFmpeg stats
@@ -87,7 +94,7 @@ function startInput(inputObj) {
         }
         
         if (bitrateMatch && ioInstance) {
-            if (activeInputs[channel]) activeInputs[channel].lastUpdate = Date.now();
+            if (activeInputs[channel]) activeInputs[channel].lastUpdate = now;
             
             if (!telemetryCache[channel]) telemetryCache[channel] = [];
             const brText = bitrateMatch[1];
@@ -375,14 +382,20 @@ function startOutput(outputObj) {
     });
 
     // Suppress heavy console logs but quietly parse bitrate metrics for UI telemetry without blocking V8
+    let lastParseTime = 0;
+    
     child.stderr.on('data', (data) => {
+        const now = Date.now();
+        if (now - lastParseTime < 500) return;
+        lastParseTime = now;
+        
         const out = data.toString();
         const bitrateMatch = out.match(/bitrate=\s*([\d.]+kbits\/s)/);
         const timeMatch = out.match(/time=([\d:.]+)/);
         
         if (bitrateMatch && ioInstance) {
             const outChan = 'out_' + id;
-            if (activeOutputs[id]) activeOutputs[id].lastUpdate = Date.now();
+            if (activeOutputs[id]) activeOutputs[id].lastUpdate = now;
             
             if (!telemetryCache[outChan]) telemetryCache[outChan] = [];
             const brText = bitrateMatch[1];
