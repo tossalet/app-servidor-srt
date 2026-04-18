@@ -223,11 +223,12 @@ function startPreview(channel, singleFrame = false) {
     ];
 
     if (singleFrame) {
-        // H265 y SRT a veces tardan en entregar un llavero (I-Frame). 
-        // Usamos el extractor continuo pero lo matamos artificialmente a los 12 segundos para asegurar al 100% la foto
-        args.push('-r', '1/5', '-update', '1', '-q:v', '5', '-f', 'image2', extPath);
+        // En H265 (HEVC), un -r 1/5 tiraba a la basura los primeros I-Frames porque el generador rítmico esperaba al segundo 5.
+        // Al pedir exactamente 1 frame sin tocar el framerate, FFmpeg guardará instantáneamente la primera foto válida que descifre.
+        args.push('-frames:v', '1', '-q:v', '5', '-update', '1', '-f', 'image2', extPath);
     } else {
-        args.push('-r', '1/5', '-update', '1', '-q:v', '5', '-f', 'image2', extPath);
+        // Modo continuo: 1 foto cada 2 segundos para dar más agilidad visual sin asfixiar la lente.
+        args.push('-r', '1/2', '-update', '1', '-q:v', '5', '-f', 'image2', extPath);
     }
 
     const child = spawn(ffmpegCmd, args);
