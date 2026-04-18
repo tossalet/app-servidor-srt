@@ -216,18 +216,27 @@ function startPreview(channel, singleFrame = false) {
     ];
 
     if (singleFrame) {
-        args.push('-vframes', '1', '-q:v', '5', '-f', 'image2', extPath);
+        // H265 y SRT a veces tardan en entregar un llavero (I-Frame). 
+        // Usamos el extractor continuo pero lo matamos artificialmente a los 12 segundos para asegurar al 100% la foto
+        args.push('-r', '1/5', '-update', '1', '-q:v', '5', '-f', 'image2', extPath);
     } else {
         args.push('-r', '1/5', '-update', '1', '-q:v', '5', '-f', 'image2', extPath);
     }
 
     const child = spawn(ffmpegCmd, args);
     activeInputs[channel].prevProcess = child;
+    
+    if (singleFrame) {
+        // Matar proceso después de 12 segundos (tiempo más que de sobra para extraer al menos 1 o 2 frames de H265)
+        setTimeout(() => stopPreview(channel), 12000);
+    }
 
     child.on('close', () => {
         if (activeInputs[channel] && activeInputs[channel].router && activeInputs[channel].prevPort === prevPort) {
             activeInputs[channel].router.subscribers.delete(prevPort);
-            activeInputs[channel].prevProcess = null;
+            if (activeInputs[channel].prevProcess === child) {
+                activeInputs[channel].prevProcess = null;
+            }
         }
     });
 }
