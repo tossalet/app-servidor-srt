@@ -218,6 +218,9 @@ function startPreview(channel, singleFrame = false) {
     const ffmpegCmd = getFFmpegPath();
     const args = [
         '-hide_banner', '-y',
+        '-probesize', '50000000',
+        '-analyzeduration', '50000000',
+        '-fpsprobesize', '0',
         '-i', `udp://127.0.0.1:${prevPort}?overrun_nonfatal=1`,
         '-map', '0:v?'
     ];
@@ -235,8 +238,8 @@ function startPreview(channel, singleFrame = false) {
     activeInputs[channel].prevProcess = child;
     
     if (singleFrame) {
-        // Matar proceso después de 12 segundos (tiempo más que de sobra para extraer al menos 1 o 2 frames de H265)
-        setTimeout(() => stopPreview(channel), 12000);
+        // Matar proceso después de 15 segundos (tiempo más que de sobra para extraer H265 si el GOP es muy largo)
+        setTimeout(() => stopPreview(channel), 15000);
     }
 
     child.on('close', () => {
