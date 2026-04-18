@@ -218,20 +218,18 @@ function startPreview(channel, singleFrame = false) {
     const ffmpegCmd = getFFmpegPath();
     const args = [
         '-hide_banner', '-y',
-        '-probesize', '50000000',
-        '-analyzeduration', '50000000',
-        '-fpsprobesize', '0',
+        // Forzamos a que el demuxer/decoder salte toda la basura rota hasta encontrar un fotograma en la red 100% puro y clave (I-Frame)
+        '-skip_frame', 'nokey',
         '-i', `udp://127.0.0.1:${prevPort}?overrun_nonfatal=1`,
         '-map', '0:v?'
     ];
 
     if (singleFrame) {
-        // En H265 (HEVC), un -r 1/5 tiraba a la basura los primeros I-Frames porque el generador rítmico esperaba al segundo 5.
         // Al pedir exactamente 1 frame sin tocar el framerate, FFmpeg guardará instantáneamente la primera foto válida que descifre.
         args.push('-frames:v', '1', '-q:v', '5', '-update', '1', '-f', 'image2', extPath);
     } else {
-        // Modo continuo: 1 foto cada 2 segundos para dar más agilidad visual sin asfixiar la lente.
-        args.push('-r', '1/2', '-update', '1', '-q:v', '5', '-f', 'image2', extPath);
+        // Modo continuo: -skip_frame nokey hará que extraiga las fotos al ritmo natural de los Keyframes de la cámara (cada 1 o 2 segs) con coste 0% CPU.
+        args.push('-update', '1', '-q:v', '5', '-f', 'image2', extPath);
     }
 
     const child = spawn(ffmpegCmd, args);
