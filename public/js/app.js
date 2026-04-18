@@ -306,11 +306,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     imgElem.classList.add('has-signal');
                     imgElem.style.filter = isPreviewLive ? 'none' : 'grayscale(100%) opacity(40%) blur(1px)';
                 }
-                if (isPreviewLive) {
-                    // Update live
-                    imgElem.src = `/thumbs/thumb_${data.channel}.jpg?t=${Date.now()}`;
-                } else if (!imgElem.src.includes('thumb_')) {
-                    // Restaurar foto estática single-frame
+                if (!isPreviewLive && !imgElem.src.includes('thumb_')) {
+                    // Restaurar foto estática single-frame SOLAMENTE si estaba en barras (no estaba mostrando thumb)
                     imgElem.src = `/thumbs/thumb_${data.channel}.jpg?t=${Math.floor(Date.now()/5000)}`;
                 }
             } else {
