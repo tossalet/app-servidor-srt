@@ -190,13 +190,16 @@ function startInput(inputObj) {
     activeInputs[channel] = { process: child, router: router, lastUpdate: Date.now(), inputObj: inputObj, isStopping: false, prevProcess: null, prevPort: null };
     
     if (inputObj.preview_enabled !== 0) {
-        startPreview(channel);
+        startPreview(channel, false);
+    } else {
+        // Feature UX: Grab a single snapshot frame even if preview is disabled
+        startPreview(channel, true);
     }
 
     return true;
 }
 
-function startPreview(channel) {
+function startPreview(channel, singleFrame = false) {
     if (!activeInputs[channel] || !activeInputs[channel].router) return;
     if (activeInputs[channel].prevProcess) stopPreview(channel);
 
@@ -209,13 +212,14 @@ function startPreview(channel) {
     const args = [
         '-hide_banner', '-y',
         '-i', `udp://127.0.0.1:${prevPort}?overrun_nonfatal=1`,
-        '-map', '0:v?',
-        '-r', '1/5',
-        '-update', '1',
-        '-q:v', '5',
-        '-f', 'image2',
-        extPath
+        '-map', '0:v?'
     ];
+
+    if (singleFrame) {
+        args.push('-vframes', '1', '-q:v', '5', '-f', 'image2', extPath);
+    } else {
+        args.push('-r', '1/5', '-update', '1', '-q:v', '5', '-f', 'image2', extPath);
+    }
 
     const child = spawn(ffmpegCmd, args);
     activeInputs[channel].prevProcess = child;
