@@ -74,24 +74,32 @@ function startInput(inputObj) {
     });
 
     let lastParseTime = 0;
+    let codecFound = false;
     
     child.stderr.on('data', (data) => {
+        const out = data.toString();
+        
+        // Extraer codec en cuanto aparezca (suele estar en los primeros chunks, no limitarlo por tiempo)
+        if (!codecFound) {
+            const codecMatch = out.match(/Video:\s*([a-zA-Z0-9_-]+)/);
+            if (codecMatch && activeInputs[channel]) {
+                let parsedCodec = codecMatch[1].toUpperCase();
+                if (parsedCodec === 'HEVC') parsedCodec = 'H.265';
+                else if (parsedCodec === 'H264') parsedCodec = 'H.264';
+                
+                activeInputs[channel].codec = parsedCodec;
+                codecFound = true;
+            }
+        }
+
         const now = Date.now();
-        // THRESHOLD LIMIT: Solo analizamos expresiones regulares 2 veces por segundo para evitar saturar NodeJS y tirar paquetes UDP!
+        // THRESHOLD LIMIT: Solo analizamos estadísticas 2 veces por segundo para evitar saturar NodeJS
         if (now - lastParseTime < 500) return;
         lastParseTime = now;
-        
-        const out = data.toString();
         
         // Match FFmpeg stats
         const bitrateMatch = out.match(/bitrate=\s*([\d.]+kbits\/s)/);
         const timeMatch = out.match(/time=([\d:.]+)/);
-        
-        // Match Codec (usually printed once dynamically at trace start)
-        const codecMatch = out.match(/Video:\s*([a-zA-Z0-9]+)/);
-        if (codecMatch && activeInputs[channel]) {
-            activeInputs[channel].codec = codecMatch[1].toUpperCase();
-        }
         
         if (bitrateMatch && ioInstance) {
             if (activeInputs[channel]) activeInputs[channel].lastUpdate = now;
