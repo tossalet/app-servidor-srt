@@ -176,11 +176,11 @@ app.delete('/api/inputs/:channel', (req, res) => {
         // Stop related outputs
         db.all('SELECT id FROM outputs WHERE channel = ?', [channelId], (err, rows) => {
             if (rows) rows.forEach(r => streamManager.stopOutput(r.id));
-            db.run('DELETE FROM outputs WHERE channel = ?', [channelId]);
+            db.run('DELETE FROM outputs WHERE channel = ?', [channelId], () => {
+                res.json({ deleted: true });
+                io.emit('db_update', { event: 'inputs_changed' });
+            });
         });
-
-        res.json({ deleted: this.changes });
-        io.emit('db_update', { event: 'inputs_changed' });
     });
 });
 
@@ -367,6 +367,7 @@ app.get('/api/files', (req, res) => {
 app.get('/api/media/play', (req, res) => {
     const fpath = req.query.path;
     if (!fpath || !fs.existsSync(fpath)) return res.status(404).send('Not found');
+    if (!fpath.includes(mediaRoot) && !fpath.includes('/media') && !fpath.includes('/mnt') && !fpath.includes('\\media')) return res.status(403).send('Forbidden area');
     res.sendFile(fpath);
 });
 
@@ -380,6 +381,11 @@ app.post('/api/files/delete', (req, res) => {
     }
 
     if (!absolutePath || !fs.existsSync(absolutePath)) return res.status(400).json({ error: 'Ruta invalida o no existe' });
+
+    // Evita Path Traversal para proteger sistema
+    if (!absolutePath.includes(mediaRoot) && !absolutePath.includes('/media') && !absolutePath.includes('/mnt') && !absolutePath.includes('\\media')) {
+        return res.status(403).json({ error: 'Acceso denegado a esa ruta' });
+    }
 
     try {
         fs.unlinkSync(absolutePath);
@@ -422,9 +428,21 @@ app.put('/api/ports', (req, res) => {
                     // Reiniciar el NodeMediaServer subyacente de forma caliente
                     rtmpServer.restartRtmpServer(newRtmpPort);
                     
-                    // Emitir alerta a todos los dashoards para auto-refresh forzado de urls
-                    setTimeout(() => io.emit('db_update', { event: 'inputs_changed' }), 500);
-                    setTimeout(() => io.emit('db_update', { event: 'outputs_changed' }), 500);
+                    // Detener TODOS los streams activos usando el streamManager
+                    db.all('SELECT * FROM inputs WHERE enabled = 1', [], (err, rows) => {
+                        if (rows) rows.forEach(r => streamManager.stopInput(r.channel));
+                        
+                        db.all('SELECT id FROM outputs WHERE enabled = 1', [], (err, outRows) => {
+                            if (outRows) outRows.forEach(o => streamManager.stopOutput(o.id));
+                            
+                            // Emitir alerta a todos los dashoards para auto-refresh forzado de urls
+                            setTimeout(() => io.emit('db_update', { event: 'inputs_changed' }), 500);
+                            setTimeout(() => io.emit('db_update', { event: 'outputs_changed' }), 500);
+                            
+                            // Re-levantarlos limpios con las URLs ya migradas
+                            setTimeout(bootActiveStreams, 2000);
+                        });
+                    });
                 });
             }
             

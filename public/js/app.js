@@ -651,6 +651,14 @@ function openModal(id) {
 }
 function closeModal(id) {
     document.getElementById(id).style.display = 'none';
+    if (id === 'previewModal') {
+        const video = document.getElementById('previewVideo');
+        if (video) {
+            video.pause();
+            video.removeAttribute('src'); // Stop downloading segment
+            video.load(); // Reset video element completely
+        }
+    }
 }
 function openOutputModal(channel) {
     document.getElementById('out_channel').value = channel;
@@ -772,7 +780,6 @@ function openEditInput(channel) {
     document.getElementById('inp_is_edit').value = 'true';
     document.getElementById('inp_edit_channel').value = channel;
     
-    document.getElementById('inp_name').value = input.name;
     document.getElementById('inp_name').value = input.name;
     // Watchdog config fields removed
     
@@ -960,15 +967,7 @@ function previewFile(url, fname) {
 }
 
 // Ensure video stops when modal is closed
-const oldCloseModal = closeModal;
-closeModal = function(id) {
-    if (id === 'previewModal') {
-        const video = document.getElementById('previewVideo');
-        video.pause();
-        video.src = "";
-    }
-    oldCloseModal(id);
-};
+
 
 
 function openEditOutput(id) {
