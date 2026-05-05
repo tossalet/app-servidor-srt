@@ -2,9 +2,9 @@ version: '3.8'
 
 services:
   tsst-server:
-    # IMPORTANTE: Reemplaza TU_USUARIO por tu nombre de usuario de GitHub real
+    # IMPORTANTE: Reemplaza tossalet por tu nombre de usuario de GitHub real
     # y el nombre del repositorio si es diferente
-    image: ghcr.io/TU_USUARIO/app-servidor-srt:main
+    image: ghcr.io/tossalet/app-servidor-srt:main
     container_name: tsst_server
     restart: always
     network_mode: "host" # Crucial para el rendimiento de SRT y UDP
