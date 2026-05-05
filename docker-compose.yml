@@ -2,14 +2,15 @@ version: '3.8'
 
 services:
   tsst-server:
-    build: .
-    image: tsst-server:latest
+    # IMPORTANTE: Reemplaza TU_USUARIO por tu nombre de usuario de GitHub real
+    # y el nombre del repositorio si es diferente
+    image: ghcr.io/TU_USUARIO/app-servidor-srt:main
     container_name: tsst_server
     restart: always
-    network_mode: "host" # Crucial for SRT/UDP port allocations without heavy iptables
+    network_mode: "host" # Crucial para el rendimiento de SRT y UDP
     volumes:
       - tsst_data:/usr/src/app/data
-      - /media:/media # Permite al contenedor acceder a todos los USBs montados en el host
+      - /media:/media # Permite guardar clips en los USBs montados
     environment:
       - NODE_ENV=production
 

@@ -1,0 +1,5 @@
+node_modules/
+onpremise.db
+media/
+*.log
+.env
