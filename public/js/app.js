@@ -266,39 +266,12 @@ function toggleAnalyticsChannel(channelId) {
     updateTelemetryChart();
 }
 
-function appendLogToViewer(logEntry) {
-    const viewer = document.getElementById('log-viewer');
-    if (!viewer) return;
-    
-    if (viewer.innerHTML.includes('Waiting for logs...')) viewer.innerHTML = '';
-    
-    const color = logEntry.level === 'ERROR' ? '#ef4444' : '#34d399';
-    const entryDiv = document.createElement('div');
-    entryDiv.style.marginBottom = '4px';
-    
-    // Escapar tags HTML del mensaje por seguridad y formatear
-    const safeMsg = logEntry.message ? logEntry.message.replace(/</g, "&lt;").replace(/>/g, "&gt;") : '';
-    entryDiv.innerHTML = `<span style="color:#6b7280;">[${logEntry.timestamp}]</span> <span style="color:${color}; font-weight:bold;">[${logEntry.level}]</span> <span style="word-break: break-all;">${safeMsg}</span>`;
-    
-    viewer.appendChild(entryDiv);
-    // Auto-scroll si está abajo del todo
-    viewer.scrollTop = viewer.scrollHeight;
-}
-
 document.addEventListener('DOMContentLoaded', () => {
     switchTab('system'); // Iniciar en el Dashboard
     fetchData();
     initChart();
-    
-    fetch('/api/logs').then(r => r.json()).then(logs => {
-        logs.forEach(l => appendLogToViewer(l));
-    }).catch(e => console.error("Error loading logs", e));
 
     // Socket listeners
-    socket.on('server_log', (logEntry) => {
-        appendLogToViewer(logEntry);
-    });
-
     socket.on('db_update', (data) => {
         console.log("DB Update:", data.event);
         
@@ -415,12 +388,6 @@ document.addEventListener('DOMContentLoaded', () => {
             const isPreviewLive = imgElem.classList.contains('preview-active');
             
             if (bitVal > 0) {
-                // Cancelar cualquier cuenta atrás de pérdida de señal
-                if (imgElem.dataset.offlineTimeout) {
-                    clearTimeout(parseInt(imgElem.dataset.offlineTimeout));
-                    delete imgElem.dataset.offlineTimeout;
-                }
-
                 // Hay señal
                 if (!imgElem.classList.contains('has-signal')) {
                     imgElem.classList.add('has-signal');
@@ -441,17 +408,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     temp.src = `/thumbs/thumb_${data.channel}.jpg?t=${Math.floor(Date.now()/5000)}`;
                 }
             } else {
-                // No hay señal real (iniciar debounce para no parpadear)
-                if (!imgElem.dataset.offlineTimeout) {
-                    imgElem.dataset.offlineTimeout = setTimeout(() => {
-                        if (imgElem.classList.contains('has-signal')) imgElem.classList.remove('has-signal');
-                        // Nos aseguramos de mantener las barras
-                        if (!imgElem.src.includes('bars.svg')) {
-                            imgElem.src = '/images/bars.svg';
-                            imgElem.style.filter = 'none';
-                        }
-                        delete imgElem.dataset.offlineTimeout;
-                    }, 5000).toString();
+                // No hay señal real
+                if (imgElem.classList.contains('has-signal')) imgElem.classList.remove('has-signal');
+                // Nos aseguramos de mantener las barras
+                if (!imgElem.src.includes('bars.svg')) {
+                    imgElem.src = '/images/bars.svg';
+                    imgElem.style.filter = 'none';
                 }
             }
         }
@@ -480,20 +442,6 @@ document.addEventListener('DOMContentLoaded', () => {
             cpuLabel.innerText = stats.cpuLoad;
             cpuBar.style.width = stats.cpuLoad + '%';
             cpuBar.style.background = stats.cpuLoad > 85 ? 'var(--color-red)' : 'var(--accent-blue)';
-        }
-        
-        // Temperature
-        const tempEl = document.getElementById('sys_temp');
-        if (tempEl) {
-            tempEl.innerText = stats.cpuTemp !== undefined && stats.cpuTemp !== '--' ? stats.cpuTemp + ' °C' : '-- °C';
-            if (stats.cpuTemp !== undefined && stats.cpuTemp !== '--') {
-                const t = parseFloat(stats.cpuTemp);
-                if (t >= 80) tempEl.style.color = 'var(--color-red)';
-                else if (t >= 70) tempEl.style.color = 'var(--color-yellow)';
-                else tempEl.style.color = 'var(--color-green)';
-            } else {
-                tempEl.style.color = 'inherit';
-            }
         }
         
         // RAM
@@ -531,15 +479,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const thumbs = document.querySelectorAll('.thumb-container img');
         thumbs.forEach(img => {
             const baseSrc = img.dataset.src;
-            // Actualizar si el "Ojo" está activo, o si la imagen está trabada en las barras de color (para recuperar la foto inicial)
-            if (baseSrc && (img.classList.contains('preview-active') || img.src.includes('bars.svg'))) {
+            if (baseSrc && img.classList.contains('preview-active')) {
                 const tempImg = new Image();
                 tempImg.onload = () => { img.src = tempImg.src; };
-                // Eliminamos el onerror que forzaba falsas barras rojas si coincidía que leíamos mientras ffmpeg guardaba
+                tempImg.onerror = () => { img.src = '/images/bars.svg'; };
                 tempImg.src = `${baseSrc}?t=${Date.now()}`;
             }
         });
-    }, 4000);
+    }, 5000); // refresh every 5s corresponding to ffmpeg capture rate
 });
 
 async function fetchData() {
@@ -570,18 +517,27 @@ function renderStreams() {
 
     const container = document.getElementById('streamsContainer');
     container.innerHTML = '';
+    
+    const serverIp = window.location.hostname;
 
     inputs.forEach(input => {
         const inputOutputs = outputs.filter(o => o.channel === input.channel);
         
         let protocolBadge = 'srt';
-        let protocolText = 'RTSP';
+        let protocolText = 'SRT-L';
+        if (input.url.startsWith('udp')) { protocolBadge = 'udp'; protocolText = 'UDP'; }
+        else if (input.url.startsWith('rtmp://127.0.0.1')) { protocolBadge = 'rtmp'; protocolText = 'RTMP LOC'; }
+        else if (input.url.startsWith('rtmp')) { protocolBadge = 'rtmp'; protocolText = 'RTMP REM'; }
+
+        let latencyText = 'Auto';
+        const latencyMatch = input.url.match(/latency=(\d+)/);
+        if (latencyMatch) latencyText = latencyMatch[1] + ' ms';
 
         const isExpandedClass = expandedIds.has(`input-card-${input.channel}`) ? 'expand-mode' : '';
 
         const inputHTML = `
             <div class="stream-card ${isExpandedClass}" id="input-card-${input.channel}">
-                <div class="stream-header" style="cursor: pointer;" onclick="if(event.target.closest('.control-actions') || event.target.closest('button') || event.target.tagName === 'BUTTON') return; toggleExpand(${input.channel})">
+                <div class="stream-header">
                     <div class="left-section">
                         <button class="btn-expand" onclick="toggleExpand(${input.channel})"><i class="fa-solid fa-chevron-down"></i></button>
                         <div id="led-${input.channel}" class="connection-led ${input.enabled ? 'active yellow' : 'error'} tooltip">
@@ -621,15 +577,20 @@ function renderStreams() {
                 
                 <div class="stream-outputs" id="outputs-container-${input.channel}">
                     <div class="thumb-container" style="padding: 1rem 1.5rem; background: rgba(0,0,0,0.3); border-bottom: 1px solid rgba(255,255,255,0.05); display: flex; gap: 20px; align-items: center;">
-                        <div style="position:relative; width:160px; height:90px; flex-shrink:0; border-radius:6px; overflow:hidden; border:1px solid rgba(255,255,255,0.1); box-shadow: 0 4px 10px rgba(0,0,0,0.5);">
+                        <div style="position:relative; width:160px; height:90px; border-radius:6px; overflow:hidden; border:1px solid rgba(255,255,255,0.1); box-shadow: 0 4px 10px rgba(0,0,0,0.5);">
                             <img id="thumb-img-${input.channel}" class="${input.preview_enabled && input.enabled ? 'preview-active' : ''}" data-src="/thumbs/thumb_${input.channel}.jpg" src="${input.enabled ? '/thumbs/thumb_' + input.channel + '.jpg' + (input.preview_enabled ? '?t=' + Date.now() : '') : '/images/bars.svg'}" onerror="if(!this.src.includes('bars.svg')){this.src='/images/bars.svg';}" style="width:100%; height:100%; object-fit:cover; filter: ${input.preview_enabled && input.enabled ? 'none' : 'grayscale(100%) opacity(40%) blur(1px)'}; transition: filter 0.3s;" />
                             <button onclick="togglePreview(${input.channel})" class="action-btn" style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); background:rgba(0,0,0,0.6); padding:8px 12px; border:none; color:${input.preview_enabled ? 'var(--color-green)' : '#fff'}; border-radius:4px; font-size:1.2rem; cursor:pointer; opacity: 0.8; transition:0.2s;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.8" title="${input.preview_enabled ? 'Desactivar Previsualización (Ahorro CPU)' : 'Activar Previsualización'}">
                                 <i class="fa-solid ${input.preview_enabled ? 'fa-eye' : 'fa-eye-slash'}"></i>
                             </button>
                         </div>
-                        <div style="font-size:0.85rem; color:var(--text-muted); line-height: 1.4; display:flex; flex-direction:column; gap:5px; min-width:0;">
-                            <p><strong>URL Origen:</strong></p>
-                            <span style="color:#fff; font-weight:600; font-family:monospace; word-break: break-all;">${input.url}</span>
+                        <div style="font-size:0.85rem; color:var(--text-muted); line-height: 1.4; display:flex; flex-direction:column; gap:5px;">
+                            <p><strong>Parámetros de Recepción:</strong></p>
+                            <div style="display:flex; align-items:center; gap: 10px;">
+                                <span class="badge-protocol ${protocolBadge === 'srt' ? 'udp' : 'rtmp'}">${protocolBadge === 'srt' ? 'Buffer SRT' : 'Buffer N/A'}</span>
+                                <span style="color:#fff; font-weight:600;">${latencyText}</span>
+                                ${protocolBadge === 'srt' ? `<button onclick="editLatency(${input.channel}, '${input.url}')" style="background:transparent; border:none; color:var(--accent-blue); cursor:pointer; font-size:0.9rem;" title="Editar Latencia del Stream"><i class="fa-solid fa-pen"></i></button>` : ''}
+                            </div>
+                            <p style="font-size: 0.75rem; margin-top: 2px; opacity:0.7;">Optimiza este valor según el retardo de la red (${protocolBadge === 'srt' ? '120ms recomendado' : 'Sólo configurable en SRT'}).</p>
                         </div>
                     </div>
                     ${inputOutputs.map(out => `
@@ -640,7 +601,7 @@ function renderStreams() {
                                     <span class="tooltiptext">${out.enabled ? 'Enabled' : 'Disabled'}</span>
                                 </div>
                                 <span class="stream-name" style="display:flex; flex-direction:column; line-height:1.2;">
-                                    ${out.location || out.url.replace(/127\.0\.0\.1|0\.0\.0\.0/g, serverIp)}
+                                    ${out.location || out.url}
                                     <span style="font-size:0.70rem; color:var(--text-muted); font-family:monospace; font-weight:normal; user-select:all;">${out.url.replace(/127\.0\.0\.1|0\.0\.0\.0/g, serverIp)}</span>
                                 </span>
                             </div>
@@ -699,18 +660,71 @@ function closeModal(id) {
         }
     }
 }
+
+// Abre el modal de nuevo input reseteado y con los campos correctos visibles
+function openAddInputModal() {
+    document.getElementById('inp_is_edit').value = 'false';
+    document.getElementById('inp_edit_channel').value = '';
+    document.getElementById('formInput').reset();
+    document.querySelector('#inputModal .modal-header h3').innerText = 'Add New Input Stream';
+    // Restablecer selects al valor por defecto antes de actualizar los campos
+    document.getElementById('inp_protocol').value = 'srt';
+    document.getElementById('inp_mode').value = 'listener';
+    updateInputFields();
+    openModal('inputModal');
+}
+
 function openOutputModal(channel) {
     document.getElementById('out_channel').value = channel;
     document.getElementById('out_is_edit').value = 'false';
     document.querySelector('#outputModal .modal-header h3').innerText = 'Add Output';
     document.getElementById('formOutput').reset();
+    document.getElementById('out_protocol').value = 'srt';
+    document.getElementById('out_mode').value = 'caller';
     updateOutputFields();
     openModal('outputModal');
 }
 
 // API Interactions
 function updateInputFields() {
-    // Only RTSP logic needed, fields simplified in HTML
+    const proto = document.getElementById('inp_protocol').value;
+    const modeContainer = document.getElementById('inp_mode_container');
+    const ipContainer = document.getElementById('inp_ip_container');
+    const portContainer = document.getElementById('inp_port_container');
+    const ipLabel = document.getElementById('inp_ip_label');
+    const portLabel = document.getElementById('inp_port_label');
+    
+    if (proto === 'srt') {
+        modeContainer.style.display = 'block';
+        portContainer.style.display = 'block';
+        ipLabel.innerText = 'Target IP';
+        portLabel.innerText = 'Port (External)';
+        const mode = document.getElementById('inp_mode').value;
+        ipContainer.style.display = (mode === 'listener') ? 'none' : 'block';
+    } else if (proto === 'rtmp') {
+        modeContainer.style.display = 'none';
+        portContainer.style.display = 'block';
+        ipContainer.style.display = 'block';
+        ipLabel.innerText = 'Servidor URL';
+        document.getElementById('inp_ip').placeholder = 'rtmp://servidor.com/live';
+        portLabel.innerText = 'Stream Key';
+        document.getElementById('inp_port').placeholder = 'mi_clave_secreta';
+        document.getElementById('inp_port').type = 'text';
+    } else if (proto === 'rtmp_local') {
+        modeContainer.style.display = 'none';
+        portContainer.style.display = 'block';
+        ipContainer.style.display = 'none';
+        portLabel.innerText = 'Stream Key Local';
+        document.getElementById('inp_port').placeholder = 'canal_1';
+        document.getElementById('inp_port').type = 'text';
+    } else {
+        modeContainer.style.display = 'none';
+        portContainer.style.display = 'block';
+        ipContainer.style.display = 'block';
+        ipLabel.innerText = 'Target IP';
+        portLabel.innerText = 'Port (External)';
+        document.getElementById('inp_port').type = 'number';
+    }
 }
 
 function updateOutputFields() {
@@ -784,18 +798,85 @@ function openEditInput(channel) {
     document.getElementById('inp_edit_channel').value = channel;
     
     document.getElementById('inp_name').value = input.name;
-    document.getElementById('inp_ip').value = input.url;
-    const bufEl = document.getElementById('inp_buffer');
-    if(bufEl) bufEl.value = input.buffer || 0;
+    // Watchdog config fields removed
     
+    // Parse url broadly
+    if (input.url.startsWith('srt')) {
+        document.getElementById('inp_protocol').value = 'srt';
+        const isListener = input.url.includes('mode=listener');
+        document.getElementById('inp_mode').value = isListener ? 'listener' : 'caller';
+        const portMatch = input.url.match(/:(\d+)/);
+        if(portMatch) document.getElementById('inp_port').value = portMatch[1];
+    } else if (input.url.startsWith('rtmp://127.0.0.1:1935/live/')) {
+        document.getElementById('inp_protocol').value = 'rtmp_local';
+        document.getElementById('inp_port').value = input.url.replace('rtmp://127.0.0.1:1935/live/', '');
+    } else if (input.url.startsWith('rtmp')) {
+        document.getElementById('inp_protocol').value = 'rtmp';
+        const lastSlash = input.url.lastIndexOf('/');
+        document.getElementById('inp_ip').value = input.url.substring(0, lastSlash);
+        document.getElementById('inp_port').value = input.url.substring(lastSlash + 1);
+    } else {
+        document.getElementById('inp_protocol').value = 'udp';
+        const portMatch = input.url.match(/:(\d+)/);
+        if(portMatch) document.getElementById('inp_port').value = portMatch[1];
+    }
     updateInputFields();
     
     // Changing Modal Header
-    document.querySelector('#inputModal .modal-header h3').innerText = 'Editar Cámara RTSP';
+    document.querySelector('#inputModal .modal-header h3').innerText = 'Editar Input Stream';
     openModal('inputModal');
 }
 
+function editLatency(channelId, currentUrl) {
+    let currentLatency = '';
+    const match = currentUrl.match(/latency=(\d+)/);
+    if (match) currentLatency = match[1];
 
+    document.getElementById('lat_channel').value = channelId;
+    document.getElementById('lat_current_url').value = currentUrl;
+    document.getElementById('lat_value').value = currentLatency;
+    
+    openModal('latencyModal');
+}
+
+async function submitLatency(e) {
+    e.preventDefault();
+    const channelId = parseInt(document.getElementById('lat_channel').value);
+    const currentUrl = document.getElementById('lat_current_url').value;
+    const newVal = document.getElementById('lat_value').value;
+
+    const match = currentUrl.match(/latency=(\d+)/);
+    let newUrl = currentUrl;
+    
+    if (newVal === '') {
+        // Remove latency completely
+        newUrl = newUrl.replace(/([&?])latency=\d+&?/, '$1').replace(/[&?]$/, '');
+    } else {
+        if (match) {
+            newUrl = newUrl.replace(/latency=\d+/, `latency=${newVal}`);
+        } else {
+            const separator = newUrl.includes('?') ? '&' : '?';
+            newUrl = newUrl + separator + `latency=${newVal}`;
+        }
+    }
+
+    const inputData = inputs.find(i => i.channel === channelId);
+    if (!inputData) return;
+
+    try {
+        await fetch(`/api/inputs/${channelId}`, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                url: newUrl,
+                name: inputData.name
+            })
+        });
+        closeModal('latencyModal');
+    } catch (e) {
+        console.error("Error updating latency", e);
+    }
+}
 
 // ===================================
 // FILE MANAGEMENT LOGIC
@@ -965,12 +1046,31 @@ function openEditOutput(id) {
 
 async function submitInput(e) {
     e.preventDefault();
-    let outUrl = document.getElementById('inp_ip').value || '';
+    const proto = document.getElementById('inp_protocol').value;
+    const port = document.getElementById('inp_port').value;
+    let outUrl = '';
+
+    if (proto === 'srt') {
+        const mode = document.getElementById('inp_mode').value;
+        const ip = (mode === 'listener') ? '0.0.0.0' : document.getElementById('inp_ip').value;
+        outUrl = `srt://${ip}:${port}?mode=${mode}`;
+    } else if (proto === 'udp') {
+        const ip = document.getElementById('inp_ip').value || '0.0.0.0';
+        outUrl = `udp://${ip}:${port}`;
+    } else if (proto === 'rtmp') {
+        const ip = document.getElementById('inp_ip').value; // e.g. rtmp://x.com/live
+        const key = document.getElementById('inp_port').value; // e.g. xyz
+        outUrl = ip.endsWith('/') ? `${ip}${key}` : `${ip}/${key}`;
+    } else if (proto === 'rtmp_local') {
+        const key = document.getElementById('inp_port').value || 'canal_1';
+        outUrl = `rtmp://127.0.0.1:${window.currentRtmpPort || 1935}/live/${key}`;
+    } else {
+        outUrl = document.getElementById('inp_ip').value || '';
+    }
 
     const data = {
         name: document.getElementById('inp_name').value,
-        url: outUrl,
-        buffer: parseInt(document.getElementById('inp_buffer').value) || 0
+        url: outUrl
     };
     
     const isEdit = document.getElementById('inp_is_edit').value === 'true';
@@ -1008,7 +1108,6 @@ async function submitOutput(e) {
     } else if (proto === 'rtmp') {
         const ip = document.getElementById('out_ip').value;
         const key = document.getElementById('out_port').value;
-        if(!ip || !key) { alert('Rellene la IP y la Clave para RTMP'); return; }
         outUrl = ip.endsWith('/') ? `${ip}${key}` : `${ip}/${key}`;
     } else if (proto === 'rtmp_local') {
         const key = document.getElementById('out_port').value || 'streaming_final';
@@ -1016,12 +1115,9 @@ async function submitOutput(e) {
     } else if (proto === 'srt') {
         const mode = document.getElementById('out_mode').value;
         const ip = (mode === 'listener') ? '0.0.0.0' : document.getElementById('out_ip').value;
-        if(!port) { alert('El puerto es obligatorio'); return; }
-        // Se añade pkt_size=1316 (estándar MTU para MPEG-TS) y latency=200000 (200ms) para absorber micro-jitter de red y CPU
-        outUrl = `srt://${ip}:${port}?mode=${mode}&pkt_size=1316&latency=200000`;
+        outUrl = `srt://${ip}:${port}?mode=${mode}`;
     } else {
         const ip = document.getElementById('out_ip').value || '127.0.0.1';
-        if(!port) { alert('El puerto es obligatorio'); return; }
         outUrl = `udp://${ip}:${port}`;
     }
 
