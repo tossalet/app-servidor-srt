@@ -18,8 +18,9 @@ WORKDIR /usr/src/app
 # Copy package info
 COPY package*.json ./
 
-# Install npm dependencies (sin las de desarrollo)
-RUN npm ci --omit=dev
+# Install npm dependencies (sin las de desarrollo).
+# npm install y no npm ci: el package-lock.json actual no lo acepta el npm 10 de Node 22 ("Missing ... from lock file")
+RUN npm install --omit=dev --no-audit --no-fund
 
 # Copy application files
 COPY . .
