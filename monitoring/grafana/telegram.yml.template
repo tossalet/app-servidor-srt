@@ -1,0 +1,22 @@
+# Aviso de alertas por Telegram. Plantilla: el instalador la copia a provisioning/alerting/
+# rellenando __BOT_TOKEN__ y __CHAT_ID__ (sólo si se elige Telegram).
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: TSST Telegram
+    receivers:
+      - uid: tsst-telegram
+        type: telegram
+        settings:
+          bottoken: "__BOT_TOKEN__"
+          chatid: "__CHAT_ID__"
+        disableResolveMessage: false
+
+policies:
+  - orgId: 1
+    receiver: TSST Telegram
+    group_by: ['alertname']
+    group_wait: 10s
+    group_interval: 2m
+    repeat_interval: 1h

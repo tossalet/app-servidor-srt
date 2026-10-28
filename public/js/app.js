@@ -1,4 +1,72 @@
+// Sesión: si el servidor responde 401 (o exige cambiar la contraseña) volvemos al login
+const nativeFetch = window.fetch.bind(window);
+window.fetch = async (...args) => {
+    const res = await nativeFetch(...args);
+    if (res.status === 401) {
+        window.location.href = '/login.html';
+    } else if (res.status === 403) {
+        const body = await res.clone().json().catch(() => ({}));
+        if (body.error === 'password_change_required') window.location.href = '/login.html';
+    }
+    return res;
+};
+
 const socket = io();
+socket.on('connect_error', (err) => {
+    if (err.message === 'unauthorized') window.location.href = '/login.html';
+});
+// El servidor cierra el socket si borran el usuario o cambian su contraseña
+socket.on('disconnect', (reason) => {
+    if (reason === 'io server disconnect') fetch('/api/auth/me');
+});
+
+let currentUser = null;
+const ROLE_ADMIN = 4;
+
+function escapeHtml(str) {
+    return String(str ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+async function loadSession() {
+    const res = await fetch('/api/auth/me');
+    if (!res.ok) return;
+    currentUser = await res.json();
+    document.getElementById('session-user').innerText = currentUser.username;
+    document.getElementById('session-role').innerText = currentUser.role === ROLE_ADMIN ? 'Administrador' : 'Operador';
+    // Puertos y usuarios sólo para administradores (el servidor también lo exige)
+    document.getElementById('nav-settings').style.display = currentUser.role === ROLE_ADMIN ? '' : 'none';
+
+    // Enlace a Grafana (mismo host, su propio puerto) si está instalado
+    const status = await fetch('/api/status').then(r => r.json()).catch(() => ({}));
+    if (status.grafanaPort) {
+        const link = document.getElementById('nav-grafana');
+        link.href = `${window.location.protocol}//${window.location.hostname}:${status.grafanaPort}/d/tsst`;
+        link.style.display = '';
+    }
+}
+
+async function logout() {
+    await fetch('/api/auth/logout', { method: 'POST' });
+    window.location.href = '/login.html';
+}
+
+async function submitOwnPassword(e) {
+    e.preventDefault();
+    const newPassword = document.getElementById('pwd_new').value;
+    if (newPassword !== document.getElementById('pwd_repeat').value) {
+        return alert('Las contraseñas nuevas no coinciden');
+    }
+    const res = await fetch('/api/auth/password', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ currentPassword: document.getElementById('pwd_current').value, newPassword })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return alert(data.error || 'No se pudo cambiar la contraseña');
+    document.getElementById('formPassword').reset();
+    closeModal('passwordModal');
+    alert('Contraseña actualizada. Las demás sesiones abiertas de tu usuario se han cerrado.');
+}
 
 // State
 let inputs = [];
@@ -267,6 +335,7 @@ function toggleAnalyticsChannel(channelId) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+    loadSession();
     switchTab('system'); // Iniciar en el Dashboard
     fetchData();
     initChart();
@@ -274,7 +343,16 @@ document.addEventListener('DOMContentLoaded', () => {
     // Socket listeners
     socket.on('db_update', (data) => {
         console.log("DB Update:", data.event);
-        
+
+        // Cambio de sincronía: sólo actualizamos la etiqueta, sin re-renderizar (se arrastra el slider en vivo)
+        if (data.event === 'delay_changed') {
+            const inp = inputs.find(i => i.channel == data.channel);
+            if (inp) inp.delay_ms = data.delay_ms;
+            const el = document.getElementById(`delay-${data.channel}`);
+            if (el) el.innerText = `${data.delay_ms} ms`;
+            return;
+        }
+
         // Optimización brutal: Si solo ha cambiado la previsualización, modificamos el DOM directamente
         // Así evitamos destruir el HTML de las las otras cámaras y perder sus estados (ej. barras vs imagen)
         if (data.event === 'preview_changed') {
@@ -358,6 +436,11 @@ document.addEventListener('DOMContentLoaded', () => {
         fetchData();
     });
 
+    socket.on('telemetry_snapshot', (snapshot) => {
+        frontendTelemetryCache = snapshot || {};
+        updateTelemetryChart();
+    });
+
     socket.on('stats', (data) => {
         const bitElem = document.getElementById(`bitrate-${data.channel}`);
         const timeElem = document.getElementById(`time-${data.channel}`);
@@ -423,10 +506,20 @@ document.addEventListener('DOMContentLoaded', () => {
             if (codecElem && data.codec.length > 0) codecElem.innerText = data.codec;
         }
 
-        // Backend pushes historical telemetry for each update
-        if (data.history) {
-            frontendTelemetryCache[data.channel.toString()] = data.history;
-            if (selectedAnalyticsChannels.has(data.channel.toString())) {
+        if ('srt' in data) renderSrtStats(String(data.channel), data.srt);
+
+        if (data.delay !== undefined) {
+            const delayElem = document.getElementById(`delay-${data.channel}`);
+            if (delayElem) delayElem.innerText = `${data.delay} ms`;
+        }
+
+        // Backend sends only the new point; full history arrives once in 'telemetry_snapshot'
+        if (data.point) {
+            const key = data.channel.toString();
+            const hist = frontendTelemetryCache[key] || (frontendTelemetryCache[key] = []);
+            hist.push(data.point);
+            if (hist.length > 60) hist.shift();
+            if (selectedAnalyticsChannels.has(key)) {
                 updateTelemetryChart();
             }
         }
@@ -590,7 +683,13 @@ function renderStreams() {
                                 <span style="color:#fff; font-weight:600;">${latencyText}</span>
                                 ${protocolBadge === 'srt' ? `<button onclick="editLatency(${input.channel}, '${input.url}')" style="background:transparent; border:none; color:var(--accent-blue); cursor:pointer; font-size:0.9rem;" title="Editar Latencia del Stream"><i class="fa-solid fa-pen"></i></button>` : ''}
                             </div>
-                            <p style="font-size: 0.75rem; margin-top: 2px; opacity:0.7;">Optimiza este valor según el retardo de la red (${protocolBadge === 'srt' ? '120ms recomendado' : 'Sólo configurable en SRT'}).</p>
+                            <p style="font-size: 0.75rem; margin-top: 2px; opacity:0.7;">Optimiza este valor según el retardo de la red (${protocolBadge === 'srt' ? 'Haivision recomienda 3-4 × RTT' : 'Sólo configurable en SRT'}).</p>
+                            <div id="srtstats-${input.channel}" style="font-size:0.75rem;"></div>
+                            <div style="display:flex; align-items:center; gap: 10px; margin-top:4px;">
+                                <span class="badge-protocol udp">Sincronía</span>
+                                <span style="color:#fff; font-weight:600;" id="delay-${input.channel}">${input.delay_ms || 0} ms</span>
+                                <button onclick="openSyncModal(${input.channel})" style="background:transparent; border:none; color:var(--accent-blue); cursor:pointer; font-size:0.9rem;" title="Retardo para alinear esta señal con las demás"><i class="fa-solid fa-sliders"></i></button>
+                            </div>
                         </div>
                     </div>
                     ${inputOutputs.map(out => `
@@ -603,6 +702,7 @@ function renderStreams() {
                                 <span class="stream-name" style="display:flex; flex-direction:column; line-height:1.2;">
                                     ${out.location || out.url}
                                     <span style="font-size:0.70rem; color:var(--text-muted); font-family:monospace; font-weight:normal; user-select:all;">${out.url.replace(/127\.0\.0\.1|0\.0\.0\.0/g, serverIp)}</span>
+                                    <span id="srtstats-out_${out.id}" style="font-size:0.70rem; color:var(--text-muted); font-weight:normal;"></span>
                                 </span>
                             </div>
                             <div class="mid-section">
@@ -835,8 +935,100 @@ function editLatency(channelId, currentUrl) {
     document.getElementById('lat_channel').value = channelId;
     document.getElementById('lat_current_url').value = currentUrl;
     document.getElementById('lat_value').value = currentLatency;
-    
+
+    // Con estadísticas SRT en vivo proponemos la latencia según el RTT real
+    const s = srtStatsCache[String(channelId)];
+    const hint = document.getElementById('lat_hint');
+    if (s && s.rtt > 0) {
+        const rec = recommendedLatency(s.rtt);
+        document.getElementById('lat_rtt').innerText = `${s.rtt} ms`;
+        document.getElementById('lat_rec').innerText = `${rec} ms`;
+        document.getElementById('lat_rec').dataset.value = rec;
+        hint.style.display = 'block';
+    } else {
+        hint.style.display = 'none';
+    }
+
     openModal('latencyModal');
+}
+
+// Salud del enlace SRT (estadísticas de srt-live-transmit). Últimos valores por canal ('3' / 'out_5')
+const srtStatsCache = {};
+
+function currentLatencyMs(url) {
+    const m = (url || '').match(/latency=(\d+)/);
+    return m ? parseInt(m[1], 10) : 120; // 120 ms: valor por defecto de libsrt
+}
+
+// Recomendación de Haivision: latencia de 3 a 4 veces el RTT (mínimo 120 ms)
+const recommendedLatency = (rtt) => Math.max(120, Math.ceil(rtt * 4 / 10) * 10);
+
+function renderSrtStats(channel, s) {
+    const el = document.getElementById(`srtstats-${channel}`);
+    if (!s) {
+        delete srtStatsCache[channel];
+        if (el) el.innerHTML = '';
+        return;
+    }
+    srtStatsCache[channel] = s;
+    if (!el) return;
+
+    const item = channel.startsWith('out_')
+        ? outputs.find(o => 'out_' + o.id === channel)
+        : inputs.find(i => String(i.channel) === channel);
+    const latency = currentLatencyMs(item && item.url);
+    const lowLatency = s.rtt > 0 && latency < s.rtt * 3;
+    const color = (bad, warn) => bad ? 'var(--color-red)' : (warn ? 'var(--color-yellow)' : 'var(--color-green)');
+
+    el.innerHTML = `
+        <span title="Ida y vuelta de la red">RTT <b style="color:${color(lowLatency, s.rtt > latency / 4)}">${s.rtt} ms</b></span> ·
+        <span title="Paquetes reenviados por ARQ en el último segundo">Retrans <b style="color:${color(s.retransPct > 10, s.retransPct > 2)}">${s.retransPct}%</b></span> ·
+        <span title="Paquetes perdidos detectados (la mayoría se recuperan con retransmisión)">Pérdida <b>${s.lossPct}%</b></span> ·
+        <span title="Paquetes que no llegaron a tiempo: provocan cortes en la imagen">Drops <b style="color:${color(s.drops > 0, false)}">${s.drops}</b></span>
+        ${s.latency ? ` · <span title="Latencia SRT negociada con el otro extremo">Latencia efectiva <b>${s.latency} ms</b></span>` : ''}
+        ${lowLatency ? `<div style="color:var(--color-yellow); margin-top:2px;"><i class="fa-solid fa-triangle-exclamation"></i> Latencia ${latency} ms por debajo de 3 × RTT: sube a ${recommendedLatency(s.rtt)} ms</div>` : ''}`;
+}
+
+// Sincronía entre señales: retardo por input aplicado en vivo (sin cortar la señal)
+let syncSendTimer = null;
+
+function openSyncModal(channelId) {
+    const input = inputs.find(i => i.channel === channelId);
+    if (!input) return;
+    document.getElementById('sync_channel').value = channelId;
+    document.getElementById('sync_name').innerText = input.name || `Channel ${channelId}`;
+    setSyncFields(input.delay_ms || 0);
+    openModal('syncModal');
+}
+
+function setSyncFields(ms) {
+    document.getElementById('sync_value').value = ms;
+    document.getElementById('sync_range').value = ms;
+}
+
+function onSyncInput(value) {
+    const ms = Math.max(0, Math.min(10000, parseInt(value, 10) || 0));
+    setSyncFields(ms);
+    // Debounce: mientras se arrastra el slider se envía como mucho cada 150 ms
+    clearTimeout(syncSendTimer);
+    syncSendTimer = setTimeout(() => sendSyncDelay(ms), 150);
+}
+
+function nudgeSync(delta) {
+    onSyncInput((parseInt(document.getElementById('sync_value').value, 10) || 0) + delta);
+}
+
+async function sendSyncDelay(ms) {
+    const channelId = document.getElementById('sync_channel').value;
+    try {
+        await fetch(`/api/inputs/${channelId}/delay`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ delay_ms: ms })
+        });
+    } catch (e) {
+        console.error("Error updating sync delay", e);
+    }
 }
 
 async function submitLatency(e) {
@@ -1166,23 +1358,62 @@ async function fetchSettingsData() {
         }
 
         // Render Users
+        if (!Array.isArray(users)) return;
+        usersCache = users;
         const container = document.getElementById('usersListContainer');
-        container.innerHTML = '';
-        users.forEach(u => {
-            const roleBadge = u.role === 4 ? '<span style="color:var(--color-red); font-weight:bold;">Admin</span>' : '<span style="color:var(--text-muted);">User</span>';
-            container.innerHTML += `
+        container.innerHTML = users.map(u => {
+            const roleBadge = u.role === ROLE_ADMIN ? '<span style="color:var(--color-red); font-weight:bold;">Admin</span>' : '<span style="color:var(--text-muted);">Operador</span>';
+            const pending = u.mustChange ? ' | <span style="color:var(--color-yellow);">Cambio de contraseña pendiente</span>' : '';
+            const isMe = currentUser && currentUser.username === u.username;
+            return `
                 <div style="display:flex; justify-content:space-between; align-items:center; padding: 10px; border-bottom: 1px solid rgba(255,255,255,0.05);">
                     <div>
-                        <strong style="color:var(--text-main); font-size:1.05rem;">${u.username}</strong>
-                        <div style="font-size:0.8rem; margin-top:2px;">Role: ${roleBadge} | ${u.email || 'No email'}</div>
+                        <strong style="color:var(--text-main); font-size:1.05rem;">${escapeHtml(u.username)}</strong>${isMe ? ' <span style="color:var(--text-muted); font-size:0.8rem;">(tú)</span>' : ''}
+                        <div style="font-size:0.8rem; margin-top:2px;">Rol: ${roleBadge} | ${escapeHtml(u.email) || 'Sin email'}${pending}</div>
                     </div>
-                    <button class="action-btn terminate" onclick="deleteUser('${u.username}')" title="Borrar Cuenta" ${u.username==='admin'?'disabled':''}>
-                        <i class="fa-solid fa-trash"></i>
-                    </button>
+                    <div style="display:flex; gap:6px;">
+                        <button class="action-btn edit-btn" onclick="openEditUser('${escapeHtml(u.username)}')" title="Editar / restablecer contraseña">
+                            <i class="fa-solid fa-pen"></i>
+                        </button>
+                        <button class="action-btn terminate" onclick="deleteUser('${escapeHtml(u.username)}')" title="Borrar cuenta" ${isMe ? 'disabled' : ''}>
+                            <i class="fa-solid fa-trash"></i>
+                        </button>
+                    </div>
                 </div>
             `;
-        });
+        }).join('');
     } catch(e) { console.error("Error fetching settings:", e); }
+}
+
+let usersCache = [];
+
+function openNewUserModal() {
+    document.getElementById('formUser').reset();
+    document.getElementById('usr_is_edit').value = 'false';
+    document.getElementById('usr_username').readOnly = false;
+    document.getElementById('usr_password').required = true;
+    document.getElementById('usr_password_label').innerText = 'Contraseña (mínimo 8 caracteres)';
+    document.getElementById('usr_must_change').checked = true;
+    document.getElementById('usr_title').innerText = 'Añadir Nuevo Usuario';
+    document.getElementById('usr_submit').innerText = 'Crear Cuenta';
+    openModal('userModal');
+}
+
+function openEditUser(username) {
+    const u = usersCache.find(x => x.username === username);
+    if (!u) return;
+    document.getElementById('formUser').reset();
+    document.getElementById('usr_is_edit').value = 'true';
+    document.getElementById('usr_username').value = u.username;
+    document.getElementById('usr_username').readOnly = true;
+    document.getElementById('usr_password').required = false;
+    document.getElementById('usr_password_label').innerText = 'Nueva contraseña (vacío = no cambiarla)';
+    document.getElementById('usr_role').value = String(u.role);
+    document.getElementById('usr_email').value = u.email || '';
+    document.getElementById('usr_must_change').checked = !!u.mustChange;
+    document.getElementById('usr_title').innerText = `Editar ${u.username}`;
+    document.getElementById('usr_submit').innerText = 'Guardar cambios';
+    openModal('userModal');
 }
 
 async function savePorts(e) {
@@ -1206,24 +1437,30 @@ async function savePorts(e) {
 
 async function submitUser(e) {
     e.preventDefault();
+    const isEdit = document.getElementById('usr_is_edit').value === 'true';
+    const username = document.getElementById('usr_username').value.trim();
     const payload = {
-        username: document.getElementById('usr_username').value,
-        password: document.getElementById('usr_password').value,
         role: parseInt(document.getElementById('usr_role').value),
-        email: document.getElementById('usr_email').value
+        email: document.getElementById('usr_email').value,
+        mustChange: document.getElementById('usr_must_change').checked
     };
+    const password = document.getElementById('usr_password').value;
+    if (password) payload.password = password;
+    if (!isEdit) payload.username = username;
+
     try {
-        const res = await fetch('/api/users', {
-            method: 'POST',
+        const res = await fetch(isEdit ? `/api/users/${encodeURIComponent(username)}` : '/api/users', {
+            method: isEdit ? 'PUT' : 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(payload)
         });
         if(res.ok) {
             closeModal('userModal');
             fetchSettingsData();
+            if (isEdit && currentUser && username === currentUser.username) loadSession();
         } else {
             const err = await res.json();
-            alert('Error al crear usuario: ' + err.error);
+            alert(`Error al ${isEdit ? 'guardar' : 'crear'} usuario: ${err.error}`);
         }
     } catch(e) { console.error(e); }
 }
@@ -1231,7 +1468,11 @@ async function submitUser(e) {
 async function deleteUser(username) {
     if(!confirm(`¿Borrar definitivamente a ${username}?`)) return;
     try {
-        await fetch(`/api/users/${username}`, { method: 'DELETE' });
+        const res = await fetch(`/api/users/${encodeURIComponent(username)}`, { method: 'DELETE' });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            alert('No se pudo borrar: ' + (err.error || res.status));
+        }
         fetchSettingsData();
     } catch(e) { console.error(e); }
 }

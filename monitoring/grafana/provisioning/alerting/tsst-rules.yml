@@ -1,0 +1,416 @@
+# Reglas de alerta TSST (generado; formato JSON, que también es YAML válido)
+{
+  "apiVersion": 1,
+  "groups": [
+    {
+      "orgId": 1,
+      "name": "tsst",
+      "folder": "TSST",
+      "interval": "20s",
+      "rules": [
+        {
+          "uid": "tsst-senal-perdida",
+          "title": "Señal perdida",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "relativeTimeRange": {
+                "from": 300,
+                "to": 0
+              },
+              "datasourceUid": "tsst-prom",
+              "model": {
+                "refId": "A",
+                "expr": "tsst_input_up * on(channel) group_left() (1 - tsst_input_signal)",
+                "instant": true,
+                "range": false,
+                "intervalMs": 1000,
+                "maxDataPoints": 43200
+              }
+            },
+            {
+              "refId": "B",
+              "datasourceUid": "__expr__",
+              "model": {
+                "refId": "B",
+                "type": "reduce",
+                "expression": "A",
+                "reducer": "last",
+                "settings": {
+                  "mode": "dropNN"
+                }
+              }
+            },
+            {
+              "refId": "C",
+              "datasourceUid": "__expr__",
+              "model": {
+                "refId": "C",
+                "type": "threshold",
+                "expression": "B",
+                "conditions": [
+                  {
+                    "evaluator": {
+                      "type": "gt",
+                      "params": [
+                        0
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ],
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "for": "30s",
+          "annotations": {
+            "summary": "Sin señal en {{ $labels.name }} (canal {{ $labels.channel }})",
+            "description": "El input está activo pero no llegan datos desde hace más de 30 s."
+          },
+          "labels": {
+            "severity": "critical",
+            "app": "tsst"
+          },
+          "isPaused": false
+        },
+        {
+          "uid": "tsst-salida-caida",
+          "title": "Salida sin emitir",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "relativeTimeRange": {
+                "from": 300,
+                "to": 0
+              },
+              "datasourceUid": "tsst-prom",
+              "model": {
+                "refId": "A",
+                "expr": "(tsst_output_bitrate_bits_per_second == bool 0) * on(channel) group_left() max by (channel) (tsst_input_signal)",
+                "instant": true,
+                "range": false,
+                "intervalMs": 1000,
+                "maxDataPoints": 43200
+              }
+            },
+            {
+              "refId": "B",
+              "datasourceUid": "__expr__",
+              "model": {
+                "refId": "B",
+                "type": "reduce",
+                "expression": "A",
+                "reducer": "last",
+                "settings": {
+                  "mode": "dropNN"
+                }
+              }
+            },
+            {
+              "refId": "C",
+              "datasourceUid": "__expr__",
+              "model": {
+                "refId": "C",
+                "type": "threshold",
+                "expression": "B",
+                "conditions": [
+                  {
+                    "evaluator": {
+                      "type": "gt",
+                      "params": [
+                        0
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ],
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "for": "1m",
+          "annotations": {
+            "summary": "La salida {{ $labels.location }} (canal {{ $labels.channel }}) no emite",
+            "description": "La entrada tiene señal pero esta salida lleva más de 1 minuto sin enviar datos."
+          },
+          "labels": {
+            "severity": "critical",
+            "app": "tsst"
+          },
+          "isPaused": false
+        },
+        {
+          "uid": "tsst-srt-drops",
+          "title": "Cortes SRT (drops)",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "relativeTimeRange": {
+                "from": 300,
+                "to": 0
+              },
+              "datasourceUid": "tsst-prom",
+              "model": {
+                "refId": "A",
+                "expr": "increase(tsst_srt_packets_dropped_total[2m])",
+                "instant": true,
+                "range": false,
+                "intervalMs": 1000,
+                "maxDataPoints": 43200
+              }
+            },
+            {
+              "refId": "B",
+              "datasourceUid": "__expr__",
+              "model": {
+                "refId": "B",
+                "type": "reduce",
+                "expression": "A",
+                "reducer": "last",
+                "settings": {
+                  "mode": "dropNN"
+                }
+              }
+            },
+            {
+              "refId": "C",
+              "datasourceUid": "__expr__",
+              "model": {
+                "refId": "C",
+                "type": "threshold",
+                "expression": "B",
+                "conditions": [
+                  {
+                    "evaluator": {
+                      "type": "gt",
+                      "params": [
+                        0
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ],
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "for": "0s",
+          "annotations": {
+            "summary": "Drops SRT en {{ $labels.name }}{{ $labels.location }} ({{ $labels.direction }})",
+            "description": "Paquetes SRT que llegaron tarde: hay cortes visibles. Sube la latencia SRT (Haivision: 3-4 × RTT)."
+          },
+          "labels": {
+            "severity": "warning",
+            "app": "tsst"
+          },
+          "isPaused": false
+        },
+        {
+          "uid": "tsst-srt-latencia",
+          "title": "Latencia SRT corta para la red",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "relativeTimeRange": {
+                "from": 300,
+                "to": 0
+              },
+              "datasourceUid": "tsst-prom",
+              "model": {
+                "refId": "A",
+                "expr": "tsst_srt_latency_seconds < bool (3 * tsst_srt_rtt_seconds)",
+                "instant": true,
+                "range": false,
+                "intervalMs": 1000,
+                "maxDataPoints": 43200
+              }
+            },
+            {
+              "refId": "B",
+              "datasourceUid": "__expr__",
+              "model": {
+                "refId": "B",
+                "type": "reduce",
+                "expression": "A",
+                "reducer": "last",
+                "settings": {
+                  "mode": "dropNN"
+                }
+              }
+            },
+            {
+              "refId": "C",
+              "datasourceUid": "__expr__",
+              "model": {
+                "refId": "C",
+                "type": "threshold",
+                "expression": "B",
+                "conditions": [
+                  {
+                    "evaluator": {
+                      "type": "gt",
+                      "params": [
+                        0
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ],
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "for": "2m",
+          "annotations": {
+            "summary": "Latencia SRT baja en {{ $labels.name }}",
+            "description": "La latencia efectiva es menor que 3 veces el RTT. Recomendado: 4 × RTT."
+          },
+          "labels": {
+            "severity": "warning",
+            "app": "tsst"
+          },
+          "isPaused": false
+        },
+        {
+          "uid": "tsst-cpu",
+          "title": "CPU alta",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "relativeTimeRange": {
+                "from": 300,
+                "to": 0
+              },
+              "datasourceUid": "tsst-prom",
+              "model": {
+                "refId": "A",
+                "expr": "tsst_host_cpu_load_ratio > bool 0.9",
+                "instant": true,
+                "range": false,
+                "intervalMs": 1000,
+                "maxDataPoints": 43200
+              }
+            },
+            {
+              "refId": "B",
+              "datasourceUid": "__expr__",
+              "model": {
+                "refId": "B",
+                "type": "reduce",
+                "expression": "A",
+                "reducer": "last",
+                "settings": {
+                  "mode": "dropNN"
+                }
+              }
+            },
+            {
+              "refId": "C",
+              "datasourceUid": "__expr__",
+              "model": {
+                "refId": "C",
+                "type": "threshold",
+                "expression": "B",
+                "conditions": [
+                  {
+                    "evaluator": {
+                      "type": "gt",
+                      "params": [
+                        0
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ],
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "for": "2m",
+          "annotations": {
+            "summary": "CPU del mini PC por encima del 90 %",
+            "description": "Revisa transcodificaciones por software (libx264/libx265): usa Quick Sync."
+          },
+          "labels": {
+            "severity": "warning",
+            "app": "tsst"
+          },
+          "isPaused": false
+        },
+        {
+          "uid": "tsst-servidor-caido",
+          "title": "Servidor TSST caído",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "relativeTimeRange": {
+                "from": 300,
+                "to": 0
+              },
+              "datasourceUid": "tsst-prom",
+              "model": {
+                "refId": "A",
+                "expr": "1 - up{job=\"tsst\"}",
+                "instant": true,
+                "range": false,
+                "intervalMs": 1000,
+                "maxDataPoints": 43200
+              }
+            },
+            {
+              "refId": "B",
+              "datasourceUid": "__expr__",
+              "model": {
+                "refId": "B",
+                "type": "reduce",
+                "expression": "A",
+                "reducer": "last",
+                "settings": {
+                  "mode": "dropNN"
+                }
+              }
+            },
+            {
+              "refId": "C",
+              "datasourceUid": "__expr__",
+              "model": {
+                "refId": "C",
+                "type": "threshold",
+                "expression": "B",
+                "conditions": [
+                  {
+                    "evaluator": {
+                      "type": "gt",
+                      "params": [
+                        0
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ],
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "for": "30s",
+          "annotations": {
+            "summary": "Prometheus no puede leer el servidor TSST",
+            "description": "El servicio tsst-srt no responde. Comprueba: systemctl status tsst-srt"
+          },
+          "labels": {
+            "severity": "critical",
+            "app": "tsst"
+          },
+          "isPaused": false
+        }
+      ]
+    }
+  ]
+}

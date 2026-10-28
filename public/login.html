@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TSST SERVER - Acceso</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 16px; }
+        .login-card { width: 100%; max-width: 380px; background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 14px; padding: 2rem; }
+        .login-logo { display: flex; align-items: center; gap: 10px; margin-bottom: 0.5rem; }
+        .login-logo i { font-size: 1.6rem; color: var(--accent-blue); }
+        .login-logo h2 span { color: var(--accent-blue); }
+        .login-sub { color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.5rem; }
+        .login-card .btn-primary { width: 100%; margin-top: 0.5rem; padding: 12px; }
+        .login-error { color: var(--color-red); font-size: 0.85rem; min-height: 1.2em; margin-top: 0.75rem; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <div class="login-logo">
+            <i class="fa-solid fa-satellite-dish"></i>
+            <h2>TSST<span> SERVER</span></h2>
+        </div>
+
+        <form id="formLogin">
+            <p class="login-sub">Inicia sesión para acceder al panel.</p>
+            <div class="form-group">
+                <label>Usuario</label>
+                <input type="text" id="login_user" autocomplete="username" required autofocus>
+            </div>
+            <div class="form-group">
+                <label>Contraseña</label>
+                <input type="password" id="login_pass" autocomplete="current-password" required>
+            </div>
+            <button type="submit" class="btn-primary"><i class="fa-solid fa-right-to-bracket"></i> Entrar</button>
+        </form>
+
+        <form id="formChange" class="hidden">
+            <p class="login-sub">Debes cambiar tu contraseña antes de continuar (mínimo 8 caracteres).</p>
+            <div class="form-group">
+                <label>Contraseña actual</label>
+                <input type="password" id="chg_current" autocomplete="current-password" required>
+            </div>
+            <div class="form-group">
+                <label>Nueva contraseña</label>
+                <input type="password" id="chg_new" autocomplete="new-password" minlength="8" required>
+            </div>
+            <div class="form-group">
+                <label>Repite la nueva contraseña</label>
+                <input type="password" id="chg_repeat" autocomplete="new-password" minlength="8" required>
+            </div>
+            <button type="submit" class="btn-primary"><i class="fa-solid fa-key"></i> Guardar y entrar</button>
+        </form>
+
+        <div class="login-error" id="login_error"></div>
+    </div>
+    <script src="js/login.js"></script>
+</body>
+</html>

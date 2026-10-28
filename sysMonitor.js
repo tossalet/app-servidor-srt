@@ -2,6 +2,8 @@ const si = require('systeminformation');
 const db = require('./db');
 
 let ioInstance = null;
+// Última lectura del host en unidades base (para /metrics)
+let lastHost = null;
 
 function setIo(io) {
     ioInstance = io;
@@ -54,6 +56,7 @@ function startMonitoring() {
                         streamsError
                     };
 
+                    lastHost = { cpuLoad: cpu.currentLoad / 100, memUsed: mem.active, memTotal: mem.total, netTxBps: txSeq * 8, netRxBps: rxSeq * 8 };
                     ioInstance.emit('sys_stats', stats);
                 });
             });
@@ -67,4 +70,4 @@ function startMonitoring() {
     loop(); // init
 }
 
-module.exports = { setIo };
+module.exports = { setIo, getLastHost: () => lastHost };

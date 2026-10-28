@@ -1,0 +1,11 @@
+# Prometheus para el servidor TSST.
+# El instalador sustituye "localhost:4000" por el puerto real del panel.
+# Prometheus corre en el mismo mini PC, así que /metrics no necesita token.
+global:
+  scrape_interval: 5s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: tsst
+    static_configs:
+      - targets: ['localhost:4000']

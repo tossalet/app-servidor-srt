@@ -10,6 +10,12 @@ if (process.env.NODE_ENV === 'production' || process.env.DOCKER_ENV) {
 
 const dbPath = process.env.NODE_ENV === 'production' || process.env.DOCKER_ENV ? path.join(dbDir, 'onpremise.db') : path.resolve(__dirname, 'onpremise.db');
 
+// Carpeta de datos persistentes (BBDD y secreto de sesiones)
+const dataDir = path.dirname(dbPath);
+
+let resolveReady;
+const ready = new Promise(r => { resolveReady = r; });
+
 const db = new sqlite3.Database(dbPath, (err) => {
     if (err) {
         console.error('Error connecting to SQLite database', err);
@@ -21,6 +27,10 @@ const db = new sqlite3.Database(dbPath, (err) => {
 
 function initDB() {
     db.serialize(() => {
+        // WAL: las escrituras no bloquean lecturas y hay muchas menos escrituras síncronas a disco
+        db.run('PRAGMA journal_mode = WAL');
+        db.run('PRAGMA synchronous = NORMAL');
+
         // Table inputs
         db.run(`CREATE TABLE IF NOT EXISTS inputs (
             channel INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -38,6 +48,8 @@ function initDB() {
 
         // Migration for inputs
         db.run("ALTER TABLE inputs ADD COLUMN preview_enabled INTEGER NOT NULL DEFAULT 1", () => {});
+        // Retardo de sincronización por input (ms), aplicado en vivo por el data plane
+        db.run("ALTER TABLE inputs ADD COLUMN delay_ms INTEGER NOT NULL DEFAULT 0", () => {});
 
         // Table outputs
         db.run(`CREATE TABLE IF NOT EXISTS outputs (
@@ -75,14 +87,22 @@ function initDB() {
             email TEXT NOT NULL DEFAULT ''
         )`);
 
-        // Insert initial configuration defaults if empty
-        db.get('SELECT COUNT(*) AS count FROM users', (err, row) => {
-            if (row && row.count === 0) {
-                db.run(`INSERT INTO users (username, password, role) VALUES ('admin', 'admin', 4), ('user', 'user', 16)`);
-                db.run(`INSERT INTO ports (chanMin, chanMax, udpMin, udpMax) VALUES (1, 20000, 1024, 49151)`);
-            }
-        });
+        // Fuerza el cambio de contraseña en el primer login (contraseñas por defecto o débiles)
+        db.run("ALTER TABLE users ADD COLUMN must_change INTEGER NOT NULL DEFAULT 0", () => {});
+
+        // Valores iniciales sólo si las tablas están vacías. Sólo se crea admin/admin (cambio obligatorio
+        // al entrar); auth.js cifra la contraseña al arrancar.
+        db.run(`INSERT INTO users (username, password, role, must_change)
+                SELECT 'admin', 'admin', 4, 1 WHERE NOT EXISTS (SELECT 1 FROM users)`);
+        db.run(`INSERT INTO ports (chanMin, chanMax, udpMin, udpMax)
+                SELECT 1, 20000, 1024, 49151 WHERE NOT EXISTS (SELECT 1 FROM ports)`);
+
+        // Al ir en serie, esto se ejecuta cuando todo lo anterior ha terminado
+        db.run('SELECT 1', () => resolveReady());
     });
 }
 
 module.exports = db;
+// Se resuelve cuando tablas y migraciones están listas
+db.ready = ready;
+db.dataDir = dataDir;

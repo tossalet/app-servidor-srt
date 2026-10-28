@@ -1,9 +1,12 @@
-# Base image build on Debian 11 (Bullseye) to mimic the OnPremise firmware natively
-FROM node:18-bullseye-slim
+# Debian 12 (Bookworm): FFmpeg 5.1 con libsrt y VAAPI, Node 22 LTS
+FROM node:22-bookworm-slim
 
-# Install FFMpeg and other required networking utilities for TSST Server
-RUN apt-get update && apt-get install -y \
+# FFmpeg, srt-live-transmit (srt-tools), drivers Intel Quick Sync (VAAPI) y utilidades de red
+RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
+    srt-tools \
+    intel-media-va-driver \
+    i965-va-driver \
     sqlite3 \
     iproute2 \
     curl \
@@ -15,17 +18,18 @@ WORKDIR /usr/src/app
 # Copy package info
 COPY package*.json ./
 
-# Install npm dependencies
-RUN npm install
+# Install npm dependencies (sin las de desarrollo)
+RUN npm ci --omit=dev
 
 # Copy application files
 COPY . .
+
+ENV NODE_ENV=production
 
 # Expose Web Panel & API port
 EXPOSE 4000
 # Expose default SRT/UDP port ranges (example: 1024-50000 range, usually map via host networking anyway)
 EXPOSE 1024-50000/udp
 
-# Set initial database if needed (SQLite auto-creates so it's fine)
-# Start the backend node process
+# Node como PID 1 recibe SIGTERM y cierra las grabaciones antes de salir
 CMD ["node", "server.js"]

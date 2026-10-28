@@ -26,8 +26,23 @@
                 <a href="#" class="nav-item" id="nav-streams" onclick="switchTab('streams')"><i class="fa-solid fa-network-wired"></i> Streams</a>
                 <a href="#" class="nav-item" id="nav-analytics" onclick="switchTab('analytics')"><i class="fa-solid fa-chart-line"></i> Analytics</a>
                 <a href="#" class="nav-item" id="nav-storage" onclick="switchTab('storage')"><i class="fa-solid fa-hard-drive"></i> Storage</a>
-                <a href="#" class="nav-item" id="nav-settings" onclick="switchTab('settings')"><i class="fa-solid fa-gear"></i> Settings</a>
+                <a href="#" class="nav-item" id="nav-settings" onclick="switchTab('settings')" style="display:none;"><i class="fa-solid fa-gear"></i> Settings</a>
+                <a href="#" class="nav-item" id="nav-grafana" target="_blank" rel="noopener" style="display:none;" title="Historial y alertas (Grafana)"><i class="fa-solid fa-chart-area"></i> Gráficas <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:0.7rem; width:auto;"></i></a>
             </nav>
+            <!-- Sesión actual -->
+            <div id="session-box" style="margin-top:auto; padding: 1rem 1.5rem; border-top: 1px solid var(--panel-border); font-size: 0.85rem;">
+                <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+                    <i class="fa-solid fa-circle-user" style="font-size:1.3rem; color:var(--accent-blue);"></i>
+                    <div style="line-height:1.2;">
+                        <strong id="session-user">—</strong>
+                        <div id="session-role" style="color:var(--text-muted); font-size:0.75rem;"></div>
+                    </div>
+                </div>
+                <div style="display:flex; gap:8px;">
+                    <button class="btn-secondary" onclick="openModal('passwordModal')" style="flex:1; padding:6px 8px; font-size:0.75rem;"><i class="fa-solid fa-key"></i> Contraseña</button>
+                    <button class="btn-secondary" onclick="logout()" style="flex:1; padding:6px 8px; font-size:0.75rem;"><i class="fa-solid fa-right-from-bracket"></i> Salir</button>
+                </div>
+            </div>
         </aside>
 
         <!-- Main Content -->
@@ -196,8 +211,8 @@
                     <!-- User Management -->
                     <div class="settings-card" style="background: rgba(0,0,0,0.2); padding: 20px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.05);">
                         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 1.5rem;">
-                            <h2 style="font-size: 1.25rem; font-weight: 600;"><i class="fa-solid fa-users"></i> Access Control</h2>
-                            <button class="btn-primary" onclick="openModal('userModal')" style="padding: 6px 12px; font-size:0.8rem;"><i class="fa-solid fa-user-plus"></i> Añadir</button>
+                            <h2 style="font-size: 1.25rem; font-weight: 600;"><i class="fa-solid fa-users"></i> Gestor de Usuarios</h2>
+                            <button class="btn-primary" onclick="openNewUserModal()" style="padding: 6px 12px; font-size:0.8rem;"><i class="fa-solid fa-user-plus"></i> Añadir</button>
                         </div>
                         <div class="users-list" id="usersListContainer">
                             <!-- Populated with JS -->
@@ -314,6 +329,8 @@
                         <label>Códec de Vídeo (Opciones de Transcodificación)</label>
                         <select id="out_vcodec" class="form-control">
                             <option value="copy" selected>Passthrough Nativo (Recomendado, 0% CPU)</option>
+                            <option value="h264_vaapi">H.264 por GPU Intel Quick Sync (bajo consumo)</option>
+                            <option value="hevc_vaapi">H.265 por GPU Intel Quick Sync (bajo consumo)</option>
                             <option value="libx264">Conversión a H.264 (¡Alto consumo de CPU!)</option>
                             <option value="libx265">Conversión a H.265 (¡Extremo consumo de CPU!)</option>
                         </select>
@@ -332,24 +349,25 @@
     <div class="modal-overlay" id="userModal">
         <div class="modal">
             <div class="modal-header">
-                <h3>Añadir Nuevo Usuario</h3>
+                <h3 id="usr_title">Añadir Nuevo Usuario</h3>
                 <button class="close-btn" onclick="closeModal('userModal')"><i class="fa-solid fa-xmark"></i></button>
             </div>
             <form id="formUser" onsubmit="submitUser(event)">
+                <input type="hidden" id="usr_is_edit" value="false">
                 <div class="form-group">
-                    <label>Username</label>
-                    <input type="text" id="usr_username" placeholder="operador1" required>
+                    <label>Usuario</label>
+                    <input type="text" id="usr_username" placeholder="operador1" pattern="[a-zA-Z0-9._\-]{3,32}" title="3-32 caracteres: letras, números, . _ -" required>
                 </div>
                 <div class="form-group">
-                    <label>Password</label>
-                    <input type="text" id="usr_password" placeholder="***" required>
+                    <label id="usr_password_label">Contraseña (mínimo 8 caracteres)</label>
+                    <input type="password" id="usr_password" autocomplete="new-password" minlength="8" required>
                 </div>
                 <div class="form-group row">
                     <div class="half">
-                        <label>Role</label>
+                        <label>Rol</label>
                         <select id="usr_role" class="form-control">
-                            <option value="4">Admin</option>
-                            <option value="16" selected>User</option>
+                            <option value="4">Admin (todo)</option>
+                            <option value="16" selected>Operador (sólo streams)</option>
                         </select>
                     </div>
                     <div class="half">
@@ -357,9 +375,12 @@
                         <input type="text" id="usr_email" placeholder="mail@mail.com">
                     </div>
                 </div>
+                <label style="display:flex; align-items:center; gap:8px; font-size:0.85rem; color:var(--text-muted); margin-top:5px;">
+                    <input type="checkbox" id="usr_must_change" checked style="width:auto;"> Obligar a cambiar la contraseña al entrar
+                </label>
                 <div class="modal-actions">
-                    <button type="button" class="btn-secondary" onclick="closeModal('userModal')">Cancel</button>
-                    <button type="submit" class="btn-primary">Crear Cuenta</button>
+                    <button type="button" class="btn-secondary" onclick="closeModal('userModal')">Cancelar</button>
+                    <button type="submit" class="btn-primary" id="usr_submit">Crear Cuenta</button>
                 </div>
             </form>
         </div>
@@ -385,11 +406,72 @@
                         <button type="button" class="btn-secondary" onclick="document.getElementById('lat_value').value = ''" style="padding:10px 15px; white-space: nowrap;"><i class="fa-solid fa-wand-magic-sparkles"></i> Auto</button>
                     </div>
                 </div>
+                <div id="lat_hint" style="display:none; margin-top: 10px; font-size: 0.85rem; color: var(--text-muted);">
+                    RTT medido: <b id="lat_rtt"></b> → recomendado (4 × RTT): <b id="lat_rec" style="color:var(--accent-blue);"></b>
+                    <button type="button" class="btn-secondary" onclick="document.getElementById('lat_value').value = document.getElementById('lat_rec').dataset.value" style="padding:4px 10px; margin-left:6px; font-size:0.8rem;">Usar</button>
+                </div>
                 <div class="modal-actions" style="margin-top: 1.5rem;">
                     <button type="button" class="btn-secondary" onclick="closeModal('latencyModal')">Cancelar</button>
                     <button type="submit" class="btn-primary" style="background:var(--accent-blue);"><i class="fa-solid fa-check"></i> Aplicar</button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- Change Own Password Modal -->
+    <div class="modal-overlay" id="passwordModal">
+        <div class="modal" style="width: 400px;">
+            <div class="modal-header">
+                <h3><i class="fa-solid fa-key"></i> Cambiar contraseña</h3>
+                <button class="close-btn" onclick="closeModal('passwordModal')"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <form id="formPassword" onsubmit="submitOwnPassword(event)">
+                <div class="form-group">
+                    <label>Contraseña actual</label>
+                    <input type="password" id="pwd_current" autocomplete="current-password" required>
+                </div>
+                <div class="form-group">
+                    <label>Nueva contraseña (mínimo 8 caracteres)</label>
+                    <input type="password" id="pwd_new" autocomplete="new-password" minlength="8" required>
+                </div>
+                <div class="form-group">
+                    <label>Repite la nueva contraseña</label>
+                    <input type="password" id="pwd_repeat" autocomplete="new-password" minlength="8" required>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn-secondary" onclick="closeModal('passwordModal')">Cancelar</button>
+                    <button type="submit" class="btn-primary"><i class="fa-solid fa-check"></i> Guardar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Sync Modal -->
+    <div class="modal-overlay" id="syncModal">
+        <div class="modal" style="width: 440px;">
+            <div class="modal-header">
+                <h3><i class="fa-solid fa-sliders"></i> Sincronía · <span id="sync_name"></span></h3>
+                <button class="close-btn" onclick="closeModal('syncModal')"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <p style="color:var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem; line-height: 1.4;">Retrasa esta señal para alinearla con las demás. Se aplica en vivo a todas sus salidas y grabaciones (la miniatura no se retrasa). Retrasa las señales que llegan antes hasta igualarlas con la más lenta.</p>
+            <input type="hidden" id="sync_channel">
+            <div class="form-group">
+                <label>Retardo (ms)</label>
+                <input type="range" id="sync_range" min="0" max="3000" step="10" oninput="onSyncInput(this.value)" style="width:100%;">
+            </div>
+            <div class="form-group row" style="align-items: flex-end; gap: 8px;">
+                <button type="button" class="btn-secondary" onclick="nudgeSync(-40)" title="-1 frame a 25 fps">-40</button>
+                <button type="button" class="btn-secondary" onclick="nudgeSync(-20)" title="-1 frame a 50 fps">-20</button>
+                <div style="flex: 1;">
+                    <input type="number" id="sync_value" min="0" max="10000" step="1" oninput="onSyncInput(this.value)">
+                </div>
+                <button type="button" class="btn-secondary" onclick="nudgeSync(20)" title="+1 frame a 50 fps">+20</button>
+                <button type="button" class="btn-secondary" onclick="nudgeSync(40)" title="+1 frame a 25 fps">+40</button>
+            </div>
+            <div class="modal-actions" style="margin-top: 1.5rem;">
+                <button type="button" class="btn-secondary" onclick="onSyncInput(0)"><i class="fa-solid fa-rotate-left"></i> 0 ms</button>
+                <button type="button" class="btn-primary" style="background:var(--accent-blue);" onclick="closeModal('syncModal')"><i class="fa-solid fa-check"></i> Hecho</button>
+            </div>
         </div>
     </div>
 
