@@ -143,14 +143,9 @@ app.post('/api/inputs/:channel/preview', (req, res) => {
             if (err) return res.status(500).json({ error: err.message });
             io.emit('db_update', { event: 'preview_changed', channel: channelId, preview_enabled: newState });
 
-            // Start or stop the actual visual ffmpeg processor independently
-            if (newState === 1) {
-                streamManager.startPreview(channelId);
-            } else {
-                streamManager.stopPreview(channelId);
-                // Extraer un fotograma congelado al pararlo
-                setTimeout(() => streamManager.startPreview(channelId, true), 1000);
-            }
+            // Encendido: el panel reproduce el HLS dentro de la miniatura (no hay proceso aquí).
+            // Apagado: fotograma fijo actualizado para la imagen congelada.
+            if (newState === 0) streamManager.startPreview(channelId, true);
             res.json({ preview_enabled: newState });
         });
     });
