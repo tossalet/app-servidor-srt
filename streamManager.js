@@ -345,7 +345,10 @@ async function startPreview(channel, singleFrame = false) {
         '-i', `udp://127.0.0.1:${port}?overrun_nonfatal=1&buffer_size=${SOCK_BUF}`,
         '-map', '0:v:0?', '-an', '-sn', '-dn',
         '-vf', 'scale=480:-2',
-        '-q:v', '5'
+        '-q:v', '5',
+        // image2 sale a ritmo constante: sin -r copia la de la entrada, y RTMP anuncia 1000 fps
+        // (base de tiempo en ms), así que cada keyframe se duplicaba ~1000 veces en JPEG
+        '-r', '2'
     ];
     if (singleFrame) args.push('-frames:v', '1');
     args.push('-update', '1', '-f', 'image2', thumbPath);
