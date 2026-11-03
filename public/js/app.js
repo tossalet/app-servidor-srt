@@ -656,14 +656,6 @@ function renderStreams() {
                         <div class="quality-bar">
                             <div class="fill ${input.enabled ? 'yellow' : 'red'}" id="qbar-${input.channel}" style="width: ${input.enabled ? '100%' : '0%'}"></div>
                         </div>
-                        <div class="vu-meter" id="vu-${input.channel}" title="Nivel de audio (L/R)">
-                            <div class="vu-row"><div class="vu-mask" id="vu-${input.channel}-0"></div><div class="vu-peak" id="vu-${input.channel}-0p"></div></div>
-                            <div class="vu-row"><div class="vu-mask" id="vu-${input.channel}-1"></div><div class="vu-peak" id="vu-${input.channel}-1p"></div></div>
-                            <span class="vu-warn" id="vu-warn-${input.channel}">Sin audio</span>
-                        </div>
-                        <button class="action-btn listen-btn ${listeningChannel === String(input.channel) ? 'on' : ''}" id="listen-${input.channel}" onclick="toggleListen(${input.channel})" title="Escuchar esta entrada" ${input.enabled ? '' : 'disabled'}>
-                            <i class="fa-solid ${listeningChannel === String(input.channel) ? 'fa-volume-high' : 'fa-volume-xmark'}"></i>
-                        </button>
                     </div>
                     <div class="right-section">
                         <div class="control-actions">
@@ -684,6 +676,16 @@ function renderStreams() {
                             <img id="thumb-img-${input.channel}" class="${input.preview_enabled && input.enabled ? 'preview-active' : ''}" data-src="/thumbs/thumb_${input.channel}.jpg" src="${input.enabled ? '/thumbs/thumb_' + input.channel + '.jpg' + (input.preview_enabled ? '?t=' + Date.now() : '') : '/images/bars.svg'}" onerror="if(!this.src.includes('bars.svg')){this.src='/images/bars.svg';}" style="width:100%; height:100%; object-fit:cover; filter: ${input.preview_enabled && input.enabled ? 'none' : 'grayscale(100%) opacity(40%) blur(1px)'}; transition: filter 0.3s;" />
                             <button onclick="togglePreview(${input.channel})" class="action-btn" style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); background:rgba(0,0,0,0.6); padding:8px 12px; border:none; color:${input.preview_enabled ? 'var(--color-green)' : '#fff'}; border-radius:4px; font-size:1.2rem; cursor:pointer; opacity: 0.8; transition:0.2s;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.8" title="${input.preview_enabled ? 'Desactivar Previsualización (Ahorro CPU)' : 'Activar Previsualización'}">
                                 <i class="fa-solid ${input.preview_enabled ? 'fa-eye' : 'fa-eye-slash'}"></i>
+                            </button>
+                            <span class="vu-warn" id="vu-warn-${input.channel}">Sin audio</span>
+                        </div>
+                        <div class="vu-block">
+                            <div class="vu-meter" title="Nivel de audio (L/R)">
+                                <div class="vu-col"><div class="vu-mask" id="vu-${input.channel}-0"></div><div class="vu-peak" id="vu-${input.channel}-0p"></div></div>
+                                <div class="vu-col"><div class="vu-mask" id="vu-${input.channel}-1"></div><div class="vu-peak" id="vu-${input.channel}-1p"></div></div>
+                            </div>
+                            <button class="action-btn listen-btn ${listeningChannel === String(input.channel) ? 'on' : ''}" id="listen-${input.channel}" onclick="toggleListen(${input.channel})" title="Escuchar esta entrada" ${input.enabled ? '' : 'disabled'}>
+                                <i class="fa-solid ${listeningChannel === String(input.channel) ? 'fa-volume-high' : 'fa-volume-xmark'}"></i>
                             </button>
                         </div>
                         <div style="font-size:0.85rem; color:var(--text-muted); line-height: 1.4; display:flex; flex-direction:column; gap:5px;">
@@ -1518,8 +1520,8 @@ function renderAudioLevels(levels) {
 
             const mask = document.getElementById(`vu-${channel}-${i}`);
             const peak = document.getElementById(`vu-${channel}-${i}p`);
-            if (mask) mask.style.width = `${100 - dbToPct(s.level[i])}%`;
-            if (peak) peak.style.left = `calc(${dbToPct(s.peak[i])}% - 1px)`;
+            if (mask) mask.style.height = `${100 - dbToPct(s.level[i])}%`;
+            if (peak) peak.style.bottom = `calc(${dbToPct(s.peak[i])}% - 1px)`;
         }
         if (lv && Math.max(lv[0], lv[1]) > VU_SILENCE_DB) s.lastSound = now;
         const warn = document.getElementById(`vu-warn-${channel}`);
@@ -1532,8 +1534,8 @@ function renderAudioLevels(levels) {
         for (let i = 0; i < 2; i++) {
             const mask = document.getElementById(`vu-${channel}-${i}`);
             const peak = document.getElementById(`vu-${channel}-${i}p`);
-            if (mask) mask.style.width = '100%';
-            if (peak) peak.style.left = '0';
+            if (mask) mask.style.height = '100%';
+            if (peak) peak.style.bottom = '0';
         }
         document.getElementById(`vu-warn-${channel}`)?.classList.remove('show');
     }

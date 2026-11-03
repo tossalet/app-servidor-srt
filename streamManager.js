@@ -422,8 +422,9 @@ async function startMeter(st) {
         '-hide_banner', '-nostats', '-loglevel', 'error',
         '-i', inputUdpUrl(port),
         '-map', '0:a:0', '-vn', '-sn', '-dn',
-        // 4800 muestras = 100 ms a 48 kHz; astats se reinicia en cada bloque
-        '-af', 'asetnsamples=n=4800,astats=metadata=1:reset=1:measure_overall=none:measure_perchannel=Peak_level,ametadata=mode=print:file=-',
+        // 4800 muestras = 100 ms a 48 kHz; astats se reinicia en cada bloque.
+        // direct=1: sin él ametadata acumula 32 KB antes de escribir en el pipe (~45 s de retraso)
+        '-af', 'asetnsamples=n=4800,astats=metadata=1:reset=1:measure_overall=none:measure_perchannel=Peak_level,ametadata=mode=print:file=-:direct=1',
         '-f', 'null', '-'
     ];
     const child = spawn(FFMPEG, args, { stdio: ['ignore', 'pipe', 'pipe'] });

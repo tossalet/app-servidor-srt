@@ -224,21 +224,23 @@ button { cursor: pointer; border: none; font-family: var(--font-body); transitio
 .quality-bar .fill.yellow { background: var(--color-yellow); box-shadow: 0 0 10px rgba(245,158,11,0.5); }
 .quality-bar .fill.red { background: var(--color-red); box-shadow: 0 0 10px rgba(239,68,68,0.5); }
 
-/* Vúmetro L/R: el degradado fijo hace de escala (-60..0 dBFS) y una máscara oscura tapa
-   la parte sin nivel. Verde hasta -18 dB (70%), amarillo hasta -6 dB (90%), rojo encima. */
-.vu-meter { position: relative; display: flex; flex-direction: column; gap: 2px; width: 70px; flex-shrink: 0; }
-.vu-row {
-    position: relative; height: 4px; border-radius: 2px; overflow: hidden;
-    background: linear-gradient(to right, var(--color-green) 0 70%, var(--color-yellow) 70% 90%, var(--color-red) 90% 100%);
+/* Vúmetro L/R vertical junto a la miniatura: el degradado fijo hace de escala (-60..0 dBFS)
+   y una máscara oscura tapa desde arriba la parte sin nivel.
+   Verde hasta -18 dB (70%), amarillo hasta -6 dB (90%), rojo encima. */
+.vu-block { display: flex; flex-direction: column; align-items: center; gap: 6px; flex-shrink: 0; }
+.vu-meter { display: flex; gap: 3px; height: 62px; }
+.vu-col {
+    position: relative; width: 7px; height: 100%; border-radius: 2px; overflow: hidden;
+    background: linear-gradient(to top, var(--color-green) 0 70%, var(--color-yellow) 70% 90%, var(--color-red) 90% 100%);
 }
-.vu-mask { position: absolute; top: 0; right: 0; bottom: 0; width: 100%; background: #1f2430; transition: width 0.08s linear; }
-.vu-peak { position: absolute; top: 0; bottom: 0; left: 0; width: 2px; background: #fff; opacity: 0.8; }
+.vu-mask { position: absolute; top: 0; left: 0; right: 0; height: 100%; background: #1f2430; transition: height 0.08s linear; }
+.vu-peak { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: #fff; opacity: 0.8; }
 .vu-warn {
-    display: none; position: absolute; top: 100%; left: 0; margin-top: 2px;
-    font-size: 0.65rem; color: var(--color-yellow); white-space: nowrap;
+    display: none; position: absolute; left: 4px; bottom: 4px; padding: 1px 6px; border-radius: 3px;
+    background: rgba(0,0,0,0.7); font-size: 0.65rem; color: var(--color-yellow); white-space: nowrap;
 }
 .vu-warn.show { display: block; }
-.listen-btn { flex-shrink: 0; }
+.listen-btn { flex-shrink: 0; padding: 2px 6px; }
 .listen-btn.on { color: var(--color-green); }
 .listen-btn:disabled { opacity: 0.3; cursor: default; }
 
