@@ -19,6 +19,12 @@ const THUMBS_DIR = (process.platform === 'linux' && fs.existsSync('/dev/shm'))
     : path.join(__dirname, 'public', 'thumbs');
 try { fs.mkdirSync(THUMBS_DIR, { recursive: true }); } catch (e) {}
 
+// Trozos HLS del reproductor, también en RAM
+const HLS_DIR = (process.platform === 'linux' && fs.existsSync('/dev/shm'))
+    ? '/dev/shm/tsst-hls'
+    : path.join(os.tmpdir(), 'tsst-hls');
+try { fs.rmSync(HLS_DIR, { recursive: true, force: true }); } catch (e) {} // Restos de un arranque anterior
+
 let ioInstance = null;
 function setIo(io) { ioInstance = io; }
 
@@ -164,7 +170,7 @@ async function startInput(inputObj) {
         channel, cfg: inputObj, proc: null, port: null, stopped: false,
         restartTimer: null, backoff: RESTART_MIN_MS, tail: '',
         codec: '', signalSince: null, silentSecs: 0, delay: inputObj.delay_ms || 0,
-        preview: null, meter: null, listeners: new Set()
+        preview: null, meter: null, listeners: new Set(), hls: null, hlsAt: 0
     };
     inputs.set(channel, st);
 
@@ -265,6 +271,7 @@ function stopInput(channel) {
     if (st.restartTimer) clearTimeout(st.restartTimer);
     killPreview(st);
     killMeter(st);
+    killHls(st);
     for (const child of st.listeners) child.kill('SIGKILL');
     if (st.proc) st.proc.kill('SIGKILL');
     dpClose(channel);
@@ -529,6 +536,86 @@ async function startListen(channel) {
     });
     return child;
 }
+
+/* =======================================
+ *  HLS (reproductor del panel, bajo demanda)
+ * ======================================= */
+
+const HLS_IDLE_MS = 15000;
+
+/**
+ * Cada petición de la lista .m3u8 mantiene vivo el HLS del input; el primero lo arranca.
+ * Todos los que miran el mismo input comparten un solo FFmpeg.
+ * Devuelve la carpeta de la lista, o null si el input no está activo.
+ */
+function ensureHls(channel) {
+    const st = inputs.get(String(channel));
+    if (!st) return null;
+    st.hlsAt = Date.now();
+    if (!st.hls) {
+        st.hls = { proc: null, port: null, dir: path.join(HLS_DIR, st.channel) };
+        startHls(st, st.hls).catch(logError(`HLS-${st.channel}`));
+    }
+    return st.hls.dir;
+}
+
+async function startHls(st, hls) {
+    await fs.promises.rm(hls.dir, { recursive: true, force: true });
+    await fs.promises.mkdir(hls.dir, { recursive: true });
+    const port = await getFreeUdpPort();
+    if (st.hls !== hls) {
+        fs.promises.rm(hls.dir, { recursive: true, force: true }).catch(() => {});
+        return;
+    }
+
+    const args = [
+        '-hide_banner', '-nostats', '-loglevel', 'error',
+        '-fflags', '+genpts',
+        '-i', inputUdpUrl(port),
+        '-map', '0:v:0?', '-map', '0:a:0?',
+        '-c', 'copy',
+        // Con copy cada trozo empieza en un keyframe: dura lo que el GOP aunque pidamos 1 s
+        '-f', 'hls', '-hls_time', '1', '-hls_list_size', '4',
+        '-hls_flags', 'delete_segments+omit_endlist+temp_file',
+        '-hls_segment_filename', path.join(hls.dir, 'seg_%05d.ts'),
+        path.join(hls.dir, 'index.m3u8')
+    ];
+    const child = spawn(FFMPEG, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    hls.proc = child;
+    hls.port = port;
+    dpSub(st.channel, port, true);
+
+    let err = '';
+    child.stderr.on('data', (data) => { err = (err + data.toString()).slice(-1000); });
+    child.on('error', () => {});
+    child.on('close', (code) => {
+        dpUnsub(st.channel, port);
+        // Si se cae sola, la siguiente petición de la lista la vuelve a arrancar (y limpia la carpeta)
+        if (st.hls === hls) {
+            console.log(`[HLS-${st.channel}] FFmpeg exited (${code}). ${err.trim().split('\n').slice(-2).join(' | ')}`);
+            st.hls = null;
+        }
+    });
+}
+
+function killHls(st) {
+    const hls = st.hls;
+    if (!hls) return;
+    st.hls = null;
+    if (hls.proc) {
+        dpUnsub(st.channel, hls.port);
+        hls.proc.kill('SIGKILL');
+    }
+    fs.promises.rm(hls.dir, { recursive: true, force: true }).catch(() => {});
+}
+
+// Nadie pide la lista en 15 s (ventana o pestaña cerrada): se para
+setInterval(() => {
+    const now = Date.now();
+    for (const st of inputs.values()) {
+        if (st.hls && now - st.hlsAt > HLS_IDLE_MS) killHls(st);
+    }
+}, 5000).unref();
 
 /* =======================================
  *  OUTPUTS
@@ -840,11 +927,13 @@ module.exports = {
     startPreview,
     stopPreview,
     startListen,
+    ensureHls,
     setDelay,
     getTelemetry,
     getCounts,
     getMetricsSnapshot,
     shutdown,
     THUMBS_DIR,
+    HLS_DIR,
     MAX_DELAY_MS
 };

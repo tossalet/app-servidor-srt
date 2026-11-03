@@ -673,7 +673,7 @@ function renderStreams() {
                 <div class="stream-outputs" id="outputs-container-${input.channel}">
                     <div class="thumb-container" style="padding: 1rem 1.5rem; background: rgba(0,0,0,0.3); border-bottom: 1px solid rgba(255,255,255,0.05); display: flex; gap: 20px; align-items: center;">
                         <div style="position:relative; width:160px; height:90px; border-radius:6px; overflow:hidden; border:1px solid rgba(255,255,255,0.1); box-shadow: 0 4px 10px rgba(0,0,0,0.5);">
-                            <img id="thumb-img-${input.channel}" class="${input.preview_enabled && input.enabled ? 'preview-active' : ''}" data-src="/thumbs/thumb_${input.channel}.jpg" src="${input.enabled ? '/thumbs/thumb_' + input.channel + '.jpg' + (input.preview_enabled ? '?t=' + Date.now() : '') : '/images/bars.svg'}" onerror="if(!this.src.includes('bars.svg')){this.src='/images/bars.svg';}" style="width:100%; height:100%; object-fit:cover; filter: ${input.preview_enabled && input.enabled ? 'none' : 'grayscale(100%) opacity(40%) blur(1px)'}; transition: filter 0.3s;" />
+                            <img id="thumb-img-${input.channel}" class="${input.preview_enabled && input.enabled ? 'preview-active' : ''}" data-src="/thumbs/thumb_${input.channel}.jpg" src="${input.enabled ? '/thumbs/thumb_' + input.channel + '.jpg' + (input.preview_enabled ? '?t=' + Date.now() : '') : '/images/bars.svg'}" onerror="if(!this.src.includes('bars.svg')){this.src='/images/bars.svg';}" onclick="openLive(${input.channel})" title="Ver en directo" style="cursor:${input.enabled ? 'pointer' : 'default'}; width:100%; height:100%; object-fit:cover; filter: ${input.preview_enabled && input.enabled ? 'none' : 'grayscale(100%) opacity(40%) blur(1px)'}; transition: filter 0.3s;" />
                             <button onclick="togglePreview(${input.channel})" class="action-btn" style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); background:rgba(0,0,0,0.6); padding:8px 12px; border:none; color:${input.preview_enabled ? 'var(--color-green)' : '#fff'}; border-radius:4px; font-size:1.2rem; cursor:pointer; opacity: 0.8; transition:0.2s;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.8" title="${input.preview_enabled ? 'Desactivar Previsualización (Ahorro CPU)' : 'Activar Previsualización'}">
                                 <i class="fa-solid ${input.preview_enabled ? 'fa-eye' : 'fa-eye-slash'}"></i>
                             </button>
@@ -1578,6 +1578,65 @@ listenAudio.addEventListener('error', () => {
     stopListen();
     alert('No se puede escuchar esta entrada: no tiene audio o no hay señal.');
 });
+
+/* =======================================
+ *  REPRODUCTOR EN DIRECTO (HLS)
+ * ======================================= */
+let liveHls = null;
+
+function setLiveMsg(text) {
+    const msg = document.getElementById('liveMsg');
+    msg.textContent = text;
+    msg.style.display = text ? 'block' : 'none';
+}
+
+function openLive(channelId) {
+    const channel = String(channelId);
+    const input = inputs.find(i => String(i.channel) === channel);
+    if (!input || !input.enabled) return;
+    if (listeningChannel) stopListen(); // Si no, se oiría dos veces con distinto retraso
+    stopLiveStream();
+
+    document.getElementById('liveTitle').textContent = input.name || `Channel ${channel}`;
+    const video = document.getElementById('liveVideo');
+    video.onplaying = () => setLiveMsg('');
+    setLiveMsg('Conectando… (unos segundos)');
+    openModal('liveModal');
+
+    const src = `/hls/${channel}/index.m3u8`;
+    if (window.Hls && Hls.isSupported()) {
+        liveHls = new Hls({ liveSyncDurationCount: 2, manifestLoadingMaxRetry: 6, manifestLoadingRetryDelay: 1000 });
+        liveHls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
+        liveHls.on(Hls.Events.ERROR, (e, data) => {
+            if (!data.fatal) return;
+            stopLiveStream();
+            setLiveMsg('No se puede reproducir esta señal: no hay señal o el navegador no admite su códec (H.265).');
+        });
+        liveHls.loadSource(src);
+        liveHls.attachMedia(video);
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = src; // Safari reproduce HLS sin librería
+    } else {
+        setLiveMsg('Este navegador no puede reproducir HLS.');
+    }
+}
+
+function stopLiveStream() {
+    if (liveHls) {
+        liveHls.destroy();
+        liveHls = null;
+    }
+    const video = document.getElementById('liveVideo');
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+}
+
+// Al dejar de pedir la lista, el servidor para el HLS a los 15 s
+function closeLive() {
+    stopLiveStream();
+    closeModal('liveModal');
+}
 
 async function togglePreview(channelId) {
     try {

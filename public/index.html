@@ -487,6 +487,22 @@
         </div>
     </div>
 
+    <div class="modal-overlay" id="liveModal">
+        <div class="modal" style="width: 900px; max-width: 94%;">
+            <div class="modal-header">
+                <h3 id="liveTitle">Directo</h3>
+                <button class="close-btn" onclick="closeLive()"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div style="padding-top:15px; position:relative;">
+                <video id="liveVideo" controls autoplay playsinline style="width: 100%; aspect-ratio: 16/9; background:#000; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.5);"></video>
+                <p id="liveMsg" style="position:absolute; left:0; right:0; top:50%; text-align:center; color:var(--text-muted); font-size:0.9rem; pointer-events:none;"></p>
+            </div>
+            <p style="margin-top:8px; font-size:0.75rem; color:var(--text-muted);">HLS en directo con unos segundos de retraso: sirve para comprobar imagen y sonido, no la sincronía.</p>
+        </div>
+    </div>
+
+    <!-- HLS para el reproductor en directo (local: el panel puede estar en una red sin internet) -->
+    <script src="vendor/hls.js/hls.min.js"></script>
     <!-- Chart.js for visualization -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="/socket.io/socket.io.js"></script>
