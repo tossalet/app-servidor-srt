@@ -164,7 +164,7 @@ async function startInput(inputObj) {
         channel, cfg: inputObj, proc: null, port: null, stopped: false,
         restartTimer: null, backoff: RESTART_MIN_MS, tail: '',
         codec: '', signalSince: null, silentSecs: 0, delay: inputObj.delay_ms || 0,
-        preview: null
+        preview: null, meter: null, listeners: new Set()
     };
     inputs.set(channel, st);
 
@@ -175,6 +175,7 @@ async function startInput(inputObj) {
 
     // Si preview está desactivada, sacamos igualmente un fotograma fijo
     startPreview(channel, inputObj.preview_enabled === 0).catch(logError(`PREVIEW-${channel}`));
+    startMeter(st).catch(logError(`METER-${channel}`));
     return true;
 }
 
@@ -263,6 +264,8 @@ function stopInput(channel) {
     inputs.delete(channel);
     if (st.restartTimer) clearTimeout(st.restartTimer);
     killPreview(st);
+    killMeter(st);
+    for (const child of st.listeners) child.kill('SIGKILL');
     if (st.proc) st.proc.kill('SIGKILL');
     dpClose(channel);
 
@@ -396,6 +399,134 @@ function killPreview(st) {
 function stopPreview(channel) {
     const st = inputs.get(String(channel));
     if (st) killPreview(st);
+}
+
+/* =======================================
+ *  AUDIO (vúmetros y escucha)
+ * ======================================= */
+
+const METER_FLOOR_DB = -90;
+const MAX_LISTENERS = 4;
+const inputUdpUrl = (port) => `udp://127.0.0.1:${port}?overrun_nonfatal=1&buffer_size=${SOCK_BUF}`;
+
+/**
+ * Vúmetro: un FFmpeg sólo de audio por input, independiente de la preview (que con la
+ * preview desactivada se cierra tras un fotograma). Mide el pico por canal cada ~100 ms.
+ */
+async function startMeter(st) {
+    const port = await getFreeUdpPort();
+    if (st.stopped || inputs.get(st.channel) !== st) return;
+    killMeter(st);
+
+    const args = [
+        '-hide_banner', '-nostats', '-loglevel', 'error',
+        '-i', inputUdpUrl(port),
+        '-map', '0:a:0', '-vn', '-sn', '-dn',
+        // 4800 muestras = 100 ms a 48 kHz; astats se reinicia en cada bloque
+        '-af', 'asetnsamples=n=4800,astats=metadata=1:reset=1:measure_overall=none:measure_perchannel=Peak_level,ametadata=mode=print:file=-',
+        '-f', 'null', '-'
+    ];
+    const child = spawn(FFMPEG, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const meter = { proc: child, port, timer: null, levels: null, at: 0, noAudio: false };
+    st.meter = meter;
+    dpSub(st.channel, port, true);
+
+    let buf = '';
+    let pending = [];
+    child.stdout.on('data', (data) => {
+        buf += data.toString();
+        const lines = buf.split('\n');
+        buf = lines.pop();
+        for (const line of lines) {
+            // Cada bloque empieza por "frame:N pts:..." seguido de una línea por canal:
+            // se publica el bloque anterior al ver la cabecera del siguiente
+            if (line.startsWith('frame:')) {
+                if (pending.length) publishLevels(meter, pending);
+                pending = [];
+                continue;
+            }
+            const m = line.match(/astats\.(\d+)\.Peak_level=(\S+)/);
+            if (m) {
+                const db = parseFloat(m[2]); // "-inf" en silencio digital
+                pending[Number(m[1]) - 1] = Number.isFinite(db) ? Math.max(METER_FLOOR_DB, db) : METER_FLOOR_DB;
+            }
+        }
+    });
+
+    let err = '';
+    child.stderr.on('data', (data) => { err = (err + data.toString()).slice(-1000); });
+    child.on('error', () => {});
+    child.on('close', () => {
+        dpUnsub(st.channel, port);
+        if (st.meter !== meter) return;
+        meter.proc = null;
+        meter.levels = null;
+        // Sin pista de audio: se reintenta despacio por si la fuente la añade más tarde
+        meter.noAudio = /matches no streams|does not contain any stream/i.test(err);
+        meter.timer = setTimeout(() => {
+            if (st.meter === meter && !st.stopped) startMeter(st).catch(logError(`METER-${st.channel}`));
+        }, meter.noAudio ? 10000 : 2000);
+    });
+}
+
+function publishLevels(meter, chans) {
+    const l = chans[0] ?? METER_FLOOR_DB;
+    const r = chans.length > 1 ? (chans[1] ?? METER_FLOOR_DB) : l; // Mono: misma barra en L y R
+    meter.levels = [Math.round(l * 10) / 10, Math.round(r * 10) / 10];
+    meter.at = Date.now();
+}
+
+function killMeter(st) {
+    const meter = st.meter;
+    if (!meter) return;
+    st.meter = null;
+    clearTimeout(meter.timer);
+    if (meter.proc) {
+        dpUnsub(st.channel, meter.port);
+        meter.proc.kill('SIGKILL');
+    }
+}
+
+// Un único mensaje con todos los inputs cada 100 ms: [L, R] en dBFS, o null si no hay audio
+setInterval(() => {
+    if (inputs.size === 0 || !ioInstance) return;
+    const now = Date.now();
+    const levels = {};
+    for (const [channel, st] of inputs) {
+        const m = st.meter;
+        levels[channel] = m && m.levels && now - m.at < 1000 ? m.levels : null;
+    }
+    emit('audio_levels', levels);
+}, 100).unref();
+
+/**
+ * Escucha: FFmpeg que pasa el audio del input a MP3 para un <audio> del navegador.
+ * Devuelve el proceso (stdout = MP3) o null si el input no está activo o ya hay demasiados oyentes.
+ */
+async function startListen(channel) {
+    const st = inputs.get(String(channel));
+    if (!st || st.listeners.size >= MAX_LISTENERS) return null;
+    const port = await getFreeUdpPort();
+    if (st.stopped || inputs.get(st.channel) !== st) return null;
+
+    const args = [
+        '-hide_banner', '-nostats', '-loglevel', 'error',
+        '-fflags', 'nobuffer', '-analyzeduration', '1000000',
+        '-i', inputUdpUrl(port),
+        '-map', '0:a:0', '-vn', '-sn', '-dn',
+        '-ac', '2', '-ar', '44100', '-c:a', 'libmp3lame', '-b:a', '128k',
+        '-f', 'mp3', '-flush_packets', '1', 'pipe:1'
+    ];
+    const child = spawn(FFMPEG, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    st.listeners.add(child);
+    dpSub(st.channel, port, true);
+    child.stderr.on('data', () => {}); // Un pipe sin leer acaba congelando FFmpeg
+    child.on('error', () => {});
+    child.on('close', () => {
+        st.listeners.delete(child);
+        dpUnsub(st.channel, port);
+    });
+    return child;
 }
 
 /* =======================================
@@ -707,6 +838,7 @@ module.exports = {
     stopOutput,
     startPreview,
     stopPreview,
+    startListen,
     setDelay,
     getTelemetry,
     getCounts,

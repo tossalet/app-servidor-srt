@@ -527,6 +527,8 @@ document.addEventListener('DOMContentLoaded', () => {
         renderDashboardStreams();
     });
 
+    socket.on('audio_levels', renderAudioLevels);
+
     socket.on('sys_stats', (stats) => {
         // CPU
         const cpuLabel = document.getElementById('sys_cpu');
@@ -654,6 +656,14 @@ function renderStreams() {
                         <div class="quality-bar">
                             <div class="fill ${input.enabled ? 'yellow' : 'red'}" id="qbar-${input.channel}" style="width: ${input.enabled ? '100%' : '0%'}"></div>
                         </div>
+                        <div class="vu-meter" id="vu-${input.channel}" title="Nivel de audio (L/R)">
+                            <div class="vu-row"><div class="vu-mask" id="vu-${input.channel}-0"></div><div class="vu-peak" id="vu-${input.channel}-0p"></div></div>
+                            <div class="vu-row"><div class="vu-mask" id="vu-${input.channel}-1"></div><div class="vu-peak" id="vu-${input.channel}-1p"></div></div>
+                            <span class="vu-warn" id="vu-warn-${input.channel}">Sin audio</span>
+                        </div>
+                        <button class="action-btn listen-btn ${listeningChannel === String(input.channel) ? 'on' : ''}" id="listen-${input.channel}" onclick="toggleListen(${input.channel})" title="Escuchar esta entrada" ${input.enabled ? '' : 'disabled'}>
+                            <i class="fa-solid ${listeningChannel === String(input.channel) ? 'fa-volume-high' : 'fa-volume-xmark'}"></i>
+                        </button>
                     </div>
                     <div class="right-section">
                         <div class="control-actions">
@@ -1481,6 +1491,91 @@ async function toggleInput(channel) {
     await fetch(`/api/inputs/${channel}/toggle`, { method: 'POST' });
     fetchData();
 }
+
+/* =======================================
+ *  AUDIO: vúmetros y escucha
+ * ======================================= */
+const VU_FLOOR_DB = -60;          // Fondo de escala del vúmetro
+const VU_SILENCE_DB = -60;        // Por debajo de esto cuenta como silencio
+const VU_SILENCE_MS = 5000;       // Silencio o sin pista durante este tiempo → "Sin audio"
+const vuState = {};               // canal -> { level:[L,R], peak:[L,R], peakAt:[t,t], lastSound }
+
+const dbToPct = (db) => Math.max(0, Math.min(100, (db - VU_FLOOR_DB) / -VU_FLOOR_DB * 100));
+
+function renderAudioLevels(levels) {
+    const now = Date.now();
+    for (const [channel, lv] of Object.entries(levels)) {
+        const s = vuState[channel] || (vuState[channel] = {
+            level: [VU_FLOOR_DB, VU_FLOOR_DB], peak: [VU_FLOOR_DB, VU_FLOOR_DB], peakAt: [0, 0], lastSound: now
+        });
+        for (let i = 0; i < 2; i++) {
+            const db = lv ? lv[i] : VU_FLOOR_DB;
+            // Subida instantánea, caída de 3 dB por mensaje (~30 dB/s)
+            s.level[i] = Math.max(db, s.level[i] - 3);
+            // Marca de pico: se mantiene 1 s y luego cae
+            if (db >= s.peak[i]) { s.peak[i] = db; s.peakAt[i] = now; }
+            else if (now - s.peakAt[i] > 1000) s.peak[i] = Math.max(db, s.peak[i] - 2);
+
+            const mask = document.getElementById(`vu-${channel}-${i}`);
+            const peak = document.getElementById(`vu-${channel}-${i}p`);
+            if (mask) mask.style.width = `${100 - dbToPct(s.level[i])}%`;
+            if (peak) peak.style.left = `calc(${dbToPct(s.peak[i])}% - 1px)`;
+        }
+        if (lv && Math.max(lv[0], lv[1]) > VU_SILENCE_DB) s.lastSound = now;
+        const warn = document.getElementById(`vu-warn-${channel}`);
+        if (warn) warn.classList.toggle('show', now - s.lastSound > VU_SILENCE_MS);
+    }
+    // Inputs parados: dejan de venir en el mensaje, vaciamos su vúmetro
+    for (const channel of Object.keys(vuState)) {
+        if (channel in levels) continue;
+        delete vuState[channel];
+        for (let i = 0; i < 2; i++) {
+            const mask = document.getElementById(`vu-${channel}-${i}`);
+            const peak = document.getElementById(`vu-${channel}-${i}p`);
+            if (mask) mask.style.width = '100%';
+            if (peak) peak.style.left = '0';
+        }
+        document.getElementById(`vu-warn-${channel}`)?.classList.remove('show');
+    }
+}
+
+// Un solo <audio> fuera de las tarjetas: renderStreams() reconstruye el HTML sin cortarlo
+const listenAudio = new Audio();
+let listeningChannel = null;
+
+function updateListenButtons() {
+    document.querySelectorAll('.listen-btn').forEach(btn => {
+        const on = btn.id === `listen-${listeningChannel}`;
+        btn.classList.toggle('on', on);
+        btn.querySelector('i').className = `fa-solid ${on ? 'fa-volume-high' : 'fa-volume-xmark'}`;
+    });
+}
+
+function stopListen() {
+    listeningChannel = null;
+    listenAudio.pause();
+    listenAudio.removeAttribute('src');
+    listenAudio.load(); // Cierra la conexión: el servidor mata su FFmpeg
+    updateListenButtons();
+}
+
+function toggleListen(channelId) {
+    const channel = String(channelId);
+    if (listeningChannel === channel) return stopListen();
+    stopListen();
+    listeningChannel = channel;
+    listenAudio.src = `/api/audio/${channel}?t=${Date.now()}`;
+    listenAudio.play().catch(() => {});
+    updateListenButtons();
+}
+
+// El servidor corta el audio si paran la entrada
+listenAudio.addEventListener('ended', () => { if (listeningChannel) stopListen(); });
+listenAudio.addEventListener('error', () => {
+    if (!listeningChannel) return;
+    stopListen();
+    alert('No se puede escuchar esta entrada: no tiene audio o no hay señal.');
+});
 
 async function togglePreview(channelId) {
     try {

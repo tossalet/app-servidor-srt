@@ -162,6 +162,32 @@ app.post('/api/inputs/:channel/snapshot', (req, res) => {
     res.json({ status: 'Snapshot requested' });
 });
 
+// Escucha del audio de un input en MP3. La respuesta se abre con el primer audio que sale:
+// si el input no tiene pista de audio, FFmpeg termina antes y se devuelve 404.
+app.get('/api/audio/:channel', async (req, res) => {
+    const child = await streamManager.startListen(req.params.channel).catch(() => null);
+    if (!child) return res.status(404).json({ error: 'Entrada parada o demasiados oyentes' });
+
+    const stop = () => child.kill('SIGKILL');
+    const timeout = setTimeout(() => {
+        stop();
+        if (!res.headersSent) res.status(504).json({ error: 'Sin audio' });
+    }, 10000);
+    req.on('close', stop);
+
+    child.stdout.once('data', (chunk) => {
+        clearTimeout(timeout);
+        res.writeHead(200, { 'Content-Type': 'audio/mpeg', 'Cache-Control': 'no-store' });
+        res.write(chunk);
+        child.stdout.pipe(res);
+    });
+    child.on('close', () => {
+        clearTimeout(timeout);
+        if (!res.headersSent) res.status(404).json({ error: 'Sin audio' });
+        else res.end();
+    });
+});
+
 // Sincronización: retardo en vivo (ms) de un input. Se aplica sin reiniciar nada.
 app.post('/api/inputs/:channel/delay', (req, res) => {
     const channelId = req.params.channel;
