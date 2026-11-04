@@ -643,7 +643,7 @@ function renderStreams() {
                         <span id="codec-${input.channel}" class="badge-protocol udp" style="background:#4b5563;">H.26X</span>
                         <span class="stream-name" style="display:flex; flex-direction:column; line-height:1.2;">
                             ${input.name || 'Channel ' + input.channel}
-                            <span style="font-size:0.70rem; color:var(--accent-blue); font-family:monospace; font-weight:normal; user-select:all;">${input.url.replace(/127\.0\.0\.1|0\.0\.0\.0/g, serverIp)}</span>
+                            <span style="font-size:0.70rem; color:var(--accent-blue); font-family:monospace; font-weight:normal; user-select:all;">${maskUrl(input.url).replace(/127\.0\.0\.1|0\.0\.0\.0/g, serverIp)}</span>
                         </span>
                     </div>
                     <div class="mid-section">
@@ -693,7 +693,8 @@ function renderStreams() {
                             <div style="display:flex; align-items:center; gap: 10px;">
                                 <span class="badge-protocol ${protocolBadge === 'srt' ? 'udp' : 'rtmp'}">${protocolBadge === 'srt' ? 'Buffer SRT' : 'Buffer N/A'}</span>
                                 <span style="color:#fff; font-weight:600;">${latencyText}</span>
-                                ${protocolBadge === 'srt' ? `<button onclick="editLatency(${input.channel}, '${input.url}')" style="background:transparent; border:none; color:var(--accent-blue); cursor:pointer; font-size:0.9rem;" title="Editar Latencia del Stream"><i class="fa-solid fa-pen"></i></button>` : ''}
+                                ${protocolBadge === 'srt' ? `<button onclick="editLatency('${input.channel}')" style="background:transparent; border:none; color:var(--accent-blue); cursor:pointer; font-size:0.9rem;" title="Editar Latencia del Stream"><i class="fa-solid fa-pen"></i></button>` : ''}
+                                ${srtCipherBadge(input.url)}
                             </div>
                             <p style="font-size: 0.75rem; margin-top: 2px; opacity:0.7;">Optimiza este valor según el retardo de la red (${protocolBadge === 'srt' ? 'Haivision recomienda 3-4 × RTT' : 'Sólo configurable en SRT'}).</p>
                             <div id="srtstats-${input.channel}" style="font-size:0.75rem;"></div>
@@ -712,8 +713,9 @@ function renderStreams() {
                                     <span class="tooltiptext">${out.enabled ? 'Enabled' : 'Disabled'}</span>
                                 </div>
                                 <span class="stream-name" style="display:flex; flex-direction:column; line-height:1.2;">
-                                    ${out.location || out.url}
-                                    <span style="font-size:0.70rem; color:var(--text-muted); font-family:monospace; font-weight:normal; user-select:all;">${out.url.replace(/127\.0\.0\.1|0\.0\.0\.0/g, serverIp)}</span>
+                                    ${out.location || maskUrl(out.url)}
+                                    <span style="font-size:0.70rem; color:var(--text-muted); font-family:monospace; font-weight:normal; user-select:all;">${maskUrl(out.url).replace(/127\.0\.0\.1|0\.0\.0\.0/g, serverIp)}</span>
+                                    ${out.url.startsWith('srt') ? `<span style="font-size:0.70rem; font-weight:normal; display:flex; align-items:center; gap:6px;">Latencia SRT <b style="color:#fff;">${currentLatencyMs(out.url, true)}</b><button onclick="editLatency('out_${out.id}')" style="background:transparent; border:none; color:var(--accent-blue); cursor:pointer; font-size:0.8rem; padding:0;" title="Editar latencia de esta salida"><i class="fa-solid fa-pen"></i></button>${srtCipherBadge(out.url)}</span>` : ''}
                                     <span id="srtstats-out_${out.id}" style="font-size:0.70rem; color:var(--text-muted); font-weight:normal;"></span>
                                 </span>
                             </div>
@@ -782,6 +784,8 @@ function openAddInputModal() {
     // Restablecer selects al valor por defecto antes de actualizar los campos
     document.getElementById('inp_protocol').value = 'srt';
     document.getElementById('inp_mode').value = 'listener';
+    document.getElementById('inp_is_edit').dataset.url = '';
+    fillSrtFields('inp', '');
     updateInputFields();
     openModal('inputModal');
 }
@@ -793,6 +797,8 @@ function openOutputModal(channel) {
     document.getElementById('formOutput').reset();
     document.getElementById('out_protocol').value = 'srt';
     document.getElementById('out_mode').value = 'caller';
+    document.getElementById('out_is_edit').dataset.url = '';
+    fillSrtFields('out', '');
     updateOutputFields();
     openModal('outputModal');
 }
@@ -806,6 +812,7 @@ function updateInputFields() {
     const ipLabel = document.getElementById('inp_ip_label');
     const portLabel = document.getElementById('inp_port_label');
     
+    document.getElementById('inp_srt_opts').style.display = proto === 'srt' ? 'block' : 'none';
     if (proto === 'srt') {
         modeContainer.style.display = 'block';
         portContainer.style.display = 'block';
@@ -850,6 +857,7 @@ function updateOutputFields() {
     
     // Default hiding
     diskContainer.style.display = 'none';
+    document.getElementById('out_srt_opts').style.display = proto === 'srt' ? 'block' : 'none';
 
     if (proto === 'srt') {
         modeContainer.style.display = 'block';
@@ -913,12 +921,14 @@ function openEditInput(channel) {
     // Watchdog config fields removed
     
     // Parse url broadly
+    document.getElementById('inp_is_edit').dataset.url = input.url;
+    fillSrtFields('inp', input.url.startsWith('srt') ? input.url : '');
     if (input.url.startsWith('srt')) {
         document.getElementById('inp_protocol').value = 'srt';
-        const isListener = input.url.includes('mode=listener');
-        document.getElementById('inp_mode').value = isListener ? 'listener' : 'caller';
-        const portMatch = input.url.match(/:(\d+)/);
-        if(portMatch) document.getElementById('inp_port').value = portMatch[1];
+        const { host, port, mode } = srtHostMode(input.url);
+        document.getElementById('inp_mode').value = mode;
+        document.getElementById('inp_port').value = port;
+        if (mode !== 'listener') document.getElementById('inp_ip').value = host;
     } else if (input.url.startsWith('rtmp://127.0.0.1:1935/live/')) {
         document.getElementById('inp_protocol').value = 'rtmp_local';
         document.getElementById('inp_port').value = input.url.replace('rtmp://127.0.0.1:1935/live/', '');
@@ -939,7 +949,17 @@ function openEditInput(channel) {
     openModal('inputModal');
 }
 
-function editLatency(channelId, currentUrl) {
+function findStreamByKey(key) {
+    key = String(key);
+    return key.startsWith('out_')
+        ? outputs.find(o => 'out_' + o.id === key)
+        : inputs.find(i => String(i.channel) === key);
+}
+
+function editLatency(channelId) {
+    const item = findStreamByKey(channelId);
+    if (!item) return;
+    const currentUrl = item.url;
     let currentLatency = '';
     const match = currentUrl.match(/latency=(\d+)/);
     if (match) currentLatency = match[1];
@@ -967,13 +987,90 @@ function editLatency(channelId, currentUrl) {
 // Salud del enlace SRT (estadísticas de srt-live-transmit). Últimos valores por canal ('3' / 'out_5')
 const srtStatsCache = {};
 
-function currentLatencyMs(url) {
-    const m = (url || '').match(/latency=(\d+)/);
-    return m ? parseInt(m[1], 10) : 120; // 120 ms: valor por defecto de libsrt
+function currentLatencyMs(url, asText = false) {
+    const m = (url || '').match(/[?&]latency=(\d+)/);
+    const ms = m ? parseInt(m[1], 10) : 120; // 120 ms: valor por defecto de libsrt
+    return asText ? (m ? `${ms} ms` : '120 ms (defecto)') : ms;
 }
 
-// Recomendación de Haivision: latencia de 3 a 4 veces el RTT (mínimo 120 ms)
-const recommendedLatency = (rtt) => Math.max(120, Math.ceil(rtt * 4 / 10) * 10);
+/* ===================================
+ * OPCIONES SRT EN LOS FORMULARIOS (latencia, cifrado, passphrase)
+ * Se guardan en la URL con los nombres de libsrt: latency (ms), pbkeylen, passphrase.
+ * Al editar se conservan el resto de parámetros que ya tuviera la URL.
+ * =================================== */
+const SRT_FORM_KEYS = ['mode', 'latency', 'passphrase', 'pbkeylen'];
+const PASSPHRASE_RE = /^[A-Za-z0-9._~!@$*+,;:-]{10,64}$/;
+
+function srtUrlParams(url) {
+    const qi = (url || '').indexOf('?');
+    if (qi < 0) return [];
+    return url.slice(qi + 1).split('&').filter(Boolean).map(kv => {
+        const i = kv.indexOf('=');
+        return i < 0 ? [kv, ''] : [kv.slice(0, i), kv.slice(i + 1)];
+    });
+}
+
+const srtParam = (url, key) => (srtUrlParams(url).find(([k]) => k === key) || [])[1];
+
+// Oculta la passphrase al mostrar URLs en pantalla
+const maskUrl = (url) => (url || '').replace(/(passphrase=)[^&]+/g, '$1••••••');
+
+function srtCipherBadge(url) {
+    if (!(url || '').startsWith('srt') || !srtParam(url, 'passphrase')) return '';
+    const bits = { '24': 192, '32': 256 }[srtParam(url, 'pbkeylen')] || 128;
+    return `<span class="badge-protocol srt" title="Cifrado AES-${bits} con passphrase" style="font-size:0.65rem; padding:2px 6px;"><i class="fa-solid fa-lock"></i> AES-${bits}</span>`;
+}
+
+function updateSrtCipherFields(px) {
+    const on = document.getElementById(`${px}_pbkeylen`).value !== '';
+    document.getElementById(`${px}_pass_group`).style.display = on ? 'block' : 'none';
+    document.getElementById(`${px}_passphrase`).required = on;
+}
+
+function fillSrtFields(px, url) {
+    document.getElementById(`${px}_latency`).value = srtParam(url, 'latency') || '';
+    const pass = srtParam(url, 'passphrase') || '';
+    // Con passphrase y sin pbkeylen, SRT usa AES-128
+    document.getElementById(`${px}_pbkeylen`).value = pass ? (srtParam(url, 'pbkeylen') || '16') : '';
+    document.getElementById(`${px}_passphrase`).value = pass;
+    document.getElementById(`${px}_passphrase`).type = 'password';
+    updateSrtCipherFields(px);
+}
+
+// Construye la URL SRT: host/puerto/modo + opciones del formulario + parámetros extra que ya tuviera
+function buildSrtUrl(px, host, port, mode, previousUrl) {
+    const params = [['mode', mode]];
+    const latency = document.getElementById(`${px}_latency`).value.trim();
+    if (latency !== '') params.push(['latency', String(parseInt(latency, 10))]);
+    const pbkeylen = document.getElementById(`${px}_pbkeylen`).value;
+    if (pbkeylen) {
+        params.push(['passphrase', document.getElementById(`${px}_passphrase`).value]);
+        params.push(['pbkeylen', pbkeylen]);
+    }
+    for (const [k, v] of srtUrlParams(previousUrl)) {
+        if (!SRT_FORM_KEYS.includes(k)) params.push([k, v]);
+    }
+    return `srt://${host}:${port}?` + params.map(([k, v]) => v === '' ? k : `${k}=${v}`).join('&');
+}
+
+function srtFormError(px) {
+    if (document.getElementById(`${px}_pbkeylen`).value && !PASSPHRASE_RE.test(document.getElementById(`${px}_passphrase`).value)) {
+        return 'La passphrase debe tener de 10 a 64 caracteres (letras, números o . _ ~ ! @ $ * + , ; : -) y ser la misma en los dos extremos.';
+    }
+    const lat = document.getElementById(`${px}_latency`).value.trim();
+    if (lat !== '' && !(parseInt(lat, 10) >= 0 && parseInt(lat, 10) <= 8000)) return 'La latencia debe estar entre 0 y 8000 ms.';
+    return null;
+}
+
+// Host y modo de una URL SRT existente (para editar)
+function srtHostMode(url) {
+    const m = (url || '').match(/^srt:\/\/(\[[^\]]+\]|[^:/?]*):(\d+)/);
+    return { host: m ? m[1] : '', port: m ? m[2] : '', mode: srtParam(url, 'mode') || 'caller' };
+}
+
+// Recomendación de Haivision: latencia de 3 a 4 veces el RTT. Mínimo 40 ms: en LAN (RTT ~1 ms)
+// bajar más deja sin margen para retransmitir un paquete perdido
+const recommendedLatency = (rtt) => Math.max(40, Math.ceil(rtt * 4 / 10) * 10);
 
 function renderSrtStats(channel, s) {
     const el = document.getElementById(`srtstats-${channel}`);
@@ -1045,7 +1142,7 @@ async function sendSyncDelay(ms) {
 
 async function submitLatency(e) {
     e.preventDefault();
-    const channelId = parseInt(document.getElementById('lat_channel').value);
+    const key = document.getElementById('lat_channel').value;
     const currentUrl = document.getElementById('lat_current_url').value;
     const newVal = document.getElementById('lat_value').value;
 
@@ -1064,19 +1161,20 @@ async function submitLatency(e) {
         }
     }
 
-    const inputData = inputs.find(i => i.channel === channelId);
-    if (!inputData) return;
-
+    // Sólo se envía la URL: el servidor conserva nombre, códec, etc. Reconecta sólo esta señal.
+    const endpoint = key.startsWith('out_') ? `/api/outputs/${key.slice(4)}` : `/api/inputs/${key}`;
     try {
-        await fetch(`/api/inputs/${channelId}`, {
+        const res = await fetch(endpoint, {
             method: 'PUT',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                url: newUrl,
-                name: inputData.name
-            })
+            body: JSON.stringify({ url: newUrl })
         });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            return alert(err.error || 'No se pudo guardar la latencia');
+        }
         closeModal('latencyModal');
+        fetchData();
     } catch (e) {
         console.error("Error updating latency", e);
     }
@@ -1201,16 +1299,14 @@ function openEditOutput(id) {
     document.getElementById('out_vcodec').value = out.vcodec || 'copy';
     
     // Parse url broadly
+    document.getElementById('out_is_edit').dataset.url = out.url;
+    fillSrtFields('out', out.url.startsWith('srt') ? out.url : '');
     if (out.url.startsWith('srt')) {
         document.getElementById('out_protocol').value = 'srt';
-        const isListener = out.url.includes('mode=listener');
-        document.getElementById('out_mode').value = isListener ? 'listener' : 'caller';
-        const portMatch = out.url.match(/:(\d+)/);
-        if(portMatch) document.getElementById('out_port').value = portMatch[1];
-        if(!isListener) {
-            const ipMatch = out.url.match(/\/\/([^:]+)/);
-            if(ipMatch) document.getElementById('out_ip').value = ipMatch[1];
-        }
+        const { host, port, mode } = srtHostMode(out.url);
+        document.getElementById('out_mode').value = mode;
+        document.getElementById('out_port').value = port;
+        if (mode !== 'listener') document.getElementById('out_ip').value = host;
     } else if (out.url.startsWith('rtmp://127.0.0.1:1935/out/')) {
         document.getElementById('out_protocol').value = 'rtmp_local';
         document.getElementById('out_port').value = out.url.replace('rtmp://127.0.0.1:1935/out/', '');
@@ -1255,9 +1351,12 @@ async function submitInput(e) {
     let outUrl = '';
 
     if (proto === 'srt') {
+        const srtError = srtFormError('inp');
+        if (srtError) return alert(srtError);
         const mode = document.getElementById('inp_mode').value;
         const ip = (mode === 'listener') ? '0.0.0.0' : document.getElementById('inp_ip').value;
-        outUrl = `srt://${ip}:${port}?mode=${mode}`;
+        const previous = document.getElementById('inp_is_edit').value === 'true' ? document.getElementById('inp_is_edit').dataset.url : '';
+        outUrl = buildSrtUrl('inp', ip, port, mode, previous);
     } else if (proto === 'udp') {
         const ip = document.getElementById('inp_ip').value || '0.0.0.0';
         outUrl = `udp://${ip}:${port}`;
@@ -1278,15 +1377,13 @@ async function submitInput(e) {
     };
     
     const isEdit = document.getElementById('inp_is_edit').value === 'true';
-    if(isEdit) {
-        const cId = document.getElementById('inp_edit_channel').value;
-        await fetch(`/api/inputs/${cId}`, {
-            method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
-        });
-    } else {
-        await fetch('/api/inputs', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
-        });
+    const cId = document.getElementById('inp_edit_channel').value;
+    const res = await fetch(isEdit ? `/api/inputs/${cId}` : '/api/inputs', {
+        method: isEdit ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        return alert(err.error || 'No se pudo guardar la entrada');
     }
     
     closeModal('inputModal');
@@ -1317,9 +1414,12 @@ async function submitOutput(e) {
         const key = document.getElementById('out_port').value || 'streaming_final';
         outUrl = `rtmp://127.0.0.1:${window.currentRtmpPort || 1935}/out/${key}`;
     } else if (proto === 'srt') {
+        const srtError = srtFormError('out');
+        if (srtError) return alert(srtError);
         const mode = document.getElementById('out_mode').value;
         const ip = (mode === 'listener') ? '0.0.0.0' : document.getElementById('out_ip').value;
-        outUrl = `srt://${ip}:${port}?mode=${mode}`;
+        const previous = document.getElementById('out_is_edit').value === 'true' ? document.getElementById('out_is_edit').dataset.url : '';
+        outUrl = buildSrtUrl('out', ip, port, mode, previous);
     } else {
         const ip = document.getElementById('out_ip').value || '127.0.0.1';
         outUrl = `udp://${ip}:${port}`;
@@ -1333,15 +1433,13 @@ async function submitOutput(e) {
     };
 
     const isEdit = document.getElementById('out_is_edit').value === 'true';
-    if(isEdit) {
-        const oId = document.getElementById('out_edit_id').value;
-        await fetch(`/api/outputs/${oId}`, {
-            method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
-        });
-    } else {
-        await fetch('/api/outputs', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
-        });
+    const oId = document.getElementById('out_edit_id').value;
+    const res = await fetch(isEdit ? `/api/outputs/${oId}` : '/api/outputs', {
+        method: isEdit ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        return alert(err.error || 'No se pudo guardar la salida');
     }
     
     closeModal('outputModal');

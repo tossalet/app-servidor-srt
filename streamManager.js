@@ -131,7 +131,7 @@ function fmtDuration(ms) {
 
 // Guarda las últimas líneas de stderr para poder diagnosticar caídas sin inundar el log
 function keepTail(st, chunk) {
-    st.tail = (st.tail + chunk).slice(-1500);
+    st.tail = srt.maskSecrets(st.tail + chunk).slice(-1500); // FFmpeg repite la URL en sus errores
 }
 
 function pushTelemetry(key, point) {
@@ -212,7 +212,7 @@ function spawnInputProcess(st) {
         ];
     }
 
-    console.log(`[STARTING INPUT ${st.channel}] ${cmd} ${args.join(' ')}`);
+    console.log(srt.maskSecrets(`[STARTING INPUT ${st.channel}] ${cmd} ${args.join(' ')}`));
     const child = spawn(cmd, args, { stdio: ['ignore', viaSlt ? 'pipe' : 'ignore', 'pipe'] });
     const startedAt = Date.now();
     st.proc = child;
@@ -734,7 +734,7 @@ async function spawnOutputProcess(st) {
         args.push('-f', format, destUrl);
     }
 
-    console.log(`[STARTING OUTPUT ${st.id}] ${cmd} ${args.join(' ')}`);
+    console.log(srt.maskSecrets(`[STARTING OUTPUT ${st.id}] ${cmd} ${args.join(' ')}`));
     const child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     const startedAt = Date.now();
     st.proc = child;

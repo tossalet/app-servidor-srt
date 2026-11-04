@@ -164,8 +164,44 @@ function snapshot(target) {
     return { ...s.last, since: s.since };
 }
 
+/* =======================================
+ *  VALIDACIÓN Y SECRETOS
+ * ======================================= */
+
+const MAX_LATENCY_MS = 8000;
+// Sin & = ? # % ni espacios: la passphrase viaja dentro de la URL y no se re-codifica
+const PASSPHRASE_RE = /^[A-Za-z0-9._~!@$*+,;:-]{10,64}$/;
+
+// Comprueba las opciones SRT de una URL. Devuelve un texto de error o null si es válida.
+// SRT rechaza sin avisar una passphrase de menos de 10 caracteres (la conexión nunca llega).
+// Máximo 64: libsrt admite 80, pero FFmpeg (y receptores basados en él: OBS, vMix...) sólo 64.
+function validateUrl(url) {
+    if (typeof url !== 'string' || !url.startsWith('srt://')) return null;
+    const { params } = splitUrl(url);
+    for (const key of LATENCY_KEYS) {
+        const v = getParam(params, key);
+        if (v === undefined) continue;
+        if (!/^\d+$/.test(v) || parseInt(v, 10) > MAX_LATENCY_MS) return `${key} debe ser un número de 0 a ${MAX_LATENCY_MS} ms`;
+    }
+    const passphrase = getParam(params, 'passphrase');
+    const pbkeylen = getParam(params, 'pbkeylen');
+    if (passphrase !== undefined && !PASSPHRASE_RE.test(passphrase)) {
+        return 'La passphrase debe tener de 10 a 64 caracteres: letras, números o . _ ~ ! @ $ * + , ; : -';
+    }
+    if (pbkeylen !== undefined) {
+        if (!['0', '16', '24', '32'].includes(pbkeylen)) return 'pbkeylen debe ser 16 (AES-128), 24 (AES-192) o 32 (AES-256)';
+        if (pbkeylen !== '0' && passphrase === undefined) return 'El cifrado AES necesita una passphrase';
+    }
+    return null;
+}
+
+// Para logs: nunca escribir la passphrase en el journal
+const maskSecrets = (text) => String(text).replace(/(passphrase=)[^&\s]+/g, '$1***');
+
 module.exports = {
     SLT,
+    validateUrl,
+    maskSecrets,
     snapshot,
     STATS_ARGS,
     forFfmpeg,

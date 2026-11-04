@@ -43,6 +43,23 @@ Sigue la documentación oficial de Haivision ([github.com/Haivision/srt](https:/
 - **Latencia en milisegundos:** en las URLs del panel `latency` va en ms, la unidad de SRT. FFmpeg la espera en microsegundos, así que se convierte al usarlo. Antes un "120 ms" se enviaba como 0,12 ms.
 - **Buffers automáticos:** según `configuration-guidelines.md` de Haivision, si la latencia lo exige se amplían `rcvbuf`/`sndbuf` y la ventana `fc`. Con latencias altas, el buffer por defecto de SRT (8192 paquetes, unos 86 Mbit) descarta paquetes. El cálculo usa `SRT_MAX_MBPS` (por defecto 60). Si pones `rcvbuf` o `fc` en la URL, se respetan.
 
+### Latencia por conexión (entradas y salidas)
+
+Cada entrada y cada **salida** SRT tiene su propia latencia, porque cada una depende de su enlace con el otro extremo. Se configura en el formulario (bloque "Opciones SRT", con preajustes LAN 40 / 120 / Internet 500) o con el lápiz junto a "Latencia SRT" en la tarjeta. Cambiarla reconecta solo esa señal.
+
+- La latencia se negocia al conectar: se usa **la mayor de los dos extremos**. Para la mínima, pon la misma en ambos lados.
+- Regla de Haivision y SRS: **3–4 × RTT**. El panel mide el RTT de cada conexión y propone ese valor; en LAN el mínimo propuesto es 40 ms.
+- Por debajo de 3 × RTT aparecen drops (cortes), porque no da tiempo a retransmitir.
+
+### Cifrado (passphrase)
+
+AES-128, AES-192 o AES-256 por entrada y por salida, en el mismo bloque "Opciones SRT".
+
+- La passphrase debe tener de **10 a 64 caracteres** y ser **idéntica en los dos extremos**. libsrt admite hasta 80, pero FFmpeg (y los receptores basados en él: OBS, vMix…) solo 64. Caracteres admitidos: letras, números y `. _ ~ ! @ $ * + , ; : -`.
+- El servidor rechaza una passphrase no válida al guardar. SRT, en cambio, la rechaza sin avisar y la señal simplemente no llega.
+- En el panel la passphrase aparece como `••••••` y en los logs como `passphrase=***`.
+- Al editar una entrada o salida se conservan la latencia, la passphrase y cualquier otro parámetro de la URL (`streamid`, etc.). Antes se perdían.
+
 ## Sincronizar señales
 
 Cada input tiene un **retardo de sincronía** (0–10 000 ms). Se ajusta en vivo desde el panel (icono de sliders en la ficha del input) y no corta la señal. Se aplica a todas las salidas y grabaciones de ese input. La miniatura no se retrasa.

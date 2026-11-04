@@ -6,6 +6,7 @@ const fs = require('fs');
 const db = require('./db');
 const auth = require('./auth');
 const metrics = require('./metrics');
+const srt = require('./srt');
 const streamManager = require('./streamManager');
 const sysMonitor = require('./sysMonitor');
 const rtmpServer = require('./rtmpServer');
@@ -80,7 +81,15 @@ app.get('/api/inputs', (req, res) => {
     });
 });
 
-app.post('/api/inputs', (req, res) => {
+// Opciones SRT (latencia, passphrase, cifrado) válidas antes de guardar: SRT rechaza en silencio
+// una passphrase corta y la señal simplemente no llegaría
+function validateSrtBody(req, res, next) {
+    const error = srt.validateUrl(req.body && req.body.url);
+    if (error) return res.status(400).json({ error });
+    next();
+}
+
+app.post('/api/inputs', validateSrtBody, (req, res) => {
     const { url, name, provider, location, remote, audiowtdg, wtdgsecs, enabled } = req.body;
 
     // Asignar Udpsrv respetando los límites de Firewall (Settings)
@@ -229,12 +238,13 @@ app.post('/api/inputs/:channel/delay', (req, res) => {
     });
 });
 
-app.put('/api/inputs/:channel', (req, res) => {
+app.put('/api/inputs/:channel', validateSrtBody, (req, res) => {
     const channelId = req.params.channel;
     const { url, name } = req.body;
-    const query = `UPDATE inputs SET url = ?, name = ? WHERE channel = ?`;
+    // Campos no enviados se conservan (el editor de latencia sólo manda la URL)
+    const query = `UPDATE inputs SET url = COALESCE(?, url), name = COALESCE(?, name) WHERE channel = ?`;
 
-    db.run(query, [url, name, channelId], function(err) {
+    db.run(query, [url ?? null, name ?? null, channelId], function(err) {
         if (err) return res.status(500).json({ error: err.message });
 
         // Restart the process if it was running with new data
@@ -275,7 +285,7 @@ app.get('/api/outputs', (req, res) => {
     });
 });
 
-app.post('/api/outputs', (req, res) => {
+app.post('/api/outputs', validateSrtBody, (req, res) => {
     const { channel, url, location, remote, enabled, vcodec } = req.body;
     if (!channel) return res.status(400).json({ error: "Input 'channel' is required" });
 
@@ -322,10 +332,12 @@ app.post('/api/outputs/:id/toggle', (req, res) => {
     });
 });
 
-app.put('/api/outputs/:id', (req, res) => {
+app.put('/api/outputs/:id', validateSrtBody, (req, res) => {
     const id = req.params.id;
     const { url, location, vcodec } = req.body;
-    db.run(`UPDATE outputs SET url = ?, location = ?, vcodec = ? WHERE id = ?`, [url, location, vcodec || 'copy', id], function(err) {
+    // Campos no enviados se conservan (el editor de latencia sólo manda la URL)
+    db.run(`UPDATE outputs SET url = COALESCE(?, url), location = COALESCE(?, location), vcodec = COALESCE(?, vcodec) WHERE id = ?`,
+        [url ?? null, location ?? null, vcodec ?? null, id], function(err) {
         if (err) return res.status(500).json({ error: err.message });
 
         // Restart the process if it was running with new data
