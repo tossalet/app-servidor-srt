@@ -179,8 +179,8 @@ async function startInput(inputObj) {
 
     spawnInputProcess(st);
 
-    // Si preview está desactivada, sacamos igualmente un fotograma fijo
-    startPreview(channel, inputObj.preview_enabled === 0).catch(logError(`PREVIEW-${channel}`));
+    // Siempre un fotograma fijo: la miniatura en vivo es el HLS del panel, que sólo corre si alguien mira
+    startPreview(channel, true).catch(logError(`PREVIEW-${channel}`));
     startMeter(st).catch(logError(`METER-${channel}`));
     return true;
 }

@@ -358,7 +358,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (data.event === 'preview_changed') {
             const inp = inputs.find(i => i.channel == data.channel);
             if (inp) inp.preview_enabled = data.preview_enabled;
-            
+            syncThumbPlayers();
+
             const img = document.getElementById(`thumb-img-${data.channel}`);
             if (img) {
                 if (data.preview_enabled && inp.enabled) {
@@ -412,6 +413,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     img.classList.remove('has-signal');
                 }
             }
+            syncThumbPlayers();
             if (currentDashboardFilter !== null) renderDashboardStreams();
             return;
         }
@@ -475,16 +477,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (!imgElem.classList.contains('has-signal')) {
                     imgElem.classList.add('has-signal');
                     imgElem.style.filter = isPreviewLive ? 'none' : 'grayscale(100%) opacity(40%) blur(1px)';
-                    
-                    if (!isPreviewLive) {
-                        fetch(`/api/inputs/${data.channel}/snapshot`, { method: 'POST' }).catch(e => console.error(e));
-                    }
+                    // La miniatura JPEG es siempre un fotograma fijo; en vivo la tapa el vídeo HLS
+                    fetch(`/api/inputs/${data.channel}/snapshot`, { method: 'POST' }).catch(e => console.error(e));
                 }
-                
-                if (isPreviewLive) {
-                    // Update live
-                    imgElem.src = `/thumbs/thumb_${data.channel}.jpg?t=${Date.now()}`;
-                } else if (!imgElem.src.includes('thumb_')) {
+
+                if (!imgElem.src.includes('thumb_')) {
                     // Restaurar foto estática single-frame a prueba de fallos y sin parpadeos
                     const temp = new Image();
                     temp.onload = () => { imgElem.src = temp.src; };
@@ -672,9 +669,9 @@ function renderStreams() {
                 
                 <div class="stream-outputs" id="outputs-container-${input.channel}">
                     <div class="thumb-container" style="padding: 1rem 1.5rem; background: rgba(0,0,0,0.3); border-bottom: 1px solid rgba(255,255,255,0.05); display: flex; gap: 20px; align-items: center;">
-                        <div style="position:relative; width:160px; height:90px; border-radius:6px; overflow:hidden; border:1px solid rgba(255,255,255,0.1); box-shadow: 0 4px 10px rgba(0,0,0,0.5);">
+                        <div class="thumb-box" id="thumb-box-${input.channel}" style="position:relative; width:160px; height:90px; border-radius:6px; overflow:hidden; border:1px solid rgba(255,255,255,0.1); box-shadow: 0 4px 10px rgba(0,0,0,0.5);">
                             <img id="thumb-img-${input.channel}" class="${input.preview_enabled && input.enabled ? 'preview-active' : ''}" data-src="/thumbs/thumb_${input.channel}.jpg" src="${input.enabled ? '/thumbs/thumb_' + input.channel + '.jpg' + (input.preview_enabled ? '?t=' + Date.now() : '') : '/images/bars.svg'}" onerror="if(!this.src.includes('bars.svg')){this.src='/images/bars.svg';}" onclick="openLive(${input.channel})" title="Ver en directo" style="cursor:${input.enabled ? 'pointer' : 'default'}; width:100%; height:100%; object-fit:cover; filter: ${input.preview_enabled && input.enabled ? 'none' : 'grayscale(100%) opacity(40%) blur(1px)'}; transition: filter 0.3s;" />
-                            <button onclick="togglePreview(${input.channel})" class="action-btn" style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); background:rgba(0,0,0,0.6); padding:8px 12px; border:none; color:${input.preview_enabled ? 'var(--color-green)' : '#fff'}; border-radius:4px; font-size:1.2rem; cursor:pointer; opacity: 0.8; transition:0.2s;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.8" title="${input.preview_enabled ? 'Desactivar Previsualización (Ahorro CPU)' : 'Activar Previsualización'}">
+                            <button onclick="togglePreview(${input.channel})" class="action-btn thumb-eye" style="color:${input.preview_enabled ? 'var(--color-green)' : '#fff'};" title="${input.preview_enabled ? 'Desactivar Previsualización (Ahorro CPU)' : 'Activar Previsualización'}">
                                 <i class="fa-solid ${input.preview_enabled ? 'fa-eye' : 'fa-eye-slash'}"></i>
                             </button>
                             <span class="vu-warn" id="vu-warn-${input.channel}">Sin audio</span>
@@ -746,6 +743,7 @@ function renderStreams() {
         `;
         container.innerHTML += inputHTML;
     });
+    syncThumbPlayers(); // Recoloca los vídeos en vivo en las tarjetas nuevas sin cortarlos
 }
 
 function toggleExpand(channel) {
@@ -757,6 +755,7 @@ function toggleExpand(channel) {
     } else {
         icon.className = 'fa-solid fa-chevron-right';
     }
+    syncThumbPlayers(); // Plegada no se ve: su vídeo en vivo se para
 }
 
 // Modal Logic
@@ -1734,6 +1733,83 @@ function stopLiveStream() {
 function closeLive() {
     stopLiveStream();
     closeModal('liveModal');
+}
+
+/*
+ * Miniaturas en vivo: con el ojo encendido y la tarjeta desplegada, el HLS se reproduce
+ * sin sonido encima de la imagen fija. Los <video> viven fuera del HTML de las tarjetas:
+ * renderStreams() las reconstruye y syncThumbPlayers() los vuelve a colocar sin cortarlos.
+ */
+const thumbPlayers = {}; // canal -> { video, hls, retry }
+
+function wantsThumbLive(input) {
+    const card = document.getElementById(`input-card-${input.channel}`);
+    return !!(input.preview_enabled && input.enabled && card && card.classList.contains('expand-mode'));
+}
+
+function syncThumbPlayers() {
+    const wanted = new Set();
+    for (const input of inputs) {
+        const channel = String(input.channel);
+        const box = document.getElementById(`thumb-box-${channel}`);
+        if (!box || !wantsThumbLive(input)) continue;
+        wanted.add(channel);
+        const p = thumbPlayers[channel] || startThumbPlayer(channel);
+        if (p.video.parentNode !== box) box.appendChild(p.video);
+    }
+    for (const channel of Object.keys(thumbPlayers)) {
+        if (!wanted.has(channel)) stopThumbPlayer(channel);
+    }
+}
+
+function startThumbPlayer(channel) {
+    const video = document.createElement('video');
+    video.className = 'live-thumb';
+    video.muted = true;
+    video.playsInline = true;
+    video.autoplay = true;
+    video.title = 'Ver en grande';
+    video.onclick = () => openLive(channel);
+    video.onplaying = () => video.classList.add('playing');
+    const p = { video, hls: null, retry: null };
+    thumbPlayers[channel] = p;
+    loadThumbPlayer(p, channel);
+    return p;
+}
+
+function loadThumbPlayer(p, channel) {
+    const src = `/hls/${channel}/index.m3u8`;
+    if (window.Hls && Hls.isSupported()) {
+        p.hls = new Hls({ liveSyncDurationCount: 2, manifestLoadingMaxRetry: 6, manifestLoadingRetryDelay: 1000 });
+        p.hls.on(Hls.Events.MANIFEST_PARSED, () => p.video.play().catch(() => {}));
+        p.hls.on(Hls.Events.ERROR, (e, data) => {
+            if (!data.fatal) return;
+            // Sin señal o códec no soportado (H.265): queda la imagen fija y se reintenta
+            p.hls.destroy();
+            p.hls = null;
+            p.video.classList.remove('playing');
+            p.retry = setTimeout(() => {
+                p.retry = null;
+                if (thumbPlayers[channel] === p) loadThumbPlayer(p, channel);
+            }, 10000);
+        });
+        p.hls.loadSource(src);
+        p.hls.attachMedia(p.video);
+    } else if (p.video.canPlayType('application/vnd.apple.mpegurl')) {
+        p.video.src = src;
+    }
+}
+
+function stopThumbPlayer(channel) {
+    const p = thumbPlayers[channel];
+    if (!p) return;
+    delete thumbPlayers[channel];
+    clearTimeout(p.retry);
+    if (p.hls) p.hls.destroy();
+    p.video.pause();
+    p.video.removeAttribute('src');
+    p.video.load();
+    p.video.remove();
 }
 
 async function togglePreview(channelId) {
