@@ -163,6 +163,38 @@
                     </div>
                 </div>
 
+                <!-- Historial de Prometheus (lo mismo que Grafana, sin salir del panel) -->
+                <div id="history-section" class="history-section">
+                    <div class="history-header">
+                        <h2><i class="fa-solid fa-clock-rotate-left"></i> Historial</h2>
+                        <div class="history-controls">
+                            <div class="history-ranges" role="group" aria-label="Periodo">
+                                <button type="button" data-range="15m" onclick="setHistoryRange('15m')">15 min</button>
+                                <button type="button" data-range="1h" onclick="setHistoryRange('1h')" class="active">1 h</button>
+                                <button type="button" data-range="6h" onclick="setHistoryRange('6h')">6 h</button>
+                                <button type="button" data-range="24h" onclick="setHistoryRange('24h')">24 h</button>
+                            </div>
+                            <a id="history-grafana" class="btn-secondary history-grafana" target="_blank" rel="noopener" style="display:none;"><i class="fa-solid fa-chart-area"></i> Grafana</a>
+                        </div>
+                    </div>
+                    <p id="history-msg" class="history-msg">Cargando historial…</p>
+                    <div id="history-body" style="display:none;">
+                        <div class="history-table-wrap">
+                            <table class="history-table">
+                                <thead><tr><th>Señal</th><th>Con señal</th><th>Drops SRT</th><th>Reinicios</th><th>RTT máx.</th></tr></thead>
+                                <tbody id="history-summary"></tbody>
+                            </table>
+                        </div>
+                        <div class="history-charts">
+                            <div class="history-chart"><h3>Bitrate de entrada</h3><div class="history-canvas"><canvas id="hist_input"></canvas></div></div>
+                            <div class="history-chart"><h3>Bitrate de salida</h3><div class="history-canvas"><canvas id="hist_output"></canvas></div></div>
+                            <div class="history-chart"><h3>RTT SRT</h3><div class="history-canvas"><canvas id="hist_rtt"></canvas></div></div>
+                            <div class="history-chart"><h3>Drops SRT por minuto</h3><div class="history-canvas"><canvas id="hist_drops"></canvas></div></div>
+                            <div class="history-chart"><h3>CPU y memoria del mini PC</h3><div class="history-canvas"><canvas id="hist_host"></canvas></div></div>
+                        </div>
+                    </div>
+                </div>
+
                 <div id="dashboard-filter-results" style="margin-top: 20px; display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 15px;">
                     <!-- JavaScript will populate the filtered streams here -->
                 </div>
@@ -538,7 +570,7 @@
     </div>
 
     <div class="modal-overlay" id="previewModal">
-        <div class="modal" style="max-width: 800px;">
+        <div class="modal" style="width: 800px;">
             <div class="modal-header">
                 <h3 id="previewTitle">Previsualización</h3>
                 <button class="close-btn" onclick="closeModal('previewModal')"><i class="fa-solid fa-xmark"></i></button>

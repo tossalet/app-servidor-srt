@@ -7,6 +7,7 @@ const db = require('./db');
 const auth = require('./auth');
 const metrics = require('./metrics');
 const srt = require('./srt');
+const history = require('./history');
 const streamManager = require('./streamManager');
 const sysMonitor = require('./sysMonitor');
 const rtmpServer = require('./rtmpServer');
@@ -59,6 +60,9 @@ app.get('/api/status', (req, res) => {
 });
 
 const os = require('os');
+// Historial de Prometheus para el dashboard (consultas fijas; ver history.js)
+app.get('/api/history', history.handler);
+
 app.get('/api/server-ip', (req, res) => {
     const interfaces = os.networkInterfaces();
     for (const name of Object.keys(interfaces)) {

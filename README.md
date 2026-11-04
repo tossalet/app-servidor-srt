@@ -93,6 +93,7 @@ El panel, la API, las miniaturas, las grabaciones y la telemetría en vivo piden
 Durante la instalación, el instalador pregunta si quieres monitorización. Si dices que sí, deja en el mini PC:
 
 - **Prometheus:** guarda el historial de `/metrics` (cada 5 s, durante 30 días). Sólo escucha en local.
+- **Historial en el propio dashboard** del panel (sin abrir Grafana): por periodo (15 min, 1 h, 6 h o 24 h), una tabla por señal con % de tiempo con señal, drops SRT, reinicios y RTT máximo, y gráficas de bitrate de entrada y salida, RTT, drops por minuto, CPU y memoria. Se refresca cada 30 s. El servidor consulta a Prometheus con un conjunto fijo de consultas (`history.js`), nunca PromQL enviado desde el navegador. Si Prometheus no está instalado, el dashboard lo indica.
 - **Grafana:** en `http://IP_DEL_MINIPC:3001`, usuario `admin` y la contraseña que elijas. En el panel TSST aparece el enlace **Gráficas**.
 - **Dashboard "TSST · Señales en directo"**, precargado:
   - Señales con y sin señal, salidas emitiendo, drops de la última hora, CPU y memoria.
@@ -166,5 +167,6 @@ Las métricas SRT sólo existen cuando la señal va por `srt-live-transmit`.
 | `SRT_LIVE_TRANSMIT_PATH` | Ruta a un binario srt-live-transmit concreto |
 | `SRT_MAX_MBPS` | Bitrate máximo previsto por señal SRT para dimensionar buffers (60) |
 | `GRAFANA_PORT` | Puerto de Grafana: muestra el enlace "Gráficas" en el panel |
+| `PROMETHEUS_URL` | Dónde está Prometheus para el historial del dashboard (por defecto `http://127.0.0.1:9090`) |
 | `METRICS_TOKEN` | Token Bearer para leer `/metrics` desde otra máquina |
 | `SESSION_HOURS` | Duración de la sesión en horas (por defecto 168 = 7 días) |

@@ -41,6 +41,10 @@ async function loadSession() {
     if (status.grafanaPort) {
         const link = document.getElementById('nav-grafana');
         link.href = `${window.location.protocol}//${window.location.hostname}:${status.grafanaPort}/d/tsst`;
+        // Mismo enlace junto al historial del dashboard, para ir al detalle
+        const histLink = document.getElementById('history-grafana');
+        histLink.href = link.href;
+        histLink.style.display = '';
         link.style.display = '';
     }
 }
@@ -182,6 +186,7 @@ function switchTab(tabId) {
         document.getElementById('topbar-title').innerText = 'System Dashboard';
         document.getElementById('topbar-subtitle').innerText = 'Host hardware & overview';
         document.getElementById('btn-add-input').style.display = 'none';
+        loadHistory();
     } else if (tabId === 'settings') {
         document.getElementById('streamsContainer').style.display = 'none';
         document.getElementById('analyticsContainer').style.display = 'none';
@@ -759,6 +764,23 @@ function toggleExpand(channel) {
 }
 
 // Modal Logic
+// Cerrar con Esc (cualquier ventana) o tocando fuera (sólo las de vídeo: en un formulario
+// un toque sin querer haría perder lo escrito)
+const BACKDROP_CLOSE = new Set(['previewModal', 'liveModal']);
+function closeModalById(id) {
+    if (id === 'liveModal') closeLive(); // además de ocultar, para el HLS
+    else closeModal(id);
+}
+document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const open = [...document.querySelectorAll('.modal-overlay')].filter(m => m.style.display === 'flex');
+    if (open.length) closeModalById(open[open.length - 1].id);
+});
+document.addEventListener('click', (e) => {
+    const t = e.target;
+    if (t.classList && t.classList.contains('modal-overlay') && BACKDROP_CLOSE.has(t.id)) closeModalById(t.id);
+});
+
 function openModal(id) {
     document.getElementById(id).style.display = 'flex';
 }
@@ -1834,3 +1856,131 @@ async function deleteOutput(id) {
         await fetch(`/api/outputs/${id}`, { method: 'DELETE' });
     }
 }
+
+/* ===================================
+ * HISTORIAL EN EL DASHBOARD (datos de Prometheus, los mismos que Grafana)
+ * =================================== */
+let historyRange = '1h';
+let historyLoading = false;
+const historyCharts = {};
+
+function setHistoryRange(range) {
+    historyRange = range;
+    document.querySelectorAll('.history-ranges button').forEach(b => b.classList.toggle('active', b.dataset.range === range));
+    loadHistory();
+}
+
+const fmtMbps = (bps) => `${(bps / 1e6).toFixed(2)} Mbps`;
+const fmtPct = (r) => `${(r * 100).toFixed(1)} %`;
+
+// Etiqueta de cada línea: nombre de la señal o de la salida
+function historyLabel(labels) {
+    const base = labels.name || labels.location || (labels.channel ? `Canal ${labels.channel}` : 'Serie');
+    return labels.direction ? `${base} ${labels.direction === 'recv' ? '⬇' : '⬆'}` : base;
+}
+
+function timeLabel(ts, range) {
+    const d = new Date(ts * 1000);
+    const hm = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return range === '24h' ? `${d.toLocaleDateString([], { day: '2-digit', month: '2-digit' })} ${hm}` : hm;
+}
+
+// Una gráfica de líneas: todas las series comparten los instantes (mismo step de Prometheus)
+function drawHistoryChart(id, seriesList, { scale = 1, unit = '', max } = {}) {
+    const ts = [...new Set(seriesList.flatMap(s => s.values.map(v => v[0])))].sort((a, b) => a - b);
+    const datasets = seriesList.map((s, i) => {
+        const byTs = new Map(s.values.map(([t, v]) => [t, v * scale]));
+        const color = s.color || chartColors[i % chartColors.length];
+        return {
+            label: s.label || historyLabel(s.labels),
+            data: ts.map(t => (byTs.has(t) ? byTs.get(t) : null)),
+            borderColor: color, backgroundColor: color + '22',
+            borderWidth: 2, pointRadius: 0, tension: 0.25, spanGaps: false
+        };
+    });
+    const labels = ts.map(t => timeLabel(t, historyRange));
+    let chart = historyCharts[id];
+    if (!chart) {
+        chart = historyCharts[id] = new Chart(document.getElementById(id).getContext('2d'), {
+            type: 'line',
+            data: { labels, datasets },
+            options: {
+                responsive: true, maintainAspectRatio: false, animation: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { display: true, labels: { color: 'rgba(255,255,255,0.7)', boxWidth: 12, font: { family: 'Inter', size: 11 } } },
+                    tooltip: { backgroundColor: 'rgba(0,0,0,0.85)', callbacks: { label: (c) => `${c.dataset.label}: ${c.parsed.y === null ? '—' : c.parsed.y.toFixed(2)} ${unit}` } }
+                },
+                scales: {
+                    x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.4)', maxTicksLimit: 8, maxRotation: 0 } },
+                    y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.4)', callback: (v) => `${v} ${unit}` }, min: 0, max }
+                }
+            }
+        });
+    } else {
+        chart.data.labels = labels;
+        chart.data.datasets = datasets;
+        chart.update('none');
+    }
+}
+
+function renderHistorySummary(rows) {
+    const body = document.getElementById('history-summary');
+    if (!rows.length) {
+        body.innerHTML = '<tr><td colspan="5" style="color:var(--text-muted);">Sin datos de señales en este periodo.</td></tr>';
+        return;
+    }
+    rows.sort((a, b) => Number(a.channel) - Number(b.channel));
+    body.innerHTML = rows.map(r => {
+        const av = r.availability;
+        const avClass = av === undefined ? '' : av >= 0.999 ? 'good' : av >= 0.95 ? 'warn' : 'bad';
+        const drops = r.drops === undefined ? '—' : Math.round(r.drops);
+        const restarts = r.restarts === undefined ? '—' : Math.round(r.restarts);
+        return `<tr>
+            <td>${escapeHtml(r.name || 'Canal ' + r.channel)}</td>
+            <td class="${avClass}">${av === undefined ? '—' : fmtPct(av)}</td>
+            <td class="${drops > 0 ? 'bad' : 'good'}">${drops}</td>
+            <td class="${restarts > 0 ? 'warn' : ''}">${restarts}</td>
+            <td>${r.maxRtt === undefined ? '—' : `${(r.maxRtt * 1000).toFixed(0)} ms`}</td>
+        </tr>`;
+    }).join('');
+}
+
+async function loadHistory() {
+    if (historyLoading) return;
+    historyLoading = true;
+    const msg = document.getElementById('history-msg');
+    const body = document.getElementById('history-body');
+    try {
+        const data = await fetch(`/api/history?range=${historyRange}`).then(r => r.json());
+        if (!data.available) {
+            body.style.display = 'none';
+            msg.style.display = 'block';
+            msg.textContent = 'Historial no disponible: instala la monitorización (Prometheus) con el instalador para guardar el historial de las señales.';
+            return;
+        }
+        msg.style.display = 'none';
+        body.style.display = 'block';
+        renderHistorySummary(data.summary);
+        const s = data.series;
+        drawHistoryChart('hist_input', s.inputBitrate, { scale: 1e-6, unit: 'Mbps' });
+        drawHistoryChart('hist_output', s.outputBitrate, { scale: 1e-6, unit: 'Mbps' });
+        drawHistoryChart('hist_rtt', s.srtRtt, { scale: 1000, unit: 'ms' });
+        drawHistoryChart('hist_drops', s.srtDropsPerMin, { unit: '/min' });
+        drawHistoryChart('hist_host', [
+            ...s.cpu.map(x => ({ ...x, label: 'CPU', color: '#60A5FA' })),
+            ...s.memory.map(x => ({ ...x, label: 'Memoria', color: '#34d399' }))
+        ], { scale: 100, unit: '%', max: 100 });
+    } catch (e) {
+        msg.style.display = 'block';
+        msg.textContent = 'No se pudo cargar el historial.';
+    } finally {
+        historyLoading = false;
+    }
+}
+
+// Refresco cada 30 s, sólo con el dashboard a la vista y la pestaña del navegador activa
+setInterval(() => {
+    const visible = document.getElementById('systemContainer').style.display !== 'none';
+    if (visible && !document.hidden) loadHistory();
+}, 30000);
