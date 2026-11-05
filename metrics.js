@@ -153,6 +153,9 @@ async function collect() {
         if (o.srtTotals || o.srt) addSrt(r, { channel: o.channel, output: o.id, location: o.location }, o.srt, o.srtTotals, 'send');
     }
 
+    // Encoders remotos: web accesible y túnel WireGuard del router
+    require('./encoders').addMetrics(r);
+
     const host = sysMonitor.getLastHost();
     if (host) {
         r.gauge('tsst_host_cpu_load_ratio', 'Carga de CPU del host (0-1)', {}, host.cpuLoad);

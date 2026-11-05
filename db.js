@@ -90,6 +90,25 @@ function initDB() {
         // Fuerza el cambio de contraseña en el primer login (contraseñas por defecto o débiles)
         db.run("ALTER TABLE users ADD COLUMN must_change INTEGER NOT NULL DEFAULT 0", () => {});
 
+        // Encoders remotos (URAY, etc.): su web se abre a través del proxy autenticado del servidor
+        // y, opcionalmente, llegan por un túnel WireGuard desde el router del sitio (ver encoders.js)
+        db.run(`CREATE TABLE IF NOT EXISTS encoders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL DEFAULT '',
+            model TEXT NOT NULL DEFAULT '',
+            host TEXT NOT NULL DEFAULT '',
+            web_port INTEGER NOT NULL DEFAULT 80,
+            https INTEGER NOT NULL DEFAULT 0,
+            channel INTEGER,
+            notes TEXT NOT NULL DEFAULT '',
+            proxy_slot INTEGER NOT NULL DEFAULT 0,
+            vpn_ip TEXT NOT NULL DEFAULT '',
+            vpn_lan TEXT NOT NULL DEFAULT '',
+            vpn_pubkey TEXT NOT NULL DEFAULT '',
+            vpn_privkey TEXT NOT NULL DEFAULT '',
+            vpn_psk TEXT NOT NULL DEFAULT ''
+        )`);
+
         // Valores iniciales sólo si las tablas están vacías. Sólo se crea admin/admin (cambio obligatorio
         // al entrar); auth.js cifra la contraseña al arrancar.
         db.run(`INSERT INTO users (username, password, role, must_change)

@@ -65,11 +65,30 @@ if whiptail --title "Monitorización" --yesno "¿Instalar Prometheus y Grafana?\
     fi
 fi
 
+# WireGuard opcional: túnel con los routers 4G de los encoders remotos (sección Encoders del panel)
+INSTALL_WG="no"
+WG_PORT=51820
+WG_EXISTS="no"
+[ -f /etc/wireguard/wg0.conf ] && WG_EXISTS="yes"
+WG_QUESTION="¿Activar WireGuard para manejar encoders remotos (URAY...)?\n\nEl router 4G de cada encoder abre un túnel hasta este servidor, y desde el panel (sección Encoders) se entra en la web del encoder sin ningún ordenador en el sitio.\n\nNecesitas abrir el puerto UDP $WG_PORT hacia este mini PC en el router de aquí."
+[ "$WG_EXISTS" = "yes" ] && WG_QUESTION="WireGuard ya está configurado en este servidor (se conservan los accesos de los routers).\n\n¿Mantenerlo activo?"
+if whiptail --title "Encoders remotos" --yesno "$WG_QUESTION" 16 70; then
+    INSTALL_WG="yes"
+    OLD_ENDPOINT=$(sed -n 's/^WG_ENDPOINT=//p' /opt/srt-server/.env 2>/dev/null | head -1)
+    DETECTED_IP=$(curl -s --max-time 5 https://api.ipify.org || true)
+    WG_ENDPOINT=$(whiptail --title "WireGuard" --inputbox "IP pública o nombre DNS con el que los routers llegan a este servidor (si tu IP cambia, usa un DNS dinámico):" 11 70 "${OLD_ENDPOINT:-$DETECTED_IP}" 3>&1 1>&2 2>&3)
+    # Sólo IP o nombre DNS, con puerto opcional
+    case "$WG_ENDPOINT" in *[!A-Za-z0-9.:-]*) WG_ENDPOINT="" ;; esac
+fi
+
 MONITORING_TEXT="No"
 if [ "$INSTALL_MONITORING" = "yes" ]; then MONITORING_TEXT="Sí (Grafana en puerto $GRAFANA_PORT, Telegram: $TELEGRAM)"; fi
 
 # Confirmación Final
-whiptail --title "Resumen de Instalación" --yesno "Se procederá a instalar con la siguiente configuración:\n\n- Panel Web: Puerto $WEB_PORT\n- Señal SRT: Puerto Base $SRT_PORT\n- Monitorización: $MONITORING_TEXT\n\n¿Deseas iniciar la instalación ahora?" 15 65
+WG_TEXT="No"
+if [ "$INSTALL_WG" = "yes" ]; then WG_TEXT="Sí (UDP $WG_PORT, ${WG_ENDPOINT:-sin dirección pública})"; fi
+
+whiptail --title "Resumen de Instalación" --yesno "Se procederá a instalar con la siguiente configuración:\n\n- Panel Web: Puerto $WEB_PORT\n- Señal SRT: Puerto Base $SRT_PORT\n- Monitorización: $MONITORING_TEXT\n- WireGuard (encoders): $WG_TEXT\n\n¿Deseas iniciar la instalación ahora?" 16 70
 
 if [ $? -ne 0 ]; then
     clear
@@ -153,18 +172,50 @@ echo "PORT=$WEB_PORT" > .env
 echo "SRT_BASE_PORT=$SRT_PORT" >> .env
 # El panel muestra el enlace "Gráficas" si hay Grafana
 if [ "$INSTALL_MONITORING" = "yes" ]; then echo "GRAFANA_PORT=$GRAFANA_PORT" >> .env; fi
+# Dirección pública que se pone en la configuración de los routers de los encoders
+ENV_REPLACED='PORT|SRT_BASE_PORT|GRAFANA_PORT'
+if [ "$INSTALL_WG" = "yes" ]; then
+    ENV_REPLACED="$ENV_REPLACED|WG_ENDPOINT"
+    [ -n "$WG_ENDPOINT" ] && echo "WG_ENDPOINT=$WG_ENDPOINT" >> .env
+fi
 # Variables añadidas a mano en la instalación anterior (METRICS_TOKEN, SRT_MAX_MBPS...)
 if [ -n "$BACKUP_DIR" ] && [ -f "$BACKUP_DIR/env.old" ]; then
-    grep -vE '^(PORT|SRT_BASE_PORT|GRAFANA_PORT)=' "$BACKUP_DIR/env.old" >> .env
+    grep -vE "^($ENV_REPLACED)=" "$BACKUP_DIR/env.old" >> .env
 fi
 [ -n "$BACKUP_DIR" ] && rm -rf "$BACKUP_DIR"
 chmod 600 .env
+
+if [ "$INSTALL_WG" = "yes" ]; then
+    echo "🔐 Configurando WireGuard para los encoders remotos..."
+    apt-get install -y wireguard-tools iproute2
+    mkdir -p /etc/wireguard
+    chmod 700 /etc/wireguard
+    # En una reinstalación se conserva wg0.conf: ahí están los accesos de los routers que crea el panel
+    if [ ! -f /etc/wireguard/wg0.conf ]; then
+        WG_KEY=$(wg genkey)
+        cat <<EOF > /etc/wireguard/wg0.conf
+# Servidor TSST. Los [Peer] de los routers los añade y quita el panel (sección Encoders).
+[Interface]
+Address = 10.8.0.1/24
+ListenPort = $WG_PORT
+PrivateKey = $WG_KEY
+EOF
+    fi
+    chmod 600 /etc/wireguard/wg0.conf
+    systemctl enable wg-quick@wg0 > /dev/null 2>&1
+    systemctl restart wg-quick@wg0
+    # Cortafuegos local, si está activo: túnel y proxies de las webs de los encoders (panel + 10 en adelante)
+    if command -v ufw > /dev/null && ufw status | grep -q "Status: active"; then
+        ufw allow $WG_PORT/udp > /dev/null
+        ufw allow $((WEB_PORT + 10)):$((WEB_PORT + 59))/tcp > /dev/null
+    fi
+fi
 
 echo "🚀 Creando servicio de arranque automático (Systemd)..."
 cat <<EOF > /etc/systemd/system/tsst-srt.service
 [Unit]
 Description=Servidor SRT TSST y Panel Web
-After=network-online.target
+After=network-online.target wg-quick@wg0.service
 Wants=network-online.target
 
 [Service]
@@ -173,7 +224,7 @@ WorkingDirectory=$APP_DIR
 Restart=always
 RestartSec=2
 User=root
-Environment=PATH=/usr/bin:/usr/local/bin
+Environment=PATH=/usr/bin:/usr/local/bin:/usr/sbin:/sbin
 Environment=NODE_ENV=production
 EnvironmentFile=$APP_DIR/.env
 # Prioridad sobre el resto del sistema (la heredan los procesos FFmpeg)
@@ -274,4 +325,8 @@ clear
 echo "✅ ¡Instalación Finalizada con éxito!"
 echo "📍 Panel Web en: http://$LOCAL_IP:$WEB_PORT"
 if [ "$INSTALL_MONITORING" = "yes" ]; then echo "📊 Grafana en: http://$LOCAL_IP:$GRAFANA_PORT (usuario admin)"; fi
+if [ "$INSTALL_WG" = "yes" ]; then
+    echo "🔐 WireGuard activo en UDP $WG_PORT. Abre ese puerto hacia $LOCAL_IP en el router de aquí."
+    echo "   Los accesos de los routers de los encoders se crean en el panel: Encoders → VPN."
+fi
 echo "🎞️ Comprueba Quick Sync con: vainfo"

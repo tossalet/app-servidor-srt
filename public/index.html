@@ -24,6 +24,7 @@
             <nav class="nav-menu">
                 <a href="#" class="nav-item active" id="nav-system" onclick="switchTab('system')"><i class="fa-solid fa-gauge-high"></i> Dashboard</a>
                 <a href="#" class="nav-item" id="nav-streams" onclick="switchTab('streams')"><i class="fa-solid fa-network-wired"></i> Streams</a>
+                <a href="#" class="nav-item" id="nav-encoders" onclick="switchTab('encoders')"><i class="fa-solid fa-tower-broadcast"></i> Encoders</a>
                 <a href="#" class="nav-item" id="nav-analytics" onclick="switchTab('analytics')"><i class="fa-solid fa-chart-line"></i> Analytics</a>
                 <a href="#" class="nav-item" id="nav-storage" onclick="switchTab('storage')"><i class="fa-solid fa-hard-drive"></i> Storage</a>
                 <a href="#" class="nav-item" id="nav-settings" onclick="switchTab('settings')" style="display:none;"><i class="fa-solid fa-gear"></i> Settings</a>
@@ -61,6 +62,11 @@
                 <!-- Dynamically populated via app.js -->
             </section>
             
+            <section class="encoders-container" id="encodersContainer" style="display:none; padding-bottom: 2rem;">
+                <div id="encoders-vpn-banner" class="enc-banner" style="display:none;"></div>
+                <div id="encodersGrid" class="enc-grid"></div>
+            </section>
+
             <section class="storage-container" id="storageContainer" style="display:none; padding-bottom: 2rem;">
                 <div class="storage-header" style="padding: 1.5rem; background: rgba(0,0,0,0.2); border-radius: 12px; margin-bottom: 1.5rem;">
                     <h2 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 0.5rem; display:flex; align-items:center; gap:10px;">
@@ -454,6 +460,70 @@
                     <button type="submit" class="btn-primary">Save Output</button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- Encoder Modal -->
+    <div class="modal-overlay" id="encoderModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="enc_title">Añadir encoder</h3>
+                <button class="close-btn" onclick="closeModal('encoderModal')"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <form id="formEncoder" onsubmit="submitEncoder(event)">
+                <input type="hidden" id="enc_id" value="">
+                <div class="form-group row">
+                    <div class="half">
+                        <label>Nombre</label>
+                        <input type="text" id="enc_name" placeholder="Cámara 1 · Estadio" maxlength="64" required>
+                    </div>
+                    <div class="half">
+                        <label>Modelo</label>
+                        <input type="text" id="enc_model" placeholder="URAY H.265" maxlength="64">
+                    </div>
+                </div>
+                <div class="form-group row">
+                    <div class="half">
+                        <label>IP del encoder (vista desde el servidor)</label>
+                        <input type="text" id="enc_host" placeholder="192.168.101.20" required>
+                    </div>
+                    <div class="half">
+                        <label>Puerto web</label>
+                        <input type="number" id="enc_port" min="1" max="65535" placeholder="80">
+                    </div>
+                </div>
+                <div class="form-group row">
+                    <div class="half">
+                        <label>Señal SRT que envía</label>
+                        <select id="enc_channel" class="form-control"></select>
+                    </div>
+                    <div class="half" style="display:flex; align-items:flex-end;">
+                        <label style="display:flex; align-items:center; gap:8px; font-size:0.85rem; color:var(--text-muted); margin-bottom:12px;">
+                            <input type="checkbox" id="enc_https" style="width:auto;"> Su web va por HTTPS
+                        </label>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Notas</label>
+                    <input type="text" id="enc_notes" maxlength="500" placeholder="Router Teltonika RUT241 · SIM 600 123 456">
+                </div>
+                <small style="color:var(--text-muted); font-size:0.75rem; display:block;">Con túnel WireGuard, pon la IP que tiene el encoder en la red del router del sitio (por ejemplo 192.168.101.20). Si el router redirige el puerto web, pon la IP del router en el túnel.</small>
+                <div class="modal-actions">
+                    <button type="button" class="btn-secondary" onclick="closeModal('encoderModal')">Cancelar</button>
+                    <button type="submit" class="btn-primary">Guardar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- VPN Modal -->
+    <div class="modal-overlay" id="encoderVpnModal">
+        <div class="modal" style="width: 520px;">
+            <div class="modal-header">
+                <h3 id="vpn_title">Acceso WireGuard</h3>
+                <button class="close-btn" onclick="closeModal('encoderVpnModal')"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div id="vpn_body"></div>
         </div>
     </div>
 

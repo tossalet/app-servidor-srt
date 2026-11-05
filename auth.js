@@ -368,6 +368,7 @@ module.exports = {
     socketAuth,
     sessionFromHeaders,
     registerRoutes,
+    COOKIE,
     ROLE_ADMIN,
     ROLE_USER
 };

@@ -88,6 +88,45 @@ El panel, la API, las miniaturas, las grabaciones y la telemetría en vivo piden
   - Tras 5 intentos fallidos, la IP queda bloqueada de forma progresiva: 30 s, 60 s… hasta 15 min.
 - El panel va por HTTP en la red local. Para acceder desde Internet, ponlo detrás de un proxy HTTPS o de una VPN.
 
+## Encoders remotos (URAY y similares)
+
+Sección **Encoders** del panel: encoders H.264/H.265 en otros sitios, manejados en remoto **sin ningún ordenador junto al encoder**. Solo hace falta un router con cliente WireGuard (por ejemplo, un Teltonika RUT241 4G).
+
+```
+encoder ──cable──► router 4G del sitio ══ túnel WireGuard ══► mini PC TSST ◄── navegador (panel)
+   │                                                            ▲
+   └──────────── SRT caller ───────────────────────────────────┘ (entrada SRT listener)
+```
+
+- **Vídeo:** el encoder envía SRT en modo **Caller** a `IP_PÚBLICA:puerto` de su entrada (listener) en el panel. Como sale del encoder hacia fuera, no hay que abrir puertos en el sitio.
+- **Control:** el router abre un túnel WireGuard hasta el mini PC. El servidor llega así a la web del encoder y la sirve a través de un **proxy autenticado**: botón **Abrir web**, en `http://IP_DEL_SERVIDOR:<panel + 10 + n>`.
+  - Solo entra quien tiene sesión en el panel.
+  - La cookie del panel nunca se envía al encoder.
+  - Las redirecciones y cookies del encoder se adaptan al proxy, y funcionan los WebSocket.
+- **Estado cada 10 s:**
+  - Si la web del encoder responde, y en cuánto tiempo.
+  - Último handshake del túnel del router.
+  - Si llega la señal SRT vinculada.
+
+  Va al panel, a `/metrics` (`tsst_encoder_up`, `tsst_encoder_vpn_up`…) y a la alerta de Grafana **Encoder sin conexión** (1 min), que avisa también por Telegram.
+- **Roles:** cualquier usuario ve el estado y abre la web. Dar de alta, editar, borrar y gestionar la VPN es solo para administradores.
+
+### Poner en marcha un encoder
+
+1. **Servidor:** en el instalador, responde **sí a WireGuard** e indica la IP pública o el DNS del servidor (si tu IP cambia, usa un DNS dinámico). En el router de la sede, abre **UDP 51820** hacia el mini PC. Se crea `/etc/wireguard/wg0.conf` con la red del túnel `10.8.0.0/24`; si reinstalas, se conserva con sus accesos.
+2. **Panel → Encoders → Añadir encoder:** nombre, modelo, IP del encoder **en la LAN de su router** (p. ej. `192.168.101.20`), puerto web y la entrada SRT que envía.
+3. **VPN → Crear acceso:** indica la LAN del router de ese sitio. **Cada sitio necesita una LAN distinta** (`192.168.101.0/24`, `192.168.102.0/24`…). El servidor le asigna una IP del túnel, genera sus claves y lo aplica sin cortar los demás túneles.
+4. **Descargar configuración** e importarla en el router (*VPN → WireGuard*). En el router, permite el tráfico del túnel hacia la LAN (en Teltonika: zona del túnel con *forward* a *lan*).
+5. En el encoder: SRT Caller hacia el servidor. En unos segundos la tarjeta muestra el túnel **Activo** y la web **En línea**.
+
+Si prefieres no enrutar la LAN, deja vacía la red del sitio. Entonces, en el router, redirige el puerto web del encoder a su IP del túnel y pon esa IP como IP del encoder.
+
+**Notas:**
+- El archivo de configuración contiene la clave privada del router: solo los administradores lo descargan. Si se pierde un router, pulsa **Quitar acceso** y crea uno nuevo.
+- Los puertos del proxy van del panel + 10 al panel + 59 (`ENCODER_PROXY_PORT` cambia el primero). El instalador los abre si `ufw` está activo. Si el panel va detrás de un proxy HTTPS, publica también esos puertos o accede por la VPN.
+- La gestión de WireGuard desde el panel requiere la instalación nativa: el servicio corre como root. En Docker, el proxy y el estado funcionan, pero el túnel se configura a mano en el host. El estado del túnel requiere `wg` en el contenedor.
+- Variables: `WG_ENDPOINT` (dirección pública, la pone el instalador), `WG_INTERFACE` (por defecto `wg0`) y `ENCODER_PROXY_PORT`.
+
 ## Monitorización: historial, gráficas y alertas
 
 Durante la instalación, el instalador pregunta si quieres monitorización. Si dices que sí, deja en el mini PC:
@@ -110,6 +149,7 @@ Durante la instalación, el instalador pregunta si quieres monitorización. Si d
   | Cortes SRT (drops) | Ha habido drops en los últimos 2 min |
   | Latencia SRT corta para la red | Latencia < 3 × RTT durante 2 min |
   | CPU alta | Más del 90 % durante 2 min |
+  | Encoder sin conexión | La web de un encoder no responde durante 1 min |
   | Servidor TSST caído | Prometheus no puede leer el servidor durante 30 s |
 
 - **Avisos por Telegram** (opcional). Crea un bot con [@BotFather](https://t.me/BotFather), añádelo al grupo y pon en el instalador su token y el ID del chat. Para obtener el ID: escribe algo en el grupo y abre `https://api.telegram.org/bot<TOKEN>/getUpdates`.

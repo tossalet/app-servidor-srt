@@ -11,6 +11,7 @@ const history = require('./history');
 const streamManager = require('./streamManager');
 const sysMonitor = require('./sysMonitor');
 const rtmpServer = require('./rtmpServer');
+const encoders = require('./encoders');
 const si = require('systeminformation');
 
 const app = express();
@@ -21,6 +22,7 @@ io.use(auth.socketAuth);
 auth.init().catch(err => console.error('[AUTH] Error inicializando usuarios', err));
 streamManager.setIo(io);
 sysMonitor.setIo(io);
+encoders.init(io).catch(err => console.error('[ENCODERS] Error inicializando', err));
 db.get('SELECT rtmpPort FROM ports LIMIT 1', (err, row) => {
     let port = 1935;
     if (row && row.rtmpPort) port = row.rtmpPort;
@@ -62,6 +64,8 @@ app.get('/api/status', (req, res) => {
 const os = require('os');
 // Historial de Prometheus para el dashboard (consultas fijas; ver history.js)
 app.get('/api/history', history.handler);
+// Encoders remotos: lista, estado, proxy a su web y accesos WireGuard (ver encoders.js)
+encoders.registerRoutes(app);
 
 app.get('/api/server-ip', (req, res) => {
     const interfaces = os.networkInterfaces();
@@ -554,6 +558,7 @@ io.on('connection', (socket) => {
     console.log(`Frontend Connected: ${socket.id}`);
     // Histórico completo una sola vez; después sólo se envía el punto nuevo en cada 'stats'
     socket.emit('telemetry_snapshot', streamManager.getTelemetry());
+    socket.emit('encoders_status', encoders.statusList());
 });
 
 // Un fallo puntual en una promesa no debe tumbar todos los streams
@@ -565,6 +570,7 @@ function gracefulShutdown(sig) {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log(`[${sig}] Deteniendo streams...`);
+    encoders.shutdown();
     streamManager.shutdown().finally(() => {
         db.close(() => process.exit(0));
     });
