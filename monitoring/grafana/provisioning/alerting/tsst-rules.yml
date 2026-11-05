@@ -409,6 +409,142 @@
             "app": "tsst"
           },
           "isPaused": false
+        },
+        {
+          "uid": "tsst-input-apagado",
+          "title": "Stream apagado desde el panel",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "relativeTimeRange": {
+                "from": 300,
+                "to": 0
+              },
+              "datasourceUid": "tsst-prom",
+              "model": {
+                "refId": "A",
+                "expr": "1 - tsst_input_enabled",
+                "instant": true,
+                "range": false,
+                "intervalMs": 1000,
+                "maxDataPoints": 43200
+              }
+            },
+            {
+              "refId": "B",
+              "datasourceUid": "__expr__",
+              "model": {
+                "refId": "B",
+                "type": "reduce",
+                "expression": "A",
+                "reducer": "last",
+                "settings": {
+                  "mode": "dropNN"
+                }
+              }
+            },
+            {
+              "refId": "C",
+              "datasourceUid": "__expr__",
+              "model": {
+                "refId": "C",
+                "type": "threshold",
+                "expression": "B",
+                "conditions": [
+                  {
+                    "evaluator": {
+                      "type": "gt",
+                      "params": [
+                        0
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ],
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "for": "0s",
+          "annotations": {
+            "summary": "Apagado desde el panel: {{ $labels.name }} (canal {{ $labels.channel }})",
+            "description": "Alguien ha desactivado esta entrada en el panel; sus salidas también se paran. Al volver a encenderla llega el aviso de resuelto."
+          },
+          "labels": {
+            "severity": "info",
+            "app": "tsst",
+            "kind": "manual"
+          },
+          "isPaused": false
+        },
+        {
+          "uid": "tsst-output-apagado",
+          "title": "Salida apagada desde el panel",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "relativeTimeRange": {
+                "from": 300,
+                "to": 0
+              },
+              "datasourceUid": "tsst-prom",
+              "model": {
+                "refId": "A",
+                "expr": "1 - tsst_output_enabled",
+                "instant": true,
+                "range": false,
+                "intervalMs": 1000,
+                "maxDataPoints": 43200
+              }
+            },
+            {
+              "refId": "B",
+              "datasourceUid": "__expr__",
+              "model": {
+                "refId": "B",
+                "type": "reduce",
+                "expression": "A",
+                "reducer": "last",
+                "settings": {
+                  "mode": "dropNN"
+                }
+              }
+            },
+            {
+              "refId": "C",
+              "datasourceUid": "__expr__",
+              "model": {
+                "refId": "C",
+                "type": "threshold",
+                "expression": "B",
+                "conditions": [
+                  {
+                    "evaluator": {
+                      "type": "gt",
+                      "params": [
+                        0
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ],
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "for": "0s",
+          "annotations": {
+            "summary": "Salida apagada desde el panel: {{ $labels.location }} ({{ $labels.name }})",
+            "description": "Alguien ha desactivado esta salida en el panel. Al volver a encenderla llega el aviso de resuelto."
+          },
+          "labels": {
+            "severity": "info",
+            "app": "tsst",
+            "kind": "manual"
+          },
+          "isPaused": false
         }
       ]
     }

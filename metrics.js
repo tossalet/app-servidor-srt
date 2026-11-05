@@ -111,11 +111,26 @@ async function collect() {
     r.gauge('tsst_start_time_seconds', 'Arranque del servidor (epoch)', {}, startedAt / 1000);
 
     // Configuración (incluye lo deshabilitado, que no está en memoria)
-    const [inRows, outRows] = await Promise.all([dbAll('SELECT enabled FROM inputs'), dbAll('SELECT enabled FROM outputs')]);
+    const [inRows, outRows] = await Promise.all([
+        dbAll('SELECT channel, name, enabled FROM inputs'),
+        dbAll('SELECT id, channel, location, url, enabled FROM outputs')
+    ]);
     r.gauge('tsst_inputs_configured', 'Inputs configurados', {}, inRows.length);
     r.gauge('tsst_inputs_enabled', 'Inputs habilitados', {}, inRows.filter(x => x.enabled).length);
     r.gauge('tsst_outputs_configured', 'Outputs configurados', {}, outRows.length);
     r.gauge('tsst_outputs_enabled', 'Outputs habilitados', {}, outRows.filter(x => x.enabled).length);
+
+    // Encendido/apagado desde el panel, uno a uno: la alerta "Stream apagado" avisa al desactivarlo.
+    // La URL nunca va en las etiquetas (puede llevar passphrase): sólo protocolo y host
+    const inName = new Map(inRows.map(x => [x.channel, x.name]));
+    for (const x of inRows) {
+        r.gauge('tsst_input_enabled', '1 si el input está activado en el panel', { channel: x.channel, name: x.name }, x.enabled ? 1 : 0);
+    }
+    for (const x of outRows) {
+        const dest = x.location || String(x.url || '').replace(/[?#].*$/, '').replace(/\/\/[^@/]*@/, '//');
+        r.gauge('tsst_output_enabled', '1 si el output está activado en el panel',
+            { id: x.id, channel: x.channel, name: inName.get(x.channel) || '', location: dest }, x.enabled ? 1 : 0);
+    }
 
     for (const i of snap.inputs) {
         const l = { channel: i.channel, name: i.name, protocol: i.protocol };

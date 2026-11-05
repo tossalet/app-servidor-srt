@@ -20,3 +20,11 @@ policies:
     group_wait: 10s
     group_interval: 2m
     repeat_interval: 1h
+    routes:
+      # Apagado a mano desde el panel: un aviso al apagar y otro al encender, sin repetir cada hora
+      - receiver: TSST Telegram
+        object_matchers:
+          - ['kind', '=', 'manual']
+        group_by: ['alertname', 'channel', 'id']
+        group_wait: 5s
+        repeat_interval: 720h

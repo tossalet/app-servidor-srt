@@ -346,7 +346,21 @@ function signalState(enabled, s) {
     return parseFloat(s.bitrate) > 0 ? { cls: 'good', text: 'En vivo' } : { cls: 'warn', text: 'Esperando señal' };
 }
 
-function signalRow(key, name, proto, enabled, isOutput) {
+// Códec que sale por una salida: en passthrough es el mismo de la entrada; si no, el de la conversión
+const OUTPUT_CODECS = {
+    h264_vaapi: 'H.264 · Quick Sync',
+    hevc_vaapi: 'H.265 · Quick Sync',
+    libx264: 'H.264 · CPU',
+    libx265: 'H.265 · CPU'
+};
+function outputCodecText(o) {
+    const vcodec = o.vcodec || 'copy';
+    if (vcodec !== 'copy') return OUTPUT_CODECS[vcodec] || vcodec;
+    const inStats = liveStats[String(o.channel)];
+    return inStats && inStats.codec ? `${inStats.codec} · passthrough` : 'Passthrough';
+}
+
+function signalRow(key, name, proto, enabled, isOutput, codecText) {
     const s = liveStats[key];
     const st = signalState(enabled, s);
     const kbps = s && st.cls !== 'off' ? parseFloat(s.bitrate) || 0 : null;
@@ -357,7 +371,7 @@ function signalRow(key, name, proto, enabled, isOutput) {
         <td><span class="sig-state ${st.cls}">${st.text}</span></td>
         <td>${kbps === null ? dash : `${(kbps / 1000).toFixed(2)} Mbps`}</td>
         <td>${s && s.time && st.cls === 'good' ? s.time : dash}</td>
-        <td>${!isOutput && s && s.codec ? escapeHtml(s.codec) : dash}</td>
+        <td>${codecText ? escapeHtml(codecText) : (!isOutput && s && s.codec ? escapeHtml(s.codec) : dash)}</td>
         <td class="${srt && srt.rtt > 100 ? 'warn' : ''}">${srt ? `${srt.rtt} ms` : dash}</td>
         <td class="${srt && srt.retransPct > 10 ? 'bad' : srt && srt.retransPct > 2 ? 'warn' : ''}">${srt ? `${srt.lossPct}% / ${srt.retransPct}%` : dash}</td>
         <td class="${srt && srt.drops > 0 ? 'bad' : ''}">${srt ? srt.drops : dash}</td>
@@ -377,7 +391,7 @@ function renderSignalStatus() {
         if (st === 'good') live++; else if (st === 'off') off++; else waiting++;
         rows += signalRow(key, i.name, i.url.split('://')[0].toUpperCase(), i.enabled, false);
         outputs.filter(o => o.channel === i.channel).forEach(o => {
-            rows += signalRow('out_' + o.id, o.location || maskUrl(o.url), o.url.split('://')[0].toUpperCase(), o.enabled, true);
+            rows += signalRow('out_' + o.id, o.location || maskUrl(o.url), o.url.split('://')[0].toUpperCase(), o.enabled, true, outputCodecText(o));
         });
     });
     body.innerHTML = rows || '<tr><td colspan="10" style="color:var(--text-muted);">No hay señales configuradas.</td></tr>';
