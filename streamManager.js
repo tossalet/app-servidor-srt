@@ -301,7 +301,7 @@ function setDelay(channel, delayMs) {
 
 // Telemetría de inputs: medida en el data plane (bitrate instantáneo real)
 function onDataPlaneStats(m) {
-    const t = new Date(m.t).toLocaleTimeString();
+    const t = m.t; // ms: la gráfica coloca cada punto en su instante real
     for (const [channel, bytes, , queuedMs] of m.channels) {
         const st = inputs.get(channel);
         if (!st) continue;
@@ -749,7 +749,7 @@ async function spawnOutputProcess(st) {
         const now = Date.now();
         st.lastUpdate = now;
         st.lastKbps = kbps;
-        const point = { t: new Date(now).toLocaleTimeString(), y: Math.round(kbps * 10) / 10 };
+        const point = { t: now, y: Math.round(kbps * 10) / 10 };
         pushTelemetry(key, point);
         emit('stats', { channel: key, bitrate: `${kbps.toFixed(1)}kbits/s`, time, active: true, srt: srtStats, point });
     };
@@ -842,7 +842,7 @@ setInterval(() => {
     for (const st of outputs.values()) {
         if (now - st.lastUpdate <= 5000) continue;
         const key = 'out_' + st.id;
-        const point = { t: new Date(now).toLocaleTimeString(), y: 0 };
+        const point = { t: now, y: 0 };
         pushTelemetry(key, point);
         emit('stats', { channel: key, bitrate: '0.0kbits/s', time: '--:--:--', active: true, point });
         st.lastUpdate = now;

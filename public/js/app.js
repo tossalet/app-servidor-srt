@@ -176,7 +176,13 @@ function switchTab(tabId) {
         document.getElementById('topbar-subtitle').innerText = 'Deep network inspection tools';
         document.getElementById('btn-add-input').style.display = 'none';
         
+        // Por defecto, todas las entradas activas en la gráfica
+        if (selectedAnalyticsChannels.size === 0) inputs.filter(i => i.enabled).forEach(i => selectedAnalyticsChannels.add(String(i.channel)));
         populateAnalyticsGrid();
+        updateTelemetryChart();
+        renderSignalStatus();
+        placeHistorySection('analytics-history-slot');
+        loadHistory();
     } else if (tabId === 'system') {
         document.getElementById('streamsContainer').style.display = 'none';
         document.getElementById('analyticsContainer').style.display = 'none';
@@ -186,6 +192,7 @@ function switchTab(tabId) {
         document.getElementById('topbar-title').innerText = 'System Dashboard';
         document.getElementById('topbar-subtitle').innerText = 'Host hardware & overview';
         document.getElementById('btn-add-input').style.display = 'none';
+        placeHistorySection(null);
         loadHistory();
     } else if (tabId === 'settings') {
         document.getElementById('streamsContainer').style.display = 'none';
@@ -216,116 +223,97 @@ function initChart() {
     const ctx = document.getElementById('bitrateChart').getContext('2d');
     telemetryChart = new Chart(ctx, {
         type: 'line',
-        data: {
-            labels: [],
-            datasets: []
-        },
+        data: { datasets: [] },
         options: {
             responsive: true,
             maintainAspectRatio: false,
             animation: false,
-            interaction: { mode: 'index', intersect: false },
-            plugins: { 
-                legend: { 
-                    display: true, 
-                    labels: { color: 'rgba(255,255,255,0.7)', font: { family: 'Inter', size: 11 } }
+            parsing: false,
+            interaction: { mode: 'nearest', axis: 'x', intersect: false },
+            plugins: {
+                legend: {
+                    display: true,
+                    labels: { color: 'rgba(255,255,255,0.7)', boxWidth: 12, font: { family: 'Inter', size: 11 } }
                 },
-                tooltip: { backgroundColor: 'rgba(0,0,0,0.8)' }
+                tooltip: {
+                    backgroundColor: 'rgba(0,0,0,0.85)',
+                    callbacks: {
+                        title: (items) => items.length ? new Date(items[0].parsed.x).toLocaleTimeString() : '',
+                        label: (c) => `${c.dataset.label}: ${c.parsed.y.toFixed(2)} Mbps`
+                    }
+                }
             },
             scales: {
-                x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.4)', maxTicksLimit: 10 } },
-                y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.4)' }, min: 0 }
+                // Eje de tiempo real (ms): entradas y salidas informan en instantes distintos,
+                // así que cada línea lleva sus propios puntos y no quedan huecos al mezclarlas
+                x: {
+                    type: 'linear',
+                    grid: { color: 'rgba(255,255,255,0.05)' },
+                    ticks: { color: 'rgba(255,255,255,0.4)', maxTicksLimit: 8, maxRotation: 0, callback: (v) => new Date(v).toLocaleTimeString() }
+                },
+                y: {
+                    grid: { color: 'rgba(255,255,255,0.05)' }, min: 0,
+                    ticks: { color: 'rgba(255,255,255,0.4)', callback: (v) => `${v} Mbps` }
+                }
             }
         }
     });
 }
 
+function analyticsLabel(ch) {
+    if (ch.startsWith('out_')) {
+        const id = parseInt(ch.slice(4), 10);
+        const o = outputs.find(x => x.id === id);
+        return o ? `OUT_${id} (${(o.location || maskUrl(o.url)).substring(0, 24)})` : `OUT_${id}`;
+    }
+    const i = inputs.find(x => String(x.channel) === ch);
+    return i ? `IN_${ch} (${i.name})` : `IN_${ch}`;
+}
+
 function populateAnalyticsGrid() {
     const grid = document.getElementById('analytics_grid');
-    grid.innerHTML = '';
-    let hasStreams = false;
-    
-    inputs.forEach(i => {
-        if (i.enabled) {
-            hasStreams = true;
-            grid.innerHTML += `
-                <div class="analytics-card ${selectedAnalyticsChannels.has(i.channel.toString()) ? 'selected' : ''}" onclick="toggleAnalyticsChannel('${i.channel}')">
-                    <div class="acard-title">${i.name}</div>
-                    <div class="acard-badge">IN_${i.channel}</div>
-                </div>
-            `;
-            
-            // Render corresponding Output cards right next to their Input
-            const inputOutputs = outputs.filter(o => o.channel === i.channel && o.enabled);
-            inputOutputs.forEach(o => {
-                const outId = 'out_' + o.id;
-                const locName = o.location ? o.location : o.url;
-                grid.innerHTML += `
-                    <div class="analytics-card ${selectedAnalyticsChannels.has(outId) ? 'selected' : ''}" onclick="toggleAnalyticsChannel('${outId}')" style="margin-left: 20px; border-left: 3px solid rgba(255,255,255,0.2);">
-                        <div class="acard-title" style="font-size:0.8rem; opacity:0.8;">${locName.substring(0,30)}</div>
-                        <div class="acard-badge" style="background: rgba(255,255,255,0.1);">OUT_${o.id}</div>
-                    </div>
-                `;
-            });
-        }
+    let html = '';
+
+    inputs.filter(i => i.enabled).forEach(i => {
+        const ch = String(i.channel);
+        html += `
+            <div class="analytics-card ${selectedAnalyticsChannels.has(ch) ? 'selected' : ''}" onclick="toggleAnalyticsChannel('${ch}')">
+                <div class="acard-title">${escapeHtml(i.name)}</div>
+                <div class="acard-badge">IN_${ch}</div>
+            </div>`;
+        // Sus salidas justo al lado de la entrada
+        outputs.filter(o => o.channel === i.channel && o.enabled).forEach(o => {
+            const outId = 'out_' + o.id;
+            html += `
+                <div class="analytics-card ${selectedAnalyticsChannels.has(outId) ? 'selected' : ''}" onclick="toggleAnalyticsChannel('${outId}')" style="margin-left: 20px; border-left: 3px solid rgba(255,255,255,0.2);">
+                    <div class="acard-title" style="font-size:0.8rem; opacity:0.8;">${escapeHtml((o.location || maskUrl(o.url)).substring(0, 30))}</div>
+                    <div class="acard-badge" style="background: rgba(255,255,255,0.1);">OUT_${o.id}</div>
+                </div>`;
+        });
     });
-    
-    if(!hasStreams) {
-        grid.innerHTML = '<div style="color:var(--text-muted); font-size:0.9rem;">-- No Active Streams --</div>';
-    }
+
+    grid.innerHTML = html || '<div style="color:var(--text-muted); font-size:0.9rem;">-- No Active Streams --</div>';
 }
 
 function updateTelemetryChart() {
     if (!telemetryChart) return;
-    
-    let allTimesSet = new Set();
-    const activeChannels = Array.from(selectedAnalyticsChannels);
-    
-    // Recopilar la base de tiempo común de los canales seleccionados
-    activeChannels.forEach(ch => {
-        if(frontendTelemetryCache[ch]) {
-            frontendTelemetryCache[ch].forEach(dp => allTimesSet.add(dp.t));
-        }
-    });
-    
-    const sortedTimes = Array.from(allTimesSet).sort();
-    telemetryChart.data.labels = sortedTimes;
-    
-    // Reconstruir datasets superpuestos
-    telemetryChart.data.datasets = activeChannels.map((ch, index) => {
+    telemetryChart.data.datasets = Array.from(selectedAnalyticsChannels).map((ch, index) => {
         const color = chartColors[index % chartColors.length];
-        
-        let labelName = `Channel ${ch}`;
-        if (ch.toString().startsWith('out_')) {
-            const numId = parseInt(ch.toString().replace('out_', ''));
-            const outInfo = outputs.find(o => o.id === numId);
-            if (outInfo) labelName = `OUT_${numId} (${(outInfo.location || outInfo.url).substring(0, 20)})`;
-        } else {
-            const inpInfo = inputs.find(i => i.channel.toString() === ch.toString());
-            if (inpInfo) labelName = `IN_${ch} (${inpInfo.name})`;
-        }
-        
-        // Mapear datos a la base de tiempo unificada (0 si no existe para ese tick)
-        const dataMap = new Map();
-        if(frontendTelemetryCache[ch]) {
-            frontendTelemetryCache[ch].forEach(dp => dataMap.set(dp.t, dp.y));
-        }
-        
-        const mappedData = sortedTimes.map(t => dataMap.has(t) ? dataMap.get(t) : null);
-
+        const points = (frontendTelemetryCache[ch] || [])
+            .filter(dp => typeof dp.t === 'number')
+            .map(dp => ({ x: dp.t, y: dp.y / 1000 })); // kbps -> Mbps
         return {
-            label: labelName,
-            data: mappedData,
+            label: analyticsLabel(ch),
+            data: points,
             borderColor: color,
-            backgroundColor: color.replace(')', ', 0.1)').replace('rgb', 'rgba'),
+            backgroundColor: color + '22',
             borderWidth: 2,
-            tension: 0.4,
-            fill: false, // Superimposed graphs shouldn't be fully solid filled to avoid hiding each other
+            tension: 0.3,
+            fill: false,
             pointRadius: 0
         };
     });
-    
-    telemetryChart.update();
+    telemetryChart.update('none');
 }
 
 function toggleAnalyticsChannel(channelId) {
@@ -337,6 +325,76 @@ function toggleAnalyticsChannel(channelId) {
     }
     populateAnalyticsGrid(); // Refresca las clases "selected"
     updateTelemetryChart();
+}
+
+/* ===================================
+ * ESTADO DE LAS SEÑALES (Analytics), en vivo desde los eventos 'stats'
+ * =================================== */
+const liveStats = {}; // 'channel' | 'out_id' -> último evento stats + hora de llegada
+let signalStatusTimer = null;
+
+function noteLiveStats(data) {
+    liveStats[String(data.channel)] = { ...data, at: Date.now() };
+    // Como mucho un repintado por segundo, y sólo con Analytics a la vista
+    if (signalStatusTimer || document.getElementById('analyticsContainer').style.display === 'none') return;
+    signalStatusTimer = setTimeout(() => { signalStatusTimer = null; renderSignalStatus(); }, 1000);
+}
+
+function signalState(enabled, s) {
+    if (!enabled) return { cls: 'off', text: 'Apagada' };
+    if (!s || Date.now() - s.at > 6000 || !s.active) return { cls: 'bad', text: 'Sin datos' };
+    return parseFloat(s.bitrate) > 0 ? { cls: 'good', text: 'En vivo' } : { cls: 'warn', text: 'Esperando señal' };
+}
+
+function signalRow(key, name, proto, enabled, isOutput) {
+    const s = liveStats[key];
+    const st = signalState(enabled, s);
+    const kbps = s && st.cls !== 'off' ? parseFloat(s.bitrate) || 0 : null;
+    const srt = s && s.srt;
+    const dash = '—';
+    return `<tr class="${isOutput ? 'sig-out' : 'sig-in'}">
+        <td>${isOutput ? '<span class="sig-branch">↳</span>' : ''}${escapeHtml(name)} <span class="sig-proto">${proto}</span></td>
+        <td><span class="sig-state ${st.cls}">${st.text}</span></td>
+        <td>${kbps === null ? dash : `${(kbps / 1000).toFixed(2)} Mbps`}</td>
+        <td>${s && s.time && st.cls === 'good' ? s.time : dash}</td>
+        <td>${!isOutput && s && s.codec ? escapeHtml(s.codec) : dash}</td>
+        <td class="${srt && srt.rtt > 100 ? 'warn' : ''}">${srt ? `${srt.rtt} ms` : dash}</td>
+        <td class="${srt && srt.retransPct > 10 ? 'bad' : srt && srt.retransPct > 2 ? 'warn' : ''}">${srt ? `${srt.lossPct}% / ${srt.retransPct}%` : dash}</td>
+        <td class="${srt && srt.drops > 0 ? 'bad' : ''}">${srt ? srt.drops : dash}</td>
+        <td>${srt && srt.latency ? `${srt.latency} ms` : dash}</td>
+        <td>${!isOutput && s && s.delay ? `${s.delay} ms` : dash}</td>
+    </tr>`;
+}
+
+function renderSignalStatus() {
+    const body = document.getElementById('signal-status-body');
+    if (!body) return;
+    let rows = '';
+    let live = 0, waiting = 0, off = 0;
+    inputs.forEach(i => {
+        const key = String(i.channel);
+        const st = signalState(i.enabled, liveStats[key]).cls;
+        if (st === 'good') live++; else if (st === 'off') off++; else waiting++;
+        rows += signalRow(key, i.name, i.url.split('://')[0].toUpperCase(), i.enabled, false);
+        outputs.filter(o => o.channel === i.channel).forEach(o => {
+            rows += signalRow('out_' + o.id, o.location || maskUrl(o.url), o.url.split('://')[0].toUpperCase(), o.enabled, true);
+        });
+    });
+    body.innerHTML = rows || '<tr><td colspan="10" style="color:var(--text-muted);">No hay señales configuradas.</td></tr>';
+    document.getElementById('signal-status-count').textContent =
+        `${live} en vivo · ${waiting} sin señal · ${off} apagadas`;
+}
+
+// El bloque de historial (Prometheus) es uno solo: se muestra en el Dashboard o en Analytics
+let historyHome = null;
+function placeHistorySection(slotId) {
+    const section = document.getElementById('history-section');
+    if (!section) return;
+    if (!historyHome) historyHome = { parent: section.parentNode, next: section.nextSibling };
+    if (slotId) document.getElementById(slotId).appendChild(section);
+    else historyHome.parent.insertBefore(section, historyHome.next);
+    // Chart.js recalcula el tamaño al volver a estar visible
+    Object.values(historyCharts).forEach(c => c.resize());
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -509,6 +567,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if ('srt' in data) renderSrtStats(String(data.channel), data.srt);
+        noteLiveStats(data);
 
         if (data.delay !== undefined) {
             const delayElem = document.getElementById(`delay-${data.channel}`);
@@ -1981,6 +2040,6 @@ async function loadHistory() {
 
 // Refresco cada 30 s, sólo con el dashboard a la vista y la pestaña del navegador activa
 setInterval(() => {
-    const visible = document.getElementById('systemContainer').style.display !== 'none';
+    const visible = ['systemContainer', 'analyticsContainer'].some(id => document.getElementById(id).style.display !== 'none');
     if (visible && !document.hidden) loadHistory();
 }, 30000);

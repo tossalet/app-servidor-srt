@@ -25,7 +25,7 @@ services:
       - /media:/media:rslave
     environment:
       - NODE_ENV=production
-      - GRAFANA_PORT=${GRAFANA_PORT:-} # Ponlo a 3001 si usas el perfil monitoring: aparece "Gráficas" en el panel
+      - GRAFANA_PORT=${GRAFANA_PORT:-} # Ponlo a 4001 (panel + 1) si usas el perfil monitoring: aparece "Gráficas" en el panel
 
   prometheus:
     image: prom/prometheus:v3.1.0
@@ -51,7 +51,7 @@ services:
     network_mode: "host"
     cpu_shares: 256
     environment:
-      - GF_SERVER_HTTP_PORT=3001
+      - GF_SERVER_HTTP_PORT=${GRAFANA_PORT:-4001} # Panel (4000) + 1
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin} # Si no la defines, Grafana pide cambiarla al entrar
       - GF_USERS_ALLOW_SIGN_UP=false
       - GF_AUTH_ANONYMOUS_ENABLED=false

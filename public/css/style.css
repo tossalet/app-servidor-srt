@@ -449,6 +449,22 @@ input:checked + .slider:before { transform: translateX(18px); }
 .history-table .good { color: var(--color-green); }
 .history-table .warn { color: var(--color-yellow); }
 .history-table .bad { color: var(--color-red); font-weight: 600; }
+
+/* Estado de las señales (Analytics) */
+.signal-status { margin-top: 20px; padding: 1.5rem; background: rgba(0,0,0,0.2); border-radius: 12px; border: 1px solid var(--panel-border); }
+.signal-status-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 0.75rem; }
+.signal-status-head h3 { font-size: 1.1rem; font-weight: 600; display: flex; align-items: center; gap: 8px; margin: 0; }
+.signal-status-count { color: var(--text-muted); font-size: 0.85rem; }
+.signal-table .sig-in td { border-top: 1px solid rgba(255,255,255,0.08); }
+.signal-table .sig-out td:first-child { padding-left: 24px; color: var(--text-muted); max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
+.signal-table .sig-branch { opacity: 0.5; margin-right: 6px; }
+.signal-table .sig-proto { font-size: 0.7rem; font-family: monospace; opacity: 0.6; margin-left: 4px; }
+.sig-state { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; }
+.sig-state::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.sig-state.good { color: var(--color-green); }
+.sig-state.warn { color: var(--color-yellow); }
+.sig-state.bad { color: var(--color-red); }
+.sig-state.off { color: var(--text-muted); }
 .history-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 15px; }
 .history-chart { background: rgba(0,0,0,0.2); border: 1px solid var(--panel-border); border-radius: 10px; padding: 12px; min-width: 0; }
 .history-chart h3 { font-size: 0.85rem; font-weight: 600; color: var(--text-muted); margin-bottom: 8px; }

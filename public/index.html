@@ -110,6 +110,24 @@
                 <div class="chart-wrapper" style="background: var(--panel-bg); backdrop-filter: blur(16px); padding: 1.5rem; border-radius: 12px; border: 1px solid var(--panel-border); height: 400px; display:flex; align-items:center; justify-content:center;">
                     <canvas id="bitrateChart" style="width:100%; height:100%;"></canvas>
                 </div>
+                <div class="signal-status">
+                    <div class="signal-status-head">
+                        <h3><i class="fa-solid fa-signal"></i> Estado de las señales</h3>
+                        <span id="signal-status-count" class="signal-status-count"></span>
+                    </div>
+                    <div class="history-table-wrap">
+                        <table class="history-table signal-table">
+                            <thead><tr>
+                                <th>Señal</th><th>Estado</th><th>Bitrate</th><th>En el aire</th><th>Códec</th>
+                                <th title="Ida y vuelta de la red">RTT</th><th title="Pérdida / retransmisión en el último segundo">Pérdida / Retrans</th>
+                                <th title="Paquetes que no llegaron a tiempo">Drops</th><th title="Latencia SRT negociada">Latencia SRT</th><th title="Retardo de sincronía aplicado">Retardo</th>
+                            </tr></thead>
+                            <tbody id="signal-status-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+                <!-- Aquí se coloca el historial de Prometheus al abrir Analytics -->
+                <div id="analytics-history-slot"></div>
             </section>
             <section class="system-container" id="systemContainer">
                 <div class="storage-header" style="padding: 1.5rem; background: rgba(0,0,0,0.2); border-radius: 12px; margin-bottom: 1.5rem;">

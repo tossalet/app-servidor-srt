@@ -12,7 +12,7 @@ Instala Node.js 22, FFmpeg y los drivers de Intel Quick Sync. También ajusta el
 
 Opcionalmente instala la **monitorización** (Prometheus + Grafana, ver más abajo).
 
-Con Docker: `docker compose up -d --build`. Con monitorización: `GRAFANA_ADMIN_PASSWORD=... GRAFANA_PORT=3001 docker compose --profile monitoring up -d --build`. Los `sysctl` de buffers UDP se aplican en el host (ver el instalador).
+Con Docker: `docker compose up -d --build`. Con monitorización: `GRAFANA_ADMIN_PASSWORD=... GRAFANA_PORT=4001 docker compose --profile monitoring up -d --build`. Los `sysctl` de buffers UDP se aplican en el host (ver el instalador).
 
 ## Arquitectura
 
@@ -94,7 +94,7 @@ Durante la instalación, el instalador pregunta si quieres monitorización. Si d
 
 - **Prometheus:** guarda el historial de `/metrics` (cada 5 s, durante 30 días). Sólo escucha en local.
 - **Historial en el propio dashboard** del panel (sin abrir Grafana): por periodo (15 min, 1 h, 6 h o 24 h), una tabla por señal con % de tiempo con señal, drops SRT, reinicios y RTT máximo, y gráficas de bitrate de entrada y salida, RTT, drops por minuto, CPU y memoria. Se refresca cada 30 s. El servidor consulta a Prometheus con un conjunto fijo de consultas (`history.js`), nunca PromQL enviado desde el navegador. Si Prometheus no está instalado, el dashboard lo indica.
-- **Grafana:** en `http://IP_DEL_MINIPC:3001`, usuario `admin` y la contraseña que elijas. En el panel TSST aparece el enlace **Gráficas**.
+- **Grafana:** en el puerto siguiente al del panel (panel en 2000 → Grafana en `http://IP_DEL_MINIPC:2001`), usuario `admin` y la contraseña que elijas. En el panel TSST aparece el enlace **Gráficas**.
 - **Dashboard "TSST · Señales en directo"**, precargado:
   - Señales con y sin señal, salidas emitiendo, drops de la última hora, CPU y memoria.
   - Bitrate de entrada y de salida.

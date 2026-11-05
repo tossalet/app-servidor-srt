@@ -17,7 +17,7 @@ whiptail --title "Instalador Servidor SRT TSST" --msgbox "Bienvenido al asistent
 
 # Preguntar Puerto Web
 WEB_PORT=$(whiptail --title "Configuración" --inputbox "Introduce el PUERTO en el que deseas visualizar el Panel de Control Web:\n\n(Ejemplo: 3000, 80, 8080)" 12 60 "3000" 3>&1 1>&2 2>&3)
-if [ -z "$WEB_PORT" ]; then WEB_PORT=3000; fi
+case "$WEB_PORT" in ''|*[!0-9]*) WEB_PORT=3000 ;; esac
 
 # Preguntar Puerto SRT
 SRT_PORT=$(whiptail --title "Configuración" --inputbox "Introduce el PUERTO BASE para la recepción de señal SRT:\n\n(Ejemplo: 8000)" 12 60 "8000" 3>&1 1>&2 2>&3)
@@ -26,8 +26,12 @@ if [ -z "$SRT_PORT" ]; then SRT_PORT=8000; fi
 # Monitorización opcional: Prometheus (historial) + Grafana (gráficas y alertas)
 INSTALL_MONITORING="no"
 TELEGRAM="no"
-GRAFANA_PORT=3001
-if [ "$WEB_PORT" = "$GRAFANA_PORT" ]; then GRAFANA_PORT=3002; fi
+# Grafana va justo al lado del panel: panel 2000 -> Grafana 2001
+GRAFANA_PORT=$((WEB_PORT + 1))
+if [ "$GRAFANA_PORT" = "$SRT_PORT" ]; then
+    whiptail --title "Aviso" --msgbox "El puerto $GRAFANA_PORT (panel + 1, para Grafana) coincide con el puerto base SRT. Grafana usará el $((WEB_PORT + 2))." 10 65
+    GRAFANA_PORT=$((WEB_PORT + 2))
+fi
 if whiptail --title "Monitorización" --yesno "¿Instalar Prometheus y Grafana?\n\nGuardan el historial de las señales (bitrate, RTT, drops...), muestran gráficas y avisan si se cae una cámara.\n\nConsumo aproximado: 200 MB de RAM y CPU casi nula.\nGrafana quedará en el puerto $GRAFANA_PORT." 15 65; then
     INSTALL_MONITORING="yes"
     while true; do
@@ -213,6 +217,8 @@ if [ "$INSTALL_MONITORING" = "yes" ]; then
 [Service]
 Nice=10
 Environment=GF_SERVER_HTTP_PORT=$GRAFANA_PORT
+# Permite puertos por debajo de 1024 (p. ej. panel en 80 -> Grafana en 81)
+AmbientCapabilities=CAP_NET_BIND_SERVICE
 Environment=GF_USERS_ALLOW_SIGN_UP=false
 Environment=GF_AUTH_ANONYMOUS_ENABLED=false
 Environment=GF_ANALYTICS_REPORTING_ENABLED=false
