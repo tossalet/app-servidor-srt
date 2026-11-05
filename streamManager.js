@@ -846,6 +846,7 @@ setInterval(() => {
         pushTelemetry(key, point);
         emit('stats', { channel: key, bitrate: '0.0kbits/s', time: '--:--:--', active: true, point });
         st.lastUpdate = now;
+        st.lastKbps = 0; // Si no, /metrics seguía dando el último bitrate y la alerta "Salida sin emitir" nunca saltaba
         st.lastSize = null;
     }
 }, 1000);

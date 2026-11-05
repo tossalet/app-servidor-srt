@@ -6,7 +6,7 @@
       "orgId": 1,
       "name": "tsst",
       "folder": "TSST",
-      "interval": "20s",
+      "interval": "10s",
       "rules": [
         {
           "uid": "tsst-senal-perdida",
@@ -64,10 +64,10 @@
           ],
           "noDataState": "OK",
           "execErrState": "Error",
-          "for": "30s",
+          "for": "10s",
           "annotations": {
             "summary": "Sin señal: {{ $labels.name }} (canal {{ $labels.channel }})",
-            "description": "No llegan datos desde hace más de 30 s. Revisa la cámara, el emisor o la red.",
+            "description": "No llegan datos. Revisa la cámara, el emisor o la red.",
             "resolved": "Señal recuperada: {{ $labels.name }} (canal {{ $labels.channel }})"
           },
           "labels": {
@@ -132,10 +132,10 @@
           ],
           "noDataState": "OK",
           "execErrState": "Error",
-          "for": "1m",
+          "for": "15s",
           "annotations": {
             "summary": "La salida {{ $labels.location }} no emite",
-            "description": "La entrada tiene señal pero esta salida lleva más de 1 min sin enviar datos. Revisa el destino.",
+            "description": "La entrada tiene señal pero esta salida ha dejado de enviar datos. Revisa el destino.",
             "resolved": "La salida {{ $labels.location }} vuelve a emitir"
           },
           "labels": {
