@@ -360,7 +360,15 @@ function outputCodecText(o) {
     return inStats && inStats.codec ? `${inStats.codec} · passthrough` : 'Passthrough';
 }
 
-function signalRow(key, name, proto, enabled, isOutput, codecText) {
+// Latencia SRT: la negociada si srt-live-transmit la informa (sólo en recepción);
+// si no (las salidas no la reportan), la configurada en la URL
+function srtLatencyCell(srt, url) {
+    if (srt && srt.latency) return `<span title="Latencia negociada con el otro extremo">${srt.latency} ms</span>`;
+    if (!url || !url.startsWith('srt://')) return '—';
+    return `<span title="Latencia configurada en esta salida (el receptor puede pedir más)">${currentLatencyMs(url, true)}</span>`;
+}
+
+function signalRow(key, name, proto, enabled, isOutput, codecText, url) {
     const s = liveStats[key];
     const st = signalState(enabled, s);
     const kbps = s && st.cls !== 'off' ? parseFloat(s.bitrate) || 0 : null;
@@ -375,7 +383,7 @@ function signalRow(key, name, proto, enabled, isOutput, codecText) {
         <td class="${srt && srt.rtt > 100 ? 'warn' : ''}">${srt ? `${srt.rtt} ms` : dash}</td>
         <td class="${srt && srt.retransPct > 10 ? 'bad' : srt && srt.retransPct > 2 ? 'warn' : ''}">${srt ? `${srt.lossPct}% / ${srt.retransPct}%` : dash}</td>
         <td class="${srt && srt.drops > 0 ? 'bad' : ''}">${srt ? srt.drops : dash}</td>
-        <td>${srt && srt.latency ? `${srt.latency} ms` : dash}</td>
+        <td>${srtLatencyCell(srt, url)}</td>
         <td>${!isOutput && s && s.delay ? `${s.delay} ms` : dash}</td>
     </tr>`;
 }
@@ -389,9 +397,9 @@ function renderSignalStatus() {
         const key = String(i.channel);
         const st = signalState(i.enabled, liveStats[key]).cls;
         if (st === 'good') live++; else if (st === 'off') off++; else waiting++;
-        rows += signalRow(key, i.name, i.url.split('://')[0].toUpperCase(), i.enabled, false);
+        rows += signalRow(key, i.name, i.url.split('://')[0].toUpperCase(), i.enabled, false, null, i.url);
         outputs.filter(o => o.channel === i.channel).forEach(o => {
-            rows += signalRow('out_' + o.id, o.location || maskUrl(o.url), o.url.split('://')[0].toUpperCase(), o.enabled, true, outputCodecText(o));
+            rows += signalRow('out_' + o.id, o.location || maskUrl(o.url), o.url.split('://')[0].toUpperCase(), o.enabled, true, outputCodecText(o), o.url);
         });
     });
     body.innerHTML = rows || '<tr><td colspan="10" style="color:var(--text-muted);">No hay señales configuradas.</td></tr>';
