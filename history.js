@@ -90,4 +90,4 @@ async function handler(req, res) {
     }
 }
 
-module.exports = { handler, RANGES };
+module.exports = { handler, collect, RANGES };

@@ -259,11 +259,13 @@ function registerRoutes(app, io) {
         if (!u || !ok) {
             registerFailure(ip);
             console.warn(`[AUTH] Login fallido para "${username}" desde ${ip}`);
+            require('./telegram').login(username, ip, false);
             return res.status(401).json({ error: 'Usuario o contraseña incorrectos' });
         }
         failures.delete(ip);
         setSessionCookie(req, res, u.username);
         console.log(`[AUTH] Login de ${u.username} desde ${ip}`);
+        require('./telegram').login(u.username, ip, true);
         res.json(publicUser(u));
     });
 

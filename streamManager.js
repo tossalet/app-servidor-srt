@@ -749,6 +749,7 @@ async function spawnOutputProcess(st) {
         const now = Date.now();
         st.lastUpdate = now;
         st.lastKbps = kbps;
+        if (kbps > 0) st.dataAt = now; // Último instante en que entregó datos (avisos de Telegram)
         const point = { t: now, y: Math.round(kbps * 10) / 10 };
         pushTelemetry(key, point);
         emit('stats', { channel: key, bitrate: `${kbps.toFixed(1)}kbits/s`, time, active: true, srt: srtStats, point });
@@ -882,6 +883,7 @@ function getMetricsSnapshot() {
         bytesTotal: st.bytesTotal || 0,
         restarts: st.restarts || 0,
         delayMs: st.delay || 0,
+        codec: st.codec || '',
         queuedMs: st.queuedMs || 0,
         srt: st.srt ? srt.snapshot(st) : null,
         srtTotals: st.srtTotals || null
@@ -893,6 +895,9 @@ function getMetricsSnapshot() {
         protocol: protocolOf(st.cfg.url),
         vcodec: st.cfg.vcodec || 'copy',
         running: !!st.proc,
+        // Entregando datos al destino ahora mismo (informe con bitrate > 0 en los últimos 4 s)
+        delivering: !!st.dataAt && now - st.dataAt < 4000,
+        lastError: srt.maskSecrets(st.tail.trim().split(/\r?\n/).pop() || '').slice(0, 160),
         // Sin informe en 5 s: no está entregando
         bitrateBps: now - st.lastUpdate > 5000 ? 0 : (st.lastKbps || 0) * 1000,
         restarts: st.restarts || 0,

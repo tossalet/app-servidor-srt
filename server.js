@@ -12,6 +12,7 @@ const streamManager = require('./streamManager');
 const sysMonitor = require('./sysMonitor');
 const rtmpServer = require('./rtmpServer');
 const encoders = require('./encoders');
+const telegram = require('./telegram');
 const si = require('systeminformation');
 
 const app = express();
@@ -50,6 +51,29 @@ app.get('/metrics', metrics.authorize, metrics.handler);
 // Todo (panel, API, miniaturas, grabaciones) exige sesión salvo la pantalla de login
 app.use(auth.requireAuth);
 auth.registerRoutes(app, io);
+
+// Aviso por Telegram de lo que se hace con entradas y salidas desde el panel (quién y qué)
+app.use('/api', (req, res, next) => {
+    if (req.method === 'GET') return next();
+    const m = req.path.match(/^\/(inputs|outputs)(?:\/(\d+))?(?:\/(toggle))?$/);
+    if (!m) return next();
+    const kind = m[1] === 'inputs' ? 'input' : 'output';
+    const json = res.json.bind(res);
+    res.json = (body) => {
+        if (res.statusCode < 400 && body && !res.locals.notified) {
+            res.locals.notified = true;
+            let id = m[2];
+            let action = null;
+            if (m[3] === 'toggle') action = body.enabled ? 'on' : 'off';
+            else if (req.method === 'POST' && !m[2]) { id = body.channel || body.id; action = 'create'; }
+            else if (req.method === 'PUT' && m[2]) action = 'edit';
+            else if (req.method === 'DELETE' && m[2]) action = 'delete';
+            if (action && id) telegram.panelAction(req.user && req.user.username, kind, id, action);
+        }
+        return json(body);
+    };
+    next();
+});
 // Miniaturas servidas desde RAM (tmpfs) y sin caché
 app.use('/thumbs', express.static(streamManager.THUMBS_DIR, { maxAge: 0, etag: false }));
 app.use(express.static(path.join(__dirname, 'public')));
@@ -571,7 +595,8 @@ function gracefulShutdown(sig) {
     shuttingDown = true;
     console.log(`[${sig}] Deteniendo streams...`);
     encoders.shutdown();
-    streamManager.shutdown().finally(() => {
+    const why = sig === 'SIGTERM' ? 'se ha parado o reiniciado el servicio' : sig;
+    Promise.all([telegram.shutdown(why), streamManager.shutdown()]).finally(() => {
         db.close(() => process.exit(0));
     });
 }
@@ -580,6 +605,7 @@ process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 // Start Server
 const PORT = process.env.PORT || 4000;
+telegram.init();
 server.listen(PORT, () => {
     console.log(`TSST SERVER running on port ${PORT}`);
 });

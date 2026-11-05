@@ -26,6 +26,8 @@ services:
     environment:
       - NODE_ENV=production
       - GRAFANA_PORT=${GRAFANA_PORT:-} # Ponlo a 4001 (panel + 1) si usas el perfil monitoring: aparece "Gráficas" en el panel
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-} # Bot de Telegram: avisos y comandos (/estado, /informe...)
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
 
   prometheus:
     image: prom/prometheus:v3.1.0

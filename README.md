@@ -108,7 +108,7 @@ encoder ──cable──► router 4G del sitio ══ túnel WireGuard ══�
   - Último handshake del túnel del router.
   - Si llega la señal SRT vinculada.
 
-  Va al panel, a `/metrics` (`tsst_encoder_up`, `tsst_encoder_vpn_up`…) y a la alerta de Grafana **Encoder sin conexión** (1 min), que avisa también por Telegram.
+  Va al panel, a `/metrics` (`tsst_encoder_up`, `tsst_encoder_vpn_up`…) y al bot de Telegram, que avisa en cuanto deja de responder.
 - **Roles:** cualquier usuario ve el estado y abre la web. Dar de alta, editar, borrar y gestionar la VPN es solo para administradores.
 
 ### Poner en marcha un encoder
@@ -140,21 +140,40 @@ Durante la instalación, el instalador pregunta si quieres monitorización. Si d
   - RTT, % de retransmisión y drops por minuto de SRT.
   - Tabla de estado por señal: OK, bitrate, RTT, latencia, drops, retardo de sincronía.
   - Reinicios por hora, red del mini PC y salud del servidor.
-- **Alertas** (carpeta TSST en Grafana → Alerting):
+- **Alerta de Grafana:** solo **Servidor TSST caído**, cuando Prometheus no puede leer el servidor durante 30 s. Es lo único que la app no puede avisar por sí misma. El resto de avisos los manda el bot de Telegram del propio servidor.
 
-  | Alerta | Cuándo salta |
-  |---|---|
-  | Señal perdida | Un input activo lleva 30 s sin datos |
-  | Salida sin emitir | La entrada tiene señal pero la salida no envía en 1 min |
-  | Cortes SRT (drops) | Ha habido drops en los últimos 2 min |
-  | Latencia SRT corta para la red | Latencia < 3 × RTT durante 2 min |
-  | CPU alta | Más del 90 % durante 2 min |
-  | Encoder sin conexión | La web de un encoder no responde durante 1 min |
-  | Servidor TSST caído | Prometheus no puede leer el servidor durante 30 s |
+### Bot de Telegram
 
-- **Avisos por Telegram** (opcional). Crea un bot con [@BotFather](https://t.me/BotFather), añádelo al grupo y pon en el instalador su token y el ID del chat. Para obtener el ID: escribe algo en el grupo y abre `https://api.telegram.org/bot<TOKEN>/getUpdates`.
+Es opcional y no necesita Grafana. Crea un bot con [@BotFather](https://t.me/BotFather) y añádelo al chat o grupo. Pon su token y el ID del chat en el instalador. Para obtener el ID: escribe algo en el chat y abre `https://api.telegram.org/bot<TOKEN>/getUpdates`. Usa `chat.id`, no `update_id`.
 
-Prometheus y Grafana corren con prioridad baja (`Nice=10`): el vídeo siempre va primero. Los archivos están en `monitoring/`. Para cambiar Telegram sin reinstalar, edita `/etc/grafana/provisioning/alerting/tsst-telegram.yml` y ejecuta `systemctl restart grafana-server`.
+El instalador lo guarda en `/opt/srt-server/.env` (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`; admite varios chats separados por comas). En Docker se pasan como variables de entorno. Si cambias el `.env` a mano, reinicia con `systemctl restart tsst-srt`.
+
+**Avisos.** Llegan en unos 5–10 s. Un corte de menos de 3 s no se avisa. Si algo se corta y vuelve una y otra vez, llega un único aviso de "inestable".
+
+| Aviso | Cuándo |
+|---|---|
+| 🔴 Sin señal / ✅ Señal recuperada (con cuánto duró) | Una entrada deja de recibir datos o vuelve |
+| 🔴 La salida no emite / ✅ vuelve a emitir | La entrada tiene señal pero el receptor (vMix, OBS...) se cierra, se desconecta o rechaza la conexión |
+| 🟠 Cortes SRT | Paquetes que llegan tarde y se pierden. Incluye la latencia recomendada |
+| 🟠 Latencia SRT corta | Latencia menor que 3 × RTT, una vez por conexión |
+| ▶️ ⏸️ ➕ ✏️ 🗑️ | Quién enciende, apaga, crea, cambia o borra una entrada o salida en el panel |
+| 🔐 ⚠️ | Accesos al panel e intentos fallidos |
+| Encoders | Un encoder remoto deja de responder o vuelve |
+| Servidor | CPU o RAM por encima del 90 %, temperatura por encima de 80 °C, arranque y apagado del servidor |
+
+**Comandos** (solo desde los chats configurados):
+
+| Comando | Qué hace |
+|---|---|
+| `/estado` | Qué entra y qué sale ahora mismo |
+| `/informe` | Lo mismo, más RTT, pérdidas, drops, errores y el estado del servidor |
+| `/sistema` | CPU, RAM, temperatura, disco, red y tiempo encendido |
+| `/historial` | Disponibilidad de cada señal en 24 h (o `/historial 1h`, `/historial 6h`). Necesita Prometheus |
+| `/silencio 30` | Pausa los avisos 30 min (sin número, 1 h). `/avisos` los reactiva |
+
+Un mismo bot solo puede atender comandos en un servidor a la vez. Si dos servidores usan el mismo token, los avisos llegan, pero los comandos no.
+
+Prometheus y Grafana corren con prioridad baja (`Nice=10`): el vídeo siempre va primero. Los archivos están en `monitoring/`.
 
 ## Métricas (Prometheus / Grafana)
 

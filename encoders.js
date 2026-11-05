@@ -380,6 +380,7 @@ async function checkAll() {
             }
             if (prev.online !== undefined && prev.online !== r.ok) {
                 console.log(`[ENCODERS] ${enc.name} (${enc.host}) ${r.ok ? 'en línea' : `sin conexión: ${r.error}`}`);
+                require('./telegram').encoder(enc.name, enc.host, r.ok, r.error);
             }
             status.set(enc.id, {
                 online: r.ok,

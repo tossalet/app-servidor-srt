@@ -48,22 +48,28 @@ if whiptail --title "Monitorización" --yesno "¿Instalar Prometheus y Grafana?\
         whiptail --title "Grafana" --msgbox "La contraseña debe tener al menos 8 caracteres." 8 60
     done
 
-    # Telegram ya configurado en una instalación anterior: se ofrece mantenerlo tal cual
-    TG_FILE=/etc/grafana/provisioning/alerting/tsst-telegram.yml
-    OLD_TOKEN=""; OLD_CHAT=""
-    if [ -f "$TG_FILE" ]; then
-        OLD_TOKEN=$(sed -n 's/^ *bottoken: *"\(.*\)"/\1/p' "$TG_FILE" | head -1)
-        OLD_CHAT=$(sed -n 's/^ *chatid: *"\(.*\)"/\1/p' "$TG_FILE" | head -1)
-    fi
-    if [ -n "$OLD_TOKEN" ] && [ -n "$OLD_CHAT" ] && whiptail --title "Alertas" --yesno "Ya tienes las alertas por Telegram configuradas (chat $OLD_CHAT).\n\n¿Mantener esta configuración?" 11 65; then
-        TELEGRAM="yes"; TG_TOKEN="$OLD_TOKEN"; TG_CHAT="$OLD_CHAT"
-    elif whiptail --title "Alertas" --yesno "¿Quieres recibir las alertas por Telegram?\n\nNecesitas un bot (créalo hablando con @BotFather) y el ID del chat o grupo donde avisará." 12 65; then
-        TELEGRAM="yes"
-        TG_TOKEN=$(whiptail --title "Telegram" --inputbox "Token del bot (ej. 123456:ABC-DEF...):" 10 65 3>&1 1>&2 2>&3)
-        TG_CHAT=$(whiptail --title "Telegram" --inputbox "ID del chat o grupo (ej. -1001234567890):" 10 65 3>&1 1>&2 2>&3)
-        if [ -z "$TG_TOKEN" ] || [ -z "$TG_CHAT" ]; then TELEGRAM="no"; fi
-    fi
 fi
+
+# Bot de Telegram: avisos en segundos y comandos (/estado, /informe...). No necesita Grafana.
+# Ya configurado en una instalación anterior (en el .env de la app o en Grafana): se ofrece mantenerlo
+OLD_TOKEN=$(sed -n 's/^TELEGRAM_BOT_TOKEN=//p' /opt/srt-server/.env 2>/dev/null | head -1)
+OLD_CHAT=$(sed -n 's/^TELEGRAM_CHAT_ID=//p' /opt/srt-server/.env 2>/dev/null | head -1)
+TG_FILE=/etc/grafana/provisioning/alerting/tsst-telegram.yml
+if { [ -z "$OLD_TOKEN" ] || [ -z "$OLD_CHAT" ]; } && [ -f "$TG_FILE" ]; then
+    OLD_TOKEN=$(sed -n 's/^ *bottoken: *"\(.*\)"/\1/p' "$TG_FILE" | head -1)
+    OLD_CHAT=$(sed -n 's/^ *chatid: *"\(.*\)"/\1/p' "$TG_FILE" | head -1)
+fi
+if [ -n "$OLD_TOKEN" ] && [ -n "$OLD_CHAT" ] && whiptail --title "Telegram" --yesno "Ya tienes el bot de Telegram configurado (chat $OLD_CHAT).\n\n¿Mantener esta configuración?" 11 65; then
+    TELEGRAM="yes"; TG_TOKEN="$OLD_TOKEN"; TG_CHAT="$OLD_CHAT"
+elif whiptail --title "Telegram" --yesno "¿Quieres un bot de Telegram para el servidor?\n\nAvisa en segundos de todo lo que pasa (señales, salidas, cortes, cambios en el panel) y responde a comandos como /estado o /informe.\n\nNecesitas un bot (créalo hablando con @BotFather) y el ID del chat o grupo." 15 70; then
+    TELEGRAM="yes"
+    TG_TOKEN=$(whiptail --title "Telegram" --inputbox "Token del bot (ej. 123456:ABC-DEF...):" 10 65 3>&1 1>&2 2>&3)
+    TG_CHAT=$(whiptail --title "Telegram" --inputbox "ID del chat o grupo (ej. 6008034948 o -1001234567890):" 10 65 3>&1 1>&2 2>&3)
+    if [ -z "$TG_TOKEN" ] || [ -z "$TG_CHAT" ]; then TELEGRAM="no"; fi
+fi
+# Sólo caracteres válidos: el token y el chat acaban en el .env y en un sed
+case "$TG_TOKEN" in *[!A-Za-z0-9:_-]*) TELEGRAM="no" ;; esac
+case "$TG_CHAT" in *[!0-9,-]*) TELEGRAM="no" ;; esac
 
 # WireGuard opcional: túnel con los routers 4G de los encoders remotos (sección Encoders del panel)
 INSTALL_WG="no"
@@ -82,13 +88,13 @@ if whiptail --title "Encoders remotos" --yesno "$WG_QUESTION" 16 70; then
 fi
 
 MONITORING_TEXT="No"
-if [ "$INSTALL_MONITORING" = "yes" ]; then MONITORING_TEXT="Sí (Grafana en puerto $GRAFANA_PORT, Telegram: $TELEGRAM)"; fi
+if [ "$INSTALL_MONITORING" = "yes" ]; then MONITORING_TEXT="Sí (Grafana en puerto $GRAFANA_PORT)"; fi
 
 # Confirmación Final
 WG_TEXT="No"
 if [ "$INSTALL_WG" = "yes" ]; then WG_TEXT="Sí (UDP $WG_PORT, ${WG_ENDPOINT:-sin dirección pública})"; fi
 
-whiptail --title "Resumen de Instalación" --yesno "Se procederá a instalar con la siguiente configuración:\n\n- Panel Web: Puerto $WEB_PORT\n- Señal SRT: Puerto Base $SRT_PORT\n- Monitorización: $MONITORING_TEXT\n- WireGuard (encoders): $WG_TEXT\n\n¿Deseas iniciar la instalación ahora?" 16 70
+whiptail --title "Resumen de Instalación" --yesno "Se procederá a instalar con la siguiente configuración:\n\n- Panel Web: Puerto $WEB_PORT\n- Señal SRT: Puerto Base $SRT_PORT\n- Monitorización: $MONITORING_TEXT\n- Bot de Telegram: $TELEGRAM\n- WireGuard (encoders): $WG_TEXT\n\n¿Deseas iniciar la instalación ahora?" 17 70
 
 if [ $? -ne 0 ]; then
     clear
@@ -173,7 +179,12 @@ echo "SRT_BASE_PORT=$SRT_PORT" >> .env
 # El panel muestra el enlace "Gráficas" si hay Grafana
 if [ "$INSTALL_MONITORING" = "yes" ]; then echo "GRAFANA_PORT=$GRAFANA_PORT" >> .env; fi
 # Dirección pública que se pone en la configuración de los routers de los encoders
-ENV_REPLACED='PORT|SRT_BASE_PORT|GRAFANA_PORT'
+ENV_REPLACED='PORT|SRT_BASE_PORT|GRAFANA_PORT|TELEGRAM_BOT_TOKEN|TELEGRAM_CHAT_ID'
+# Bot de Telegram (telegram.js)
+if [ "$TELEGRAM" = "yes" ]; then
+    echo "TELEGRAM_BOT_TOKEN=$TG_TOKEN" >> .env
+    echo "TELEGRAM_CHAT_ID=$TG_CHAT" >> .env
+fi
 if [ "$INSTALL_WG" = "yes" ]; then
     ENV_REPLACED="$ENV_REPLACED|WG_ENDPOINT"
     [ -n "$WG_ENDPOINT" ] && echo "WG_ENDPOINT=$WG_ENDPOINT" >> .env
