@@ -66,8 +66,9 @@
           "execErrState": "Error",
           "for": "30s",
           "annotations": {
-            "summary": "Sin señal en {{ $labels.name }} (canal {{ $labels.channel }})",
-            "description": "El input está activo pero no llegan datos desde hace más de 30 s."
+            "summary": "Sin señal: {{ $labels.name }} (canal {{ $labels.channel }})",
+            "description": "No llegan datos desde hace más de 30 s. Revisa la cámara, el emisor o la red.",
+            "resolved": "Señal recuperada: {{ $labels.name }} (canal {{ $labels.channel }})"
           },
           "labels": {
             "severity": "critical",
@@ -133,8 +134,9 @@
           "execErrState": "Error",
           "for": "1m",
           "annotations": {
-            "summary": "La salida {{ $labels.location }} (canal {{ $labels.channel }}) no emite",
-            "description": "La entrada tiene señal pero esta salida lleva más de 1 minuto sin enviar datos."
+            "summary": "La salida {{ $labels.location }} no emite",
+            "description": "La entrada tiene señal pero esta salida lleva más de 1 min sin enviar datos. Revisa el destino.",
+            "resolved": "La salida {{ $labels.location }} vuelve a emitir"
           },
           "labels": {
             "severity": "critical",
@@ -200,8 +202,9 @@
           "execErrState": "Error",
           "for": "0s",
           "annotations": {
-            "summary": "Drops SRT en {{ $labels.name }}{{ $labels.location }} ({{ $labels.direction }})",
-            "description": "Paquetes SRT que llegaron tarde: hay cortes visibles. Sube la latencia SRT (Haivision: 3-4 × RTT)."
+            "summary": "Cortes SRT en {{ $labels.name }}{{ $labels.location }}",
+            "description": "Llegan paquetes tarde y se ven cortes en la imagen. Sube la latencia SRT (3-4 × RTT).",
+            "resolved": "Sin cortes SRT en {{ $labels.name }}{{ $labels.location }}"
           },
           "labels": {
             "severity": "warning",
@@ -267,8 +270,9 @@
           "execErrState": "Error",
           "for": "2m",
           "annotations": {
-            "summary": "Latencia SRT baja en {{ $labels.name }}",
-            "description": "La latencia efectiva es menor que 3 veces el RTT. Recomendado: 4 × RTT."
+            "summary": "Latencia SRT corta en {{ $labels.name }}{{ $labels.location }}",
+            "description": "La latencia es menor que 3 × RTT: hay riesgo de cortes. Recomendado: 4 × RTT.",
+            "resolved": "Latencia SRT correcta en {{ $labels.name }}{{ $labels.location }}"
           },
           "labels": {
             "severity": "warning",
@@ -334,8 +338,9 @@
           "execErrState": "Error",
           "for": "2m",
           "annotations": {
-            "summary": "CPU del mini PC por encima del 90 %",
-            "description": "Revisa transcodificaciones por software (libx264/libx265): usa Quick Sync."
+            "summary": "CPU del servidor por encima del 90 %",
+            "description": "Usa Quick Sync en lugar de la conversión por CPU (libx264/libx265).",
+            "resolved": "CPU del servidor de nuevo normal"
           },
           "labels": {
             "severity": "warning",
@@ -401,8 +406,9 @@
           "execErrState": "Error",
           "for": "30s",
           "annotations": {
-            "summary": "Prometheus no puede leer el servidor TSST",
-            "description": "El servicio tsst-srt no responde. Comprueba: systemctl status tsst-srt"
+            "summary": "El servidor TSST no responde",
+            "description": "Prometheus no puede leerlo. Comprueba: systemctl status tsst-srt",
+            "resolved": "El servidor TSST vuelve a responder"
           },
           "labels": {
             "severity": "critical",
@@ -468,8 +474,9 @@
           "execErrState": "Error",
           "for": "0s",
           "annotations": {
-            "summary": "Apagado desde el panel: {{ $labels.name }} (canal {{ $labels.channel }})",
-            "description": "Alguien ha desactivado esta entrada en el panel; sus salidas también se paran. Al volver a encenderla llega el aviso de resuelto."
+            "summary": "Entrada apagada desde el panel: {{ $labels.name }} (canal {{ $labels.channel }})",
+            "description": "Se ha desactivado a mano en el panel; sus salidas también se paran.",
+            "resolved": "Entrada encendida de nuevo desde el panel: {{ $labels.name }} (canal {{ $labels.channel }})"
           },
           "labels": {
             "severity": "info",
@@ -537,7 +544,8 @@
           "for": "0s",
           "annotations": {
             "summary": "Salida apagada desde el panel: {{ $labels.location }} ({{ $labels.name }})",
-            "description": "Alguien ha desactivado esta salida en el panel. Al volver a encenderla llega el aviso de resuelto."
+            "description": "Se ha desactivado a mano en el panel.",
+            "resolved": "Salida encendida de nuevo desde el panel: {{ $labels.location }} ({{ $labels.name }})"
           },
           "labels": {
             "severity": "info",

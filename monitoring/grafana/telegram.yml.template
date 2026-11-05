@@ -11,7 +11,22 @@ contactPoints:
         settings:
           bottoken: "__BOT_TOKEN__"
           chatid: "__CHAT_ID__"
+          # Mensaje corto en castellano (plantilla tsst.message de abajo), en texto plano
+          message: '{{ template "tsst.message" . }}'
+          parse_mode: None
         disableResolveMessage: false
+
+# Una línea por aviso: icono + qué pasa + qué hacer; al resolverse, su propio texto ("Señal recuperada"...)
+templates:
+  - orgID: 1
+    name: tsst
+    template: |
+      {{ define "tsst.message" }}{{ range .Alerts.Firing }}{{ if eq .Labels.kind "manual" }}⏸️{{ else if eq .Labels.severity "critical" }}🔴{{ else if eq .Labels.severity "warning" }}🟠{{ else }}🔵{{ end }} {{ .Annotations.summary }}
+      {{ .Annotations.description }}
+
+      {{ end }}{{ range .Alerts.Resolved }}{{ if eq .Labels.kind "manual" }}▶️{{ else }}✅{{ end }} {{ if .Annotations.resolved }}{{ .Annotations.resolved }}{{ else }}Resuelto: {{ .Annotations.summary }}{{ end }}
+
+      {{ end }}{{ end }}
 
 policies:
   - orgId: 1

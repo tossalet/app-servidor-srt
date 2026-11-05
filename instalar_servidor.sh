@@ -34,12 +34,30 @@ if [ "$GRAFANA_PORT" = "$SRT_PORT" ]; then
 fi
 if whiptail --title "Monitorización" --yesno "¿Instalar Prometheus y Grafana?\n\nGuardan el historial de las señales (bitrate, RTT, drops...), muestran gráficas y avisan si se cae una cámara.\n\nConsumo aproximado: 200 MB de RAM y CPU casi nula.\nGrafana quedará en el puerto $GRAFANA_PORT." 15 65; then
     INSTALL_MONITORING="yes"
+    # En una reinstalación, Grafana ya tiene contraseña: vacío = mantenerla
+    GRAFANA_EXISTS="no"
+    [ -f /var/lib/grafana/grafana.db ] && GRAFANA_EXISTS="yes"
     while true; do
-        GRAFANA_PASS=$(whiptail --title "Grafana" --passwordbox "Contraseña para el usuario 'admin' de Grafana (mínimo 8 caracteres):" 10 60 3>&1 1>&2 2>&3)
+        if [ "$GRAFANA_EXISTS" = "yes" ]; then
+            GRAFANA_PASS=$(whiptail --title "Grafana" --passwordbox "Grafana ya está instalado.\n\nDeja el campo VACÍO para mantener la contraseña actual del usuario 'admin', o escribe una nueva (mínimo 8 caracteres):" 12 65 3>&1 1>&2 2>&3)
+            [ -z "$GRAFANA_PASS" ] && break
+        else
+            GRAFANA_PASS=$(whiptail --title "Grafana" --passwordbox "Contraseña para el usuario 'admin' de Grafana (mínimo 8 caracteres):" 10 60 3>&1 1>&2 2>&3)
+        fi
         [ ${#GRAFANA_PASS} -ge 8 ] && break
         whiptail --title "Grafana" --msgbox "La contraseña debe tener al menos 8 caracteres." 8 60
     done
-    if whiptail --title "Alertas" --yesno "¿Quieres recibir las alertas por Telegram?\n\nNecesitas un bot (créalo hablando con @BotFather) y el ID del chat o grupo donde avisará." 12 65; then
+
+    # Telegram ya configurado en una instalación anterior: se ofrece mantenerlo tal cual
+    TG_FILE=/etc/grafana/provisioning/alerting/tsst-telegram.yml
+    OLD_TOKEN=""; OLD_CHAT=""
+    if [ -f "$TG_FILE" ]; then
+        OLD_TOKEN=$(sed -n 's/^ *bottoken: *"\(.*\)"/\1/p' "$TG_FILE" | head -1)
+        OLD_CHAT=$(sed -n 's/^ *chatid: *"\(.*\)"/\1/p' "$TG_FILE" | head -1)
+    fi
+    if [ -n "$OLD_TOKEN" ] && [ -n "$OLD_CHAT" ] && whiptail --title "Alertas" --yesno "Ya tienes las alertas por Telegram configuradas (chat $OLD_CHAT).\n\n¿Mantener esta configuración?" 11 65; then
+        TELEGRAM="yes"; TG_TOKEN="$OLD_TOKEN"; TG_CHAT="$OLD_CHAT"
+    elif whiptail --title "Alertas" --yesno "¿Quieres recibir las alertas por Telegram?\n\nNecesitas un bot (créalo hablando con @BotFather) y el ID del chat o grupo donde avisará." 12 65; then
         TELEGRAM="yes"
         TG_TOKEN=$(whiptail --title "Telegram" --inputbox "Token del bot (ej. 123456:ABC-DEF...):" 10 65 3>&1 1>&2 2>&3)
         TG_CHAT=$(whiptail --title "Telegram" --inputbox "ID del chat o grupo (ej. -1001234567890):" 10 65 3>&1 1>&2 2>&3)
@@ -239,8 +257,10 @@ EOF
         curl -s "http://127.0.0.1:$GRAFANA_PORT/api/health" > /dev/null && break
         sleep 2
     done
-    runuser -u grafana -- grafana cli --homepath /usr/share/grafana --config /etc/grafana/grafana.ini admin reset-admin-password "$GRAFANA_PASS" > /dev/null \
-        || runuser -u grafana -- grafana-cli --homepath /usr/share/grafana --config /etc/grafana/grafana.ini admin reset-admin-password "$GRAFANA_PASS" > /dev/null
+    if [ -n "$GRAFANA_PASS" ]; then
+        runuser -u grafana -- grafana cli --homepath /usr/share/grafana --config /etc/grafana/grafana.ini admin reset-admin-password "$GRAFANA_PASS" > /dev/null \
+            || runuser -u grafana -- grafana-cli --homepath /usr/share/grafana --config /etc/grafana/grafana.ini admin reset-admin-password "$GRAFANA_PASS" > /dev/null
+    fi
 fi
 
 LOCAL_IP=$(hostname -I | awk '{print $1}')
