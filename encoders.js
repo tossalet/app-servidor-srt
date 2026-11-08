@@ -100,6 +100,9 @@ function run(cmd, args, input) {
         child.stdout.on('data', d => { out += d; });
         child.stderr.on('data', d => { err += d; });
         child.on('error', reject);
+        // Si el comando termina sin leer la entrada (p. ej. "wg show" sin interfaz wg0), escribirle da
+        // EPIPE; sin este manejador ese error tumbaba todo el servidor. El fallo real llega por 'close'.
+        child.stdin.on('error', () => {});
         child.on('close', code => code === 0 ? resolve(out.trim()) : reject(new Error((err || out).trim() || `${cmd} terminó con código ${code}`)));
         child.stdin.end(input || '');
     });
