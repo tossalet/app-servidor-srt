@@ -11,6 +11,34 @@ window.fetch = async (...args) => {
     return res;
 };
 
+/* Avisos no bloqueantes (sustituyen a alert()): aparecen abajo, se van solos y por el mismo
+   camino por el que entraron. Tipos: 'error' (por defecto), 'ok', 'warn'. */
+function toast(msg, type = 'error') {
+    let host = document.getElementById('toast-host');
+    if (!host) {
+        host = document.createElement('div');
+        host.id = 'toast-host';
+        host.setAttribute('role', 'status');
+        host.setAttribute('aria-live', 'polite');
+        document.body.appendChild(host);
+    }
+    const icon = { ok: 'fa-circle-check', warn: 'fa-triangle-exclamation', error: 'fa-circle-exclamation' }[type] || 'fa-circle-info';
+    const el = document.createElement('div');
+    el.className = `toast ${type}`;
+    el.innerHTML = `<i class="fa-solid ${icon}"></i><span></span><button type="button" aria-label="Cerrar"><i class="fa-solid fa-xmark"></i></button>`;
+    el.querySelector('span').textContent = msg;
+    const close = () => {
+        if (el.classList.contains('leaving')) return;
+        el.classList.add('leaving');
+        el.addEventListener('animationend', () => el.remove(), { once: true });
+        setTimeout(() => el.remove(), 400); // por si no hay animación (movimiento reducido)
+    };
+    el.querySelector('button').onclick = close;
+    host.appendChild(el);
+    // Los errores se quedan más tiempo: hay que poder leerlos
+    setTimeout(close, type === 'error' ? 7000 : 3500);
+}
+
 const socket = io();
 socket.on('connect_error', (err) => {
     if (err.message === 'unauthorized') window.location.href = '/login.html';
@@ -60,7 +88,7 @@ async function submitOwnPassword(e) {
     e.preventDefault();
     const newPassword = document.getElementById('pwd_new').value;
     if (newPassword !== document.getElementById('pwd_repeat').value) {
-        return alert('Las contraseñas nuevas no coinciden');
+        return toast('Las contraseñas nuevas no coinciden');
     }
     const res = await fetch('/api/auth/password', {
         method: 'POST',
@@ -68,10 +96,10 @@ async function submitOwnPassword(e) {
         body: JSON.stringify({ currentPassword: document.getElementById('pwd_current').value, newPassword })
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) return alert(data.error || 'No se pudo cambiar la contraseña');
+    if (!res.ok) return toast(data.error || 'No se pudo cambiar la contraseña');
     document.getElementById('formPassword').reset();
     closeModal('passwordModal');
-    alert('Contraseña actualizada. Las demás sesiones abiertas de tu usuario se han cerrado.');
+    toast('Contraseña actualizada. Las demás sesiones de tu usuario se han cerrado.', 'ok');
 }
 
 // State
@@ -162,7 +190,7 @@ function switchTab(tabId) {
     // El botón de la cabecera cambia de función en la pestaña Encoders
     const addBtn = document.getElementById('btn-add-input');
     addBtn.onclick = tabId === 'encoders' ? openAddEncoderModal : openAddInputModal;
-    addBtn.innerHTML = tabId === 'encoders' ? '<i class="fa-solid fa-plus"></i> Añadir encoder' : '<i class="fa-solid fa-plus"></i> Add Input';
+    addBtn.innerHTML = tabId === 'encoders' ? '<i class="fa-solid fa-plus"></i> Añadir encoder' : '<i class="fa-solid fa-plus"></i> Añadir entrada';
 
     if (tabId === 'encoders') {
         ['streamsContainer', 'analyticsContainer', 'systemContainer', 'settingsContainer', 'storageContainer']
@@ -177,8 +205,8 @@ function switchTab(tabId) {
         document.getElementById('systemContainer').style.display = 'none';
         document.getElementById('settingsContainer').style.display = 'none';
         document.getElementById('storageContainer').style.display = 'none';
-        document.getElementById('topbar-title').innerText = 'Streams Manager';
-        document.getElementById('topbar-subtitle').innerText = 'Live endpoints control panel';
+        document.getElementById('topbar-title').innerText = 'Señales';
+        document.getElementById('topbar-subtitle').innerText = 'Entradas y salidas en directo';
         document.getElementById('btn-add-input').style.display = 'inline-block';
     } else if (tabId === 'analytics') {
         document.getElementById('streamsContainer').style.display = 'none';
@@ -186,8 +214,8 @@ function switchTab(tabId) {
         document.getElementById('systemContainer').style.display = 'none';
         document.getElementById('settingsContainer').style.display = 'none';
         document.getElementById('storageContainer').style.display = 'none';
-        document.getElementById('topbar-title').innerText = 'Analytics & Telemetry';
-        document.getElementById('topbar-subtitle').innerText = 'Deep network inspection tools';
+        document.getElementById('topbar-title').innerText = 'Analítica';
+        document.getElementById('topbar-subtitle').innerText = 'Telemetría de red y estado de las señales';
         document.getElementById('btn-add-input').style.display = 'none';
         
         // Por defecto, todas las entradas activas en la gráfica
@@ -203,8 +231,8 @@ function switchTab(tabId) {
         document.getElementById('systemContainer').style.display = 'block';
         document.getElementById('settingsContainer').style.display = 'none';
         document.getElementById('storageContainer').style.display = 'none';
-        document.getElementById('topbar-title').innerText = 'System Dashboard';
-        document.getElementById('topbar-subtitle').innerText = 'Host hardware & overview';
+        document.getElementById('topbar-title').innerText = 'Resumen';
+        document.getElementById('topbar-subtitle').innerText = 'Estado del servidor y de las rutas';
         document.getElementById('btn-add-input').style.display = 'none';
         placeHistorySection(null);
         loadHistory();
@@ -214,8 +242,8 @@ function switchTab(tabId) {
         document.getElementById('systemContainer').style.display = 'none';
         document.getElementById('settingsContainer').style.display = 'block';
         document.getElementById('storageContainer').style.display = 'none';
-        document.getElementById('topbar-title').innerText = 'Settings / Setup';
-        document.getElementById('topbar-subtitle').innerText = 'Access control & Configuration';
+        document.getElementById('topbar-title').innerText = 'Ajustes';
+        document.getElementById('topbar-subtitle').innerText = 'Puertos y usuarios';
         document.getElementById('btn-add-input').style.display = 'none';
         
         fetchSettingsData();
@@ -225,8 +253,8 @@ function switchTab(tabId) {
         document.getElementById('systemContainer').style.display = 'none';
         document.getElementById('settingsContainer').style.display = 'none';
         document.getElementById('storageContainer').style.display = 'block';
-        document.getElementById('topbar-title').innerText = 'Media Storage';
-        document.getElementById('topbar-subtitle').innerText = 'Local recordings & file manager';
+        document.getElementById('topbar-title').innerText = 'Grabaciones';
+        document.getElementById('topbar-subtitle').innerText = 'Discos USB y archivos grabados';
         document.getElementById('btn-add-input').style.display = 'none';
         
         fetchStorage();
@@ -247,7 +275,7 @@ function initChart() {
             plugins: {
                 legend: {
                     display: true,
-                    labels: { color: 'rgba(255,255,255,0.7)', boxWidth: 12, font: { family: 'Inter', size: 11 } }
+                    labels: { color: 'rgba(255,255,255,0.7)', boxWidth: 12, font: { family: getComputedStyle(document.body).fontFamily, size: 11 } }
                 },
                 tooltip: {
                     backgroundColor: 'rgba(0,0,0,0.85)',
@@ -306,7 +334,7 @@ function populateAnalyticsGrid() {
         });
     });
 
-    grid.innerHTML = html || '<div style="color:var(--text-muted); font-size:0.9rem;">-- No Active Streams --</div>';
+    grid.innerHTML = html || '<div style="color:var(--text-muted); font-size:0.9rem;">No hay señales activas</div>';
 }
 
 function updateTelemetryChart() {
@@ -497,7 +525,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (led) {
                 led.className = `connection-led ${data.enabled ? 'active yellow' : 'error'} tooltip`;
                 const tt = led.querySelector('.tooltiptext');
-                if (tt) tt.innerText = data.enabled ? 'Enabled' : 'Disabled';
+                if (tt) tt.innerText = data.enabled ? 'Habilitada' : 'Deshabilitada';
             }
             // Toggle Icon
             const btn = document.querySelector(`#input-card-${data.channel} .toggle-enabled i`);
@@ -505,7 +533,8 @@ document.addEventListener('DOMContentLoaded', () => {
             // Quality Bar
             const qbar = document.getElementById(`qbar-${data.channel}`);
             if (qbar) {
-                qbar.className = `fill ${data.enabled ? 'yellow' : 'red'}`;
+                // Habilitada pero aún sin datos: barra gris (en espera). La pinta 'stats' cuando hay señal
+                qbar.className = `fill ${data.enabled ? 'idle' : ''}`;
                 qbar.style.width = data.enabled ? '100%' : '0%';
             }
             // Si lo deshabilitamos (OFF), la imagen pasa forzosamente a barras
@@ -529,7 +558,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (led) {
                 led.className = `connection-led ${data.enabled ? 'active yellow' : 'error'} tooltip`;
                 const tt = led.querySelector('.tooltiptext');
-                if (tt) tt.innerText = data.enabled ? 'Enabled' : 'Disabled';
+                if (tt) tt.innerText = data.enabled ? 'Habilitada' : 'Deshabilitada';
             }
             // Toggle Icon
             const btn = document.querySelector(`#outputs-container-${out ? out.channel : ''} button[onclick="toggleOutput(${data.id})"] i`);
@@ -570,6 +599,14 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
         
+        // Barra de estado: verde = llegan datos, gris = habilitada esperando señal, vacía = parada
+        const qbarElem = document.getElementById(`qbar-${data.channel}`);
+        if (qbarElem) {
+            const hasData = data.active && parseFloat(data.bitrate) > 0;
+            qbarElem.className = `fill ${hasData ? 'green' : (data.active ? 'idle' : '')}`;
+            qbarElem.style.width = data.active ? '100%' : '0%';
+        }
+
         // Auto-cambio de Barras vs Imagen según Señal Real (Bitrate > 0)
         const imgElem = document.getElementById(`thumb-img-${data.channel}`);
         if (imgElem) {
@@ -740,13 +777,13 @@ function renderStreams() {
                         <button class="btn-expand" onclick="toggleExpand(${input.channel})"><i class="fa-solid fa-chevron-down"></i></button>
                         <div id="led-${input.channel}" class="connection-led ${input.enabled ? 'active yellow' : 'error'} tooltip">
                             <i class="fa-solid fa-lightbulb"></i>
-                            <span class="tooltiptext">${input.enabled ? 'Enabled' : 'Disabled'}</span>
+                            <span class="tooltiptext">${input.enabled ? 'Habilitada' : 'Deshabilitada'}</span>
                         </div>
                         <div class="badge-protocol ${protocolBadge}">${protocolText}</div>
                         <span id="codec-${input.channel}" class="badge-protocol udp" style="background:#4b5563;">H.26X</span>
                         <span class="stream-name" style="display:flex; flex-direction:column; line-height:1.2;">
                             ${input.name || 'Channel ' + input.channel}
-                            <span style="font-size:0.70rem; color:var(--accent-blue); font-family:monospace; font-weight:normal; user-select:all;">${maskUrl(input.url).replace(/127\.0\.0\.1|0\.0\.0\.0/g, serverIp)}</span>
+                            <span class="stream-url" title="${maskUrl(input.url).replace(/127\.0\.0\.1|0\.0\.0\.0/g, serverIp)}">${maskUrl(input.url).replace(/127\.0\.0\.1|0\.0\.0\.0/g, serverIp)}</span>
                         </span>
                     </div>
                     <div class="mid-section">
@@ -757,18 +794,18 @@ function renderStreams() {
                             <i class="fa-solid fa-gauge-high"></i> <span class="monospaced" id="bitrate-${input.channel}">-- Mbps</span>
                         </div>
                         <div class="quality-bar">
-                            <div class="fill ${input.enabled ? 'yellow' : 'red'}" id="qbar-${input.channel}" style="width: ${input.enabled ? '100%' : '0%'}"></div>
+                            <div class="fill ${input.enabled ? 'idle' : ''}" id="qbar-${input.channel}" style="width: ${input.enabled ? '100%' : '0%'}"></div>
                         </div>
                     </div>
                     <div class="right-section">
                         <div class="control-actions">
                             <button class="action-btn toggle-enabled tooltip" onclick="toggleInput(${input.channel})">
                                 <i class="fa-solid ${input.enabled ? 'fa-toggle-on' : 'fa-toggle-off'}"></i>
-                                <span class="tooltiptext">Toggle Input</span>
+                                <span class="tooltiptext">Activar / desactivar</span>
                             </button>
                             <button class="action-btn edit-btn" onclick="openEditInput(${input.channel})"><i class="fa-solid fa-pen"></i></button>
                             <button class="action-btn delete-btn" onclick="deleteInput(${input.channel})"><i class="fa-solid fa-trash"></i></button>
-                            <button class="btn-secondary add-output" onclick="openOutputModal(${input.channel})"><i class="fa-solid fa-arrow-right-to-bracket"></i> Add Output</button>
+                            <button class="btn-secondary add-output" onclick="openOutputModal(${input.channel})"><i class="fa-solid fa-arrow-right-to-bracket"></i> Añadir salida</button>
                         </div>
                     </div>
                 </div>
@@ -792,7 +829,7 @@ function renderStreams() {
                             </button>
                         </div>
                         <div style="font-size:0.85rem; color:var(--text-muted); line-height: 1.4; display:flex; flex-direction:column; gap:5px;">
-                            <p><strong>Parámetros de Recepción:</strong></p>
+                            <p><strong>Recepción</strong></p>
                             <div style="display:flex; align-items:center; gap: 10px;">
                                 <span class="badge-protocol ${protocolBadge === 'srt' ? 'udp' : 'rtmp'}">${protocolBadge === 'srt' ? 'Buffer SRT' : 'Buffer N/A'}</span>
                                 <span style="color:#fff; font-weight:600;">${latencyText}</span>
@@ -813,11 +850,11 @@ function renderStreams() {
                             <div class="left-section sub">
                                 <div id="led-out_${out.id}" class="connection-led ${out.enabled ? 'active yellow' : 'error'} tooltip" style="margin-right: -5px;">
                                     <i class="fa-solid fa-lightbulb"></i>
-                                    <span class="tooltiptext">${out.enabled ? 'Enabled' : 'Disabled'}</span>
+                                    <span class="tooltiptext">${out.enabled ? 'Habilitada' : 'Deshabilitada'}</span>
                                 </div>
                                 <span class="stream-name" style="display:flex; flex-direction:column; line-height:1.2;">
                                     ${out.location || maskUrl(out.url)}
-                                    <span style="font-size:0.70rem; color:var(--text-muted); font-family:monospace; font-weight:normal; user-select:all;">${maskUrl(out.url).replace(/127\.0\.0\.1|0\.0\.0\.0/g, serverIp)}</span>
+                                    <span class="stream-url muted" title="${maskUrl(out.url).replace(/127\.0\.0\.1|0\.0\.0\.0/g, serverIp)}">${maskUrl(out.url).replace(/127\.0\.0\.1|0\.0\.0\.0/g, serverIp)}</span>
                                     ${out.url.startsWith('srt') ? `<span style="font-size:0.70rem; font-weight:normal; display:flex; align-items:center; gap:6px;">Latencia SRT <b style="color:#fff;">${currentLatencyMs(out.url, true)}</b><button onclick="editLatency('out_${out.id}')" style="background:transparent; border:none; color:var(--accent-blue); cursor:pointer; font-size:0.8rem; padding:0;" title="Editar latencia de esta salida"><i class="fa-solid fa-pen"></i></button>${srtCipherBadge(out.url)}</span>` : ''}
                                     <span id="srtstats-out_${out.id}" style="font-size:0.70rem; color:var(--text-muted); font-weight:normal;"></span>
                                 </span>
@@ -830,7 +867,7 @@ function renderStreams() {
                                     <i class="fa-solid fa-gauge-high"></i> <span class="monospaced" id="bitrate-out_${out.id}">-- Mbps</span>
                                 </div>
                                 <div class="quality-bar">
-                                    <div class="fill ${out.enabled ? 'yellow' : 'red'}" id="qbar-out_${out.id}" style="width: ${out.enabled ? '100%' : '0%'}"></div>
+                                    <div class="fill ${out.enabled ? 'idle' : ''}" id="qbar-out_${out.id}" style="width: ${out.enabled ? '100%' : '0%'}"></div>
                                 </div>
                             </div>
                             <div class="right-section sub-controls">
@@ -883,10 +920,20 @@ document.addEventListener('click', (e) => {
 });
 
 function openModal(id) {
-    document.getElementById(id).style.display = 'flex';
+    const ov = document.getElementById(id);
+    clearTimeout(ov._closeTimer); // si se reabre mientras se cerraba, sigue desde donde está
+    ov.classList.remove('closing');
+    ov.style.display = 'flex';
 }
 function closeModal(id) {
-    document.getElementById(id).style.display = 'none';
+    // Sale por el mismo camino por el que entró (escala + opacidad invertidas) y luego se oculta
+    const ov = document.getElementById(id);
+    if (ov.style.display === 'flex' && !ov.classList.contains('closing')) {
+        ov.classList.add('closing');
+        ov._closeTimer = setTimeout(() => { ov.style.display = 'none'; ov.classList.remove('closing'); }, 160);
+    } else if (!ov.classList.contains('closing')) {
+        ov.style.display = 'none';
+    }
     if (id === 'previewModal') {
         const video = document.getElementById('previewVideo');
         if (video) {
@@ -902,7 +949,7 @@ function openAddInputModal() {
     document.getElementById('inp_is_edit').value = 'false';
     document.getElementById('inp_edit_channel').value = '';
     document.getElementById('formInput').reset();
-    document.querySelector('#inputModal .modal-header h3').innerText = 'Add New Input Stream';
+    document.querySelector('#inputModal .modal-header h3').innerText = 'Nueva entrada';
     // Restablecer selects al valor por defecto antes de actualizar los campos
     document.getElementById('inp_protocol').value = 'srt';
     document.getElementById('inp_mode').value = 'listener';
@@ -915,7 +962,7 @@ function openAddInputModal() {
 function openOutputModal(channel) {
     document.getElementById('out_channel').value = channel;
     document.getElementById('out_is_edit').value = 'false';
-    document.querySelector('#outputModal .modal-header h3').innerText = 'Add Output';
+    document.querySelector('#outputModal .modal-header h3').innerText = 'Nueva salida';
     document.getElementById('formOutput').reset();
     document.getElementById('out_protocol').value = 'srt';
     document.getElementById('out_mode').value = 'caller';
@@ -938,32 +985,32 @@ function updateInputFields() {
     if (proto === 'srt') {
         modeContainer.style.display = 'block';
         portContainer.style.display = 'block';
-        ipLabel.innerText = 'Target IP';
-        portLabel.innerText = 'Port (External)';
+        ipLabel.innerText = 'IP de destino';
+        portLabel.innerText = 'Puerto (externo)';
         const mode = document.getElementById('inp_mode').value;
         ipContainer.style.display = (mode === 'listener') ? 'none' : 'block';
     } else if (proto === 'rtmp') {
         modeContainer.style.display = 'none';
         portContainer.style.display = 'block';
         ipContainer.style.display = 'block';
-        ipLabel.innerText = 'Servidor URL';
+        ipLabel.innerText = 'URL del servidor';
         document.getElementById('inp_ip').placeholder = 'rtmp://servidor.com/live';
-        portLabel.innerText = 'Stream Key';
+        portLabel.innerText = 'Clave de emisión';
         document.getElementById('inp_port').placeholder = 'mi_clave_secreta';
         document.getElementById('inp_port').type = 'text';
     } else if (proto === 'rtmp_local') {
         modeContainer.style.display = 'none';
         portContainer.style.display = 'block';
         ipContainer.style.display = 'none';
-        portLabel.innerText = 'Stream Key Local';
+        portLabel.innerText = 'Clave de emisión local';
         document.getElementById('inp_port').placeholder = 'canal_1';
         document.getElementById('inp_port').type = 'text';
     } else {
         modeContainer.style.display = 'none';
         portContainer.style.display = 'block';
         ipContainer.style.display = 'block';
-        ipLabel.innerText = 'Target IP';
-        portLabel.innerText = 'Port (External)';
+        ipLabel.innerText = 'IP de destino';
+        portLabel.innerText = 'Puerto (externo)';
         document.getElementById('inp_port').type = 'number';
     }
 }
@@ -993,16 +1040,16 @@ function updateOutputFields() {
         modeContainer.style.display = 'none';
         portContainer.style.display = 'block';
         ipContainer.style.display = 'block';
-        ipLabel.innerText = 'RTMP URL de Youtube/Twitch/etc';
+        ipLabel.innerText = 'URL RTMP (YouTube, Twitch…)';
         document.getElementById('out_ip').placeholder = 'rtmp://a.rtmp.youtube.com/live2';
-        portLabel.innerText = 'Stream Key';
+        portLabel.innerText = 'Clave de emisión';
         document.getElementById('out_port').placeholder = 'xxxx-xxxx-xxxx-xxxx';
         document.getElementById('out_port').type = 'text';
     } else if (proto === 'rtmp_local') {
         modeContainer.style.display = 'none';
         portContainer.style.display = 'block';
         ipContainer.style.display = 'none';
-        portLabel.innerText = 'Generar Stream Key Propio';
+        portLabel.innerText = 'Clave de emisión propia';
         document.getElementById('out_port').placeholder = 'ej: streaming_final';
         document.getElementById('out_port').type = 'text';
     } else if (proto === 'disk') {
@@ -1067,7 +1114,7 @@ function openEditInput(channel) {
     updateInputFields();
     
     // Changing Modal Header
-    document.querySelector('#inputModal .modal-header h3').innerText = 'Editar Input Stream';
+    document.querySelector('#inputModal .modal-header h3').innerText = 'Editar entrada';
     openModal('inputModal');
 }
 
@@ -1293,7 +1340,7 @@ async function submitLatency(e) {
         });
         if (!res.ok) {
             const err = await res.json().catch(() => ({}));
-            return alert(err.error || 'No se pudo guardar la latencia');
+            return toast(err.error || 'No se pudo guardar la latencia');
         }
         closeModal('latencyModal');
         fetchData();
@@ -1395,7 +1442,7 @@ async function deleteFile(urlPath) {
                 body: JSON.stringify({ filepath: urlPath })
             });
             fetchFiles();
-        } catch(e) { alert("Error deleting."); }
+        } catch(e) { toast('No se pudo borrar la grabación'); }
     }
 }
 
@@ -1462,7 +1509,7 @@ function openEditOutput(id) {
     }
     updateOutputFields();
     
-    document.querySelector('#outputModal .modal-header h3').innerText = 'Editar Output Stream';
+    document.querySelector('#outputModal .modal-header h3').innerText = 'Editar salida';
     openModal('outputModal');
 }
 
@@ -1474,7 +1521,7 @@ async function submitInput(e) {
 
     if (proto === 'srt') {
         const srtError = srtFormError('inp');
-        if (srtError) return alert(srtError);
+        if (srtError) return toast(srtError);
         const mode = document.getElementById('inp_mode').value;
         const ip = (mode === 'listener') ? '0.0.0.0' : document.getElementById('inp_ip').value;
         const previous = document.getElementById('inp_is_edit').value === 'true' ? document.getElementById('inp_is_edit').dataset.url : '';
@@ -1505,13 +1552,14 @@ async function submitInput(e) {
     });
     if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        return alert(err.error || 'No se pudo guardar la entrada');
+        return toast(err.error || 'No se pudo guardar la entrada');
     }
     
     closeModal('inputModal');
+    toast(isEdit ? 'Entrada actualizada' : 'Entrada creada', 'ok');
     e.target.reset();
     document.getElementById('inp_is_edit').value = 'false';
-    document.querySelector('#inputModal .modal-header h3').innerText = 'Add New Input Stream';
+    document.querySelector('#inputModal .modal-header h3').innerText = 'Nueva entrada';
     updateInputFields();
 }
 
@@ -1537,7 +1585,7 @@ async function submitOutput(e) {
         outUrl = `rtmp://127.0.0.1:${window.currentRtmpPort || 1935}/out/${key}`;
     } else if (proto === 'srt') {
         const srtError = srtFormError('out');
-        if (srtError) return alert(srtError);
+        if (srtError) return toast(srtError);
         const mode = document.getElementById('out_mode').value;
         const ip = (mode === 'listener') ? '0.0.0.0' : document.getElementById('out_ip').value;
         const previous = document.getElementById('out_is_edit').value === 'true' ? document.getElementById('out_is_edit').dataset.url : '';
@@ -1561,13 +1609,14 @@ async function submitOutput(e) {
     });
     if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        return alert(err.error || 'No se pudo guardar la salida');
+        return toast(err.error || 'No se pudo guardar la salida');
     }
     
     closeModal('outputModal');
+    toast(isEdit ? 'Salida actualizada' : 'Salida creada', 'ok');
     e.target.reset();
     document.getElementById('out_is_edit').value = 'false';
-    document.querySelector('#outputModal .modal-header h3').innerText = 'Add Output';
+    document.querySelector('#outputModal .modal-header h3').innerText = 'Nueva salida';
     updateOutputFields();
 }
 async function fetchSettingsData() {
@@ -1663,7 +1712,7 @@ async function savePorts(e) {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(payload)
         });
-        alert('Configuración de Puertos UDP Actualizada.');
+        toast('Puertos actualizados', 'ok');
     } catch(e) { console.error(e); }
 }
 
@@ -1692,7 +1741,7 @@ async function submitUser(e) {
             if (isEdit && currentUser && username === currentUser.username) loadSession();
         } else {
             const err = await res.json();
-            alert(`Error al ${isEdit ? 'guardar' : 'crear'} usuario: ${err.error}`);
+            toast(`Error al ${isEdit ? 'guardar' : 'crear'} usuario: ${err.error}`);
         }
     } catch(e) { console.error(e); }
 }
@@ -1703,7 +1752,7 @@ async function deleteUser(username) {
         const res = await fetch(`/api/users/${encodeURIComponent(username)}`, { method: 'DELETE' });
         if (!res.ok) {
             const err = await res.json().catch(() => ({}));
-            alert('No se pudo borrar: ' + (err.error || res.status));
+            toast('No se pudo borrar: ' + (err.error || res.status));
         }
         fetchSettingsData();
     } catch(e) { console.error(e); }
@@ -1796,7 +1845,7 @@ listenAudio.addEventListener('ended', () => { if (listeningChannel) stopListen()
 listenAudio.addEventListener('error', () => {
     if (!listeningChannel) return;
     stopListen();
-    alert('No se puede escuchar esta entrada: no tiene audio o no hay señal.');
+    toast('No se puede escuchar esta entrada: no tiene audio o no hay señal.', 'warn');
 });
 
 /* =======================================
@@ -1943,7 +1992,7 @@ async function togglePreview(channelId) {
 }
 
 async function deleteInput(channelId) {
-    if(confirm('Are you sure you want to delete this input and all its outputs?')) {
+    if(confirm('¿Borrar esta entrada y todas sus salidas? No se puede deshacer.')) {
         await fetch(`/api/inputs/${channelId}`, { method: 'DELETE' });
     }
 }
@@ -1953,7 +2002,7 @@ async function toggleOutput(id) {
 }
 
 async function deleteOutput(id) {
-    if(confirm('Are you sure you want to delete this output?')) {
+    if(confirm('¿Borrar esta salida? No se puede deshacer.')) {
         await fetch(`/api/outputs/${id}`, { method: 'DELETE' });
     }
 }
@@ -2009,7 +2058,7 @@ function drawHistoryChart(id, seriesList, { scale = 1, unit = '', max } = {}) {
                 responsive: true, maintainAspectRatio: false, animation: false,
                 interaction: { mode: 'index', intersect: false },
                 plugins: {
-                    legend: { display: true, labels: { color: 'rgba(255,255,255,0.7)', boxWidth: 12, font: { family: 'Inter', size: 11 } } },
+                    legend: { display: true, labels: { color: 'rgba(255,255,255,0.7)', boxWidth: 12, font: { family: getComputedStyle(document.body).fontFamily, size: 11 } } },
                     tooltip: { backgroundColor: 'rgba(0,0,0,0.85)', callbacks: { label: (c) => `${c.dataset.label}: ${c.parsed.y === null ? '—' : c.parsed.y.toFixed(2)} ${unit}` } }
                 },
                 scales: {
@@ -2251,7 +2300,7 @@ async function submitEncoder(e) {
         body: JSON.stringify(body)
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) return alert(data.error || 'No se pudo guardar el encoder');
+    if (!res.ok) return toast(data.error || 'No se pudo guardar el encoder');
     closeModal('encoderModal');
     fetchEncoders();
 }
@@ -2262,7 +2311,7 @@ async function deleteEncoder(id) {
     const extra = enc.vpn ? '\n\nTambién se borrará su acceso WireGuard: el router dejará de conectar.' : '';
     if (!confirm(`¿Borrar el encoder "${enc.name}"?${extra}`)) return;
     const res = await fetch(`/api/encoders/${id}`, { method: 'DELETE' });
-    if (!res.ok) { const d = await res.json().catch(() => ({})); return alert(d.error || 'No se pudo borrar'); }
+    if (!res.ok) { const d = await res.json().catch(() => ({})); return toast(d.error || 'No se pudo borrar'); }
     fetchEncoders();
 }
 
@@ -2322,8 +2371,8 @@ async function createEncoderVpn(e, id) {
         body: JSON.stringify({ lan: document.getElementById('vpn_lan').value })
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) return alert(data.error || 'No se pudo crear el acceso');
-    if (data.warnings && data.warnings.length) alert('Acceso creado, con avisos:\n\n' + data.warnings.join('\n'));
+    if (!res.ok) return toast(data.error || 'No se pudo crear el acceso');
+    if (data.warnings && data.warnings.length) toast('Acceso creado, con avisos:\n\n' + data.warnings.join('\n'));
     await fetchEncoders();
     openEncoderVpn(id);
 }
@@ -2331,7 +2380,7 @@ async function createEncoderVpn(e, id) {
 async function removeEncoderVpn(id) {
     if (!confirm('¿Quitar el acceso WireGuard? El router dejará de conectar hasta que crees uno nuevo y lo importes.')) return;
     const res = await fetch(`/api/encoders/${id}/vpn`, { method: 'DELETE' });
-    if (!res.ok) { const d = await res.json().catch(() => ({})); return alert(d.error || 'No se pudo quitar'); }
+    if (!res.ok) { const d = await res.json().catch(() => ({})); return toast(d.error || 'No se pudo quitar'); }
     closeModal('encoderVpnModal');
     fetchEncoders();
 }

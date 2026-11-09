@@ -2,13 +2,12 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TSST SERVER - Core Routing</title>
-    <!-- Google Fonts for premium typography -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;800&display=swap" rel="stylesheet">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#0b0f19">
+    <title>TSST SERVER · Panel</title>
     <link rel="stylesheet" href="css/style.css">
     <!-- FontAwesome for icons -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css">
 </head>
 <body>
     <div class="dashboard-wrapper">
@@ -18,16 +17,16 @@
                 <i class="fa-solid fa-satellite-dish"></i>
                 <h2>TSST<span> SERVER</span></h2>
                 <div class="status-badge">
-                    <span class="dot"></span> Online
+                    <span class="dot"></span> En línea
                 </div>
             </div>
             <nav class="nav-menu">
-                <a href="#" class="nav-item active" id="nav-system" onclick="switchTab('system')"><i class="fa-solid fa-gauge-high"></i> Dashboard</a>
-                <a href="#" class="nav-item" id="nav-streams" onclick="switchTab('streams')"><i class="fa-solid fa-network-wired"></i> Streams</a>
+                <a href="#" class="nav-item active" id="nav-system" onclick="switchTab('system')"><i class="fa-solid fa-gauge-high"></i> Resumen</a>
+                <a href="#" class="nav-item" id="nav-streams" onclick="switchTab('streams')"><i class="fa-solid fa-network-wired"></i> Señales</a>
                 <a href="#" class="nav-item" id="nav-encoders" onclick="switchTab('encoders')"><i class="fa-solid fa-tower-broadcast"></i> Encoders</a>
-                <a href="#" class="nav-item" id="nav-analytics" onclick="switchTab('analytics')"><i class="fa-solid fa-chart-line"></i> Analytics</a>
-                <a href="#" class="nav-item" id="nav-storage" onclick="switchTab('storage')"><i class="fa-solid fa-hard-drive"></i> Storage</a>
-                <a href="#" class="nav-item" id="nav-settings" onclick="switchTab('settings')" style="display:none;"><i class="fa-solid fa-gear"></i> Settings</a>
+                <a href="#" class="nav-item" id="nav-analytics" onclick="switchTab('analytics')"><i class="fa-solid fa-chart-line"></i> Analítica</a>
+                <a href="#" class="nav-item" id="nav-storage" onclick="switchTab('storage')"><i class="fa-solid fa-hard-drive"></i> Grabaciones</a>
+                <a href="#" class="nav-item" id="nav-settings" onclick="switchTab('settings')" style="display:none;"><i class="fa-solid fa-gear"></i> Ajustes</a>
                 <a href="#" class="nav-item" id="nav-grafana" target="_blank" rel="noopener" style="display:none;" title="Historial y alertas (Grafana)"><i class="fa-solid fa-chart-area"></i> Gráficas <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:0.7rem; width:auto;"></i></a>
             </nav>
             <!-- Sesión actual -->
@@ -50,11 +49,11 @@
         <main class="main-content">
             <header class="topbar">
                 <div class="page-title">
-                    <h1 id="topbar-title">Streams Manager</h1>
-                    <p id="topbar-subtitle">Live endpoints control panel</p>
+                    <h1 id="topbar-title">Señales</h1>
+                    <p id="topbar-subtitle">Entradas y salidas en directo</p>
                 </div>
                 <button class="btn-primary" id="btn-add-input" onclick="openAddInputModal()">
-                    <i class="fa-solid fa-plus"></i> Add Input
+                    <i class="fa-solid fa-plus"></i> Añadir entrada
                 </button>
             </header>
 
@@ -107,8 +106,8 @@
             
             <section class="analytics-container" id="analyticsContainer" style="display:none; padding-bottom: 2rem;">
                 <div class="analytics-header" style="padding: 1.5rem; background: rgba(0,0,0,0.2); border-radius: 12px; margin-bottom: 1.5rem;">
-                    <h2>Real-Time Telemetry</h2>
-                    <p style="color:var(--text-muted); font-size: 0.9rem; margin-bottom: 0;">Monitor the live bandwidth and stability of active encoding tunnels.</p>
+                    <h2>Telemetría en tiempo real</h2>
+                    <p style="color:var(--text-muted); font-size: 0.9rem; margin-bottom: 0;">Ancho de banda y estabilidad de las señales activas.</p>
                     <div id="analytics_grid" class="analytics-grid">
                         <!-- Populated by JS -->
                     </div>
@@ -138,34 +137,34 @@
             <section class="system-container" id="systemContainer">
                 <div class="storage-header" style="padding: 1.5rem; background: rgba(0,0,0,0.2); border-radius: 12px; margin-bottom: 1.5rem;">
                     <h2 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 0.5rem; display:flex; align-items:center; gap:10px;">
-                        <i class="fa-solid fa-gauge-high"></i> Global Dashboard
+                        <i class="fa-solid fa-gauge-high"></i> Resumen general
                     </h2>
                     <p style="color:var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">Visión general del estado del hardware y ruteo de señales del Servidor SRT.</p>
                 </div>
                 
                 <div class="system-grid">
                     <div class="sys-card">
-                        <h3><i class="fa-solid fa-microchip"></i> CPU Load</h3>
+                        <h3><i class="fa-solid fa-microchip"></i> CPU</h3>
                         <div class="sys-value">
                             <span id="sys_cpu" class="sys-number">--</span><span class="sys-unit">%</span>
                         </div>
                         <div class="sys-bar"><div class="sys-bar-fill" id="sys_cpu_bar" style="width:0%;"></div></div>
                     </div>
                     <div class="sys-card">
-                        <h3><i class="fa-solid fa-memory"></i> Memory RAM</h3>
+                        <h3><i class="fa-solid fa-memory"></i> Memoria</h3>
                         <div class="sys-value">
                             <span id="sys_ram" class="sys-number">--</span><span class="sys-unit">GB / <span id="sys_ram_total">--</span> GB</span>
                         </div>
                         <div class="sys-bar"><div class="sys-bar-fill" id="sys_ram_bar" style="width:0%; background:var(--color-green);"></div></div>
                     </div>
                     <div class="sys-card">
-                        <h3><i class="fa-solid fa-satellite-dish"></i> Network IN</h3>
+                        <h3><i class="fa-solid fa-satellite-dish"></i> Red entrante</h3>
                         <div class="sys-value">
                             <span id="sys_rx" class="sys-number">--</span><span class="sys-unit">Mbps</span>
                         </div>
                     </div>
                     <div class="sys-card">
-                        <h3><i class="fa-solid fa-tower-broadcast"></i> Network OUT</h3>
+                        <h3><i class="fa-solid fa-tower-broadcast"></i> Red saliente</h3>
                         <div class="sys-value">
                             <span id="sys_tx" class="sys-number">--</span><span class="sys-unit">Mbps</span>
                         </div>
@@ -174,15 +173,15 @@
 
                 <div class="system-overview-grid" style="margin-top:20px;">
                     <div class="sys-stat-card" style="cursor:pointer;" onclick="setDashboardFilter('all')">
-                        <div class="sys-sc-title">Total Configured Routes</div>
+                        <div class="sys-sc-title">Rutas configuradas</div>
                         <div class="sys-sc-value" id="sys_routes_total">--</div>
                     </div>
                     <div class="sys-stat-card ok" style="cursor:pointer;" onclick="setDashboardFilter('active')">
-                        <div class="sys-sc-title">Active Running Streams</div>
+                        <div class="sys-sc-title">Habilitadas</div>
                         <div class="sys-sc-value" id="sys_routes_ok" style="color:var(--color-green);">--</div>
                     </div>
                     <div class="sys-stat-card error" style="cursor:pointer;" onclick="setDashboardFilter('offline')">
-                        <div class="sys-sc-title">Offline / Disabled</div>
+                        <div class="sys-sc-title">Deshabilitadas</div>
                         <div class="sys-sc-value" id="sys_routes_err" style="color:var(--color-red);">--</div>
                     </div>
                 </div>
@@ -230,10 +229,10 @@
                     <!-- Ports Configuration -->
                     <div class="settings-card" style="background: rgba(0,0,0,0.2); padding: 20px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.05);">
                         <h2 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 1.5rem; display:flex; align-items:center; gap:10px;">
-                            <i class="fa-solid fa-network-wired"></i> Global Port Allocations
+                            <i class="fa-solid fa-network-wired"></i> Puertos
                             <span class="tooltip" style="cursor:help;">
                                 <i class="fa-solid fa-circle-info" style="font-size: 1rem; color: var(--accent-blue);"></i>
-                                <span class="tooltiptext" style="width: 280px; font-family: 'Inter', sans-serif; font-weight:normal; font-size:0.8rem; line-height: 1.5; text-align: left; padding: 12px; white-space: normal; text-transform:none; top: 150%; bottom: auto;">
+                                <span class="tooltiptext" style="width: 280px; font-weight:normal; font-size:0.8rem; line-height: 1.5; text-align: left; padding: 12px; white-space: normal; text-transform:none; top: 150%; bottom: auto;">
                                     <strong style="color:var(--accent-blue);">Segmentos UDP y Gestor Multipropósito</strong><br><br>
                                     El motor de este servidor asigna automáticamente un puerto SRT de escucha por cada canal habilitado dentro de este rango.<br><br>Para RTMP, se expone un único servidor central.
                                 </span>
@@ -245,11 +244,11 @@
                             <input type="hidden" id="cfg_chanMax" value="20000">
                             <div class="form-group row">
                                 <div class="half">
-                                    <label>SRT UDP Range Min</label>
+                                    <label>Rango SRT UDP · mínimo</label>
                                     <input type="number" id="cfg_udpMin" required>
                                 </div>
                                 <div class="half">
-                                    <label>SRT UDP Range Max</label>
+                                    <label>Rango SRT UDP · máximo</label>
                                     <input type="number" id="cfg_udpMax" required>
                                 </div>
                             </div>
@@ -260,7 +259,7 @@
                                 </label>
                                 <input type="number" id="cfg_rtmpPort" value="1935" required title="Puerto para recibir streams RTMP (Normalmente 1935)">
                             </div>
-                            <button type="submit" class="btn-primary" style="margin-top:10px;"><i class="fa-solid fa-save"></i> Apply Routing Ports</button>
+                            <button type="submit" class="btn-primary" style="margin-top:10px;"><i class="fa-solid fa-save"></i> Aplicar puertos</button>
                         </form>
                     </div>
 
@@ -283,12 +282,12 @@
     <div class="modal-overlay" id="inputModal">
         <div class="modal">
             <div class="modal-header">
-                <h3>Add New Input Stream</h3>
+                <h3>Nueva entrada</h3>
                 <button class="close-btn" onclick="closeModal('inputModal')"><i class="fa-solid fa-xmark"></i></button>
             </div>
             <form id="formInput" onsubmit="submitInput(event)">
                 <div class="form-group">
-                    <label>Nombre del Canal</label>
+                    <label>Nombre de la entrada</label>
                     <input type="text" id="inp_name" placeholder="VMIX Studio 1" required>
                     <!-- Campos extra ocultos para edición -->
                     <input type="hidden" id="inp_is_edit" value="false">
@@ -296,7 +295,7 @@
                 </div>
                 <div class="form-group row">
                     <div class="half">
-                        <label>Protocol</label>
+                        <label>Protocolo</label>
                         <select id="inp_protocol" onchange="updateInputFields()" class="form-control">
                             <option value="srt">SRT</option>
                             <option value="udp">UDP</option>
@@ -305,7 +304,7 @@
                         </select>
                     </div>
                     <div class="half" id="inp_mode_container">
-                        <label>Mode</label>
+                        <label>Modo</label>
                         <select id="inp_mode" onchange="updateInputFields()" class="form-control">
                             <option value="listener">Listener</option>
                             <option value="caller">Caller</option>
@@ -315,11 +314,11 @@
                 </div>
                 <div class="form-group row">
                     <div class="half" id="inp_ip_container" style="display:none;">
-                        <label id="inp_ip_label">Target IP</label>
+                        <label id="inp_ip_label">IP de destino</label>
                         <input type="text" id="inp_ip" placeholder="192.168.1.100">
                     </div>
                     <div class="half" id="inp_port_container">
-                        <label id="inp_port_label">Port (External)</label>
+                        <label id="inp_port_label">Puerto (externo)</label>
                         <input type="text" id="inp_port" placeholder="5000" required>
                     </div>
                 </div>
@@ -356,8 +355,8 @@
                     <small style="color:var(--text-muted); font-size:0.75rem; display:block;">La latencia efectiva es la mayor de los dos extremos. Para la mínima: igual en ambos lados y 3-4 × RTT (el panel la recomienda al conectar).</small>
                 </div>
                 <div class="modal-actions">
-                    <button type="button" class="btn-secondary" onclick="closeModal('inputModal')">Cancel</button>
-                    <button type="submit" class="btn-primary">Save Input</button>
+                    <button type="button" class="btn-secondary" onclick="closeModal('inputModal')">Cancelar</button>
+                    <button type="submit" class="btn-primary">Guardar entrada</button>
                 </div>
             </form>
         </div>
@@ -366,7 +365,7 @@
     <div class="modal-overlay" id="outputModal">
         <div class="modal">
             <div class="modal-header">
-                <h3>Add Output</h3>
+                <h3>Nueva salida</h3>
                 <button class="close-btn" onclick="closeModal('outputModal')"><i class="fa-solid fa-xmark"></i></button>
             </div>
             <form id="formOutput" onsubmit="submitOutput(event)">
@@ -374,12 +373,12 @@
                 <input type="hidden" id="out_is_edit" value="false">
                 <input type="hidden" id="out_edit_id" value="">
                 <div class="form-group">
-                    <label>Destination Location info</label>
-                    <input type="text" id="out_location" placeholder="e.g. YouTube Push or IP Repeater">
+                    <label>Nombre del destino</label>
+                    <input type="text" id="out_location" placeholder="p. ej. YouTube o repetidor IP">
                 </div>
                 <div class="form-group row">
                     <div class="half">
-                        <label>Protocol</label>
+                        <label>Protocolo</label>
                         <select id="out_protocol" onchange="updateOutputFields()" class="form-control">
                             <option value="srt">SRT</option>
                             <option value="udp">UDP</option>
@@ -389,7 +388,7 @@
                         </select>
                     </div>
                     <div class="half" id="out_mode_container">
-                        <label>Mode</label>
+                        <label>Modo</label>
                         <select id="out_mode" onchange="updateOutputFields()" class="form-control">
                             <option value="caller">Caller</option>
                             <option value="listener">Listener</option>
@@ -456,8 +455,8 @@
                     </div>
                 </div>
                 <div class="modal-actions">
-                    <button type="button" class="btn-secondary" onclick="closeModal('outputModal')">Cancel</button>
-                    <button type="submit" class="btn-primary">Save Output</button>
+                    <button type="button" class="btn-secondary" onclick="closeModal('outputModal')">Cancelar</button>
+                    <button type="submit" class="btn-primary">Guardar salida</button>
                 </div>
             </form>
         </div>
@@ -572,7 +571,7 @@
     <div class="modal-overlay" id="latencyModal">
         <div class="modal" style="width: 400px;">
             <div class="modal-header">
-                <h3><i class="fa-solid fa-clock-rotate-left"></i> SRT Buffer</h3>
+                <h3><i class="fa-solid fa-clock-rotate-left"></i> Búfer SRT</h3>
                 <button class="close-btn" onclick="closeModal('latencyModal')"><i class="fa-solid fa-xmark"></i></button>
             </div>
             <form id="formLatency" onsubmit="submitLatency(event)">
@@ -641,7 +640,7 @@
                 <label>Retardo (ms)</label>
                 <input type="range" id="sync_range" min="0" max="3000" step="10" oninput="onSyncInput(this.value)" style="width:100%;">
             </div>
-            <div class="form-group row" style="align-items: flex-end; gap: 8px;">
+            <div class="form-group row nudge-row" style="align-items: flex-end; gap: 8px;">
                 <button type="button" class="btn-secondary" onclick="nudgeSync(-40)" title="-1 frame a 25 fps">-40</button>
                 <button type="button" class="btn-secondary" onclick="nudgeSync(-20)" title="-1 frame a 50 fps">-20</button>
                 <div style="flex: 1;">
@@ -685,8 +684,8 @@
 
     <!-- HLS para el reproductor en directo (local: el panel puede estar en una red sin internet) -->
     <script src="vendor/hls.js/hls.min.js"></script>
-    <!-- Chart.js for visualization -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Chart.js local: el panel puede estar en una red sin internet -->
+    <script src="vendor/chart.js/chart.umd.js"></script>
     <script src="/socket.io/socket.io.js"></script>
     <script src="js/app.js"></script>
 </body>
