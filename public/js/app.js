@@ -40,11 +40,22 @@ function toast(msg, type = 'error') {
 }
 
 const socket = io();
+// Luz de estado de la cabecera: refleja la conexión real con el servidor, no un texto fijo
+function setConnectionBadge(online) {
+    const b = document.querySelector('.status-badge');
+    if (!b) return;
+    b.classList.toggle('offline', !online);
+    b.lastChild.textContent = online ? ' En línea' : ' Sin conexión';
+    b.title = online ? 'Conectado al servidor' : 'Sin conexión con el servidor: reintentando…';
+}
+socket.on('connect', () => setConnectionBadge(true));
 socket.on('connect_error', (err) => {
     if (err.message === 'unauthorized') window.location.href = '/login.html';
+    setConnectionBadge(false);
 });
 // El servidor cierra el socket si borran el usuario o cambian su contraseña
 socket.on('disconnect', (reason) => {
+    setConnectionBadge(false);
     if (reason === 'io server disconnect') fetch('/api/auth/me');
 });
 

@@ -650,3 +650,17 @@ input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; marg
     .nudge-row .btn-secondary { min-width: 44px; min-height: 40px; padding: 0 8px; }
     .nudge-row input { text-align: center; }
 }
+
+/* Estado de conexión: verde en línea, rojo sin conexión */
+.status-badge.offline { background: rgba(239,68,68,0.12); color: var(--color-red); }
+.status-badge.offline .dot { background: var(--color-red); box-shadow: none; animation: none; }
+
+/* Móvil: nombre del servidor junto al icono y sólo la luz de estado */
+@media (max-width: 768px) {
+    .logo-container { gap: 8px; padding: 0.5rem 0.75rem; min-width: 0; }
+    .logo-container i { font-size: 1.25rem; }
+    .logo-container h2 { display: block; font-size: 0.95rem; letter-spacing: 0.02em; white-space: nowrap; }
+    .status-badge { display: flex; margin-left: 2px; padding: 6px; font-size: 0; background: none; }
+    .status-badge .dot { width: 9px; height: 9px; }
+    .status-badge.offline { background: none; }
+}
