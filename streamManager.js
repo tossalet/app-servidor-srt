@@ -8,6 +8,7 @@ const srt = require('./srt');
 
 const SOCK_BUF = 8 * 1024 * 1024;
 const RESTART_MIN_MS = 1000;
+const DISK_RATE_WINDOW_MS = 10000; // grabaciones: ventana para medir el bitrate (cubre GOP de hasta ~10 s)
 const RESTART_MAX_MS = 5000;
 const MAX_DELAY_MS = 10000;
 const HISTORY_POINTS = 60;
@@ -777,11 +778,23 @@ async function spawnOutputProcess(st) {
             if (st.lastSize === null) {
                 st.lastSize = size;
                 st.lastT = now;
+                st.sizeHist = [[now, size]];
                 return;
             }
             if (now - st.lastT < 1000) return;
 
-            const kbps = Math.max(0, (size - st.lastSize) * 8 / (now - st.lastT));
+            let kbps;
+            if (isDisk) {
+                // Grabación: el MP4 fragmentado (y el muxer en general) escribe a saltos, en cada
+                // fragmento/keyframe. Medido segundo a segundo salía 8000, 0, 8000, 0... aunque la
+                // grabación fuera continua. Se mide sobre una ventana de varios segundos.
+                st.sizeHist.push([now, size]);
+                while (st.sizeHist.length > 2 && now - st.sizeHist[1][0] >= DISK_RATE_WINDOW_MS) st.sizeHist.shift();
+                const [t0, s0] = st.sizeHist[0];
+                kbps = Math.max(0, (size - s0) * 8 / (now - t0));
+            } else {
+                kbps = Math.max(0, (size - st.lastSize) * 8 / (now - st.lastT));
+            }
             st.lastSize = size;
             st.lastT = now;
             const timeMatch = out.match(/out_time=(\d+:\d\d:\d\d)/);
