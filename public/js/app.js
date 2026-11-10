@@ -13,7 +13,7 @@ window.fetch = async (...args) => {
 
 /* Avisos no bloqueantes (sustituyen a alert()): aparecen abajo, se van solos y por el mismo
    camino por el que entraron. Tipos: 'error' (por defecto), 'ok', 'warn'. */
-function toast(msg, type = 'error') {
+function toast(msg, type = 'error', action = null) {
     let host = document.getElementById('toast-host');
     if (!host) {
         host = document.createElement('div');
@@ -22,21 +22,29 @@ function toast(msg, type = 'error') {
         host.setAttribute('aria-live', 'polite');
         document.body.appendChild(host);
     }
-    const icon = { ok: 'fa-circle-check', warn: 'fa-triangle-exclamation', error: 'fa-circle-exclamation' }[type] || 'fa-circle-info';
+    const icon = { ok: 'fa-circle-check', warn: 'fa-triangle-exclamation', error: 'fa-circle-exclamation', info: 'fa-circle-info' }[type] || 'fa-circle-info';
     const el = document.createElement('div');
     el.className = `toast ${type}`;
     el.innerHTML = `<i class="fa-solid ${icon}"></i><span></span><button type="button" aria-label="Cerrar"><i class="fa-solid fa-xmark"></i></button>`;
     el.querySelector('span').textContent = msg;
+    if (action) {
+        const a = document.createElement('button');
+        a.type = 'button';
+        a.className = 'toast-action';
+        a.textContent = action.label;
+        a.onclick = () => { action.fn(); close(); };
+        el.insertBefore(a, el.lastElementChild);
+    }
     const close = () => {
         if (el.classList.contains('leaving')) return;
         el.classList.add('leaving');
         el.addEventListener('animationend', () => el.remove(), { once: true });
         setTimeout(() => el.remove(), 400); // por si no hay animación (movimiento reducido)
     };
-    el.querySelector('button').onclick = close;
+    el.lastElementChild.onclick = close;
     host.appendChild(el);
     // Los errores se quedan más tiempo: hay que poder leerlos
-    setTimeout(close, type === 'error' ? 7000 : 3500);
+    setTimeout(close, type === 'error' ? 7000 : (action ? 6000 : 3500));
 }
 
 const socket = io();
@@ -136,29 +144,29 @@ function setDashboardFilter(filter) {
 function renderDashboardStreams() {
     const container = document.getElementById('dashboard-filter-results');
     if (!container) return;
-    
+
     if (currentDashboardFilter === null) {
         container.innerHTML = '';
         return;
     }
-    
+
     let html = '';
-    
+
     // Evaluate inputs
     inputs.forEach(i => {
         // Obtenemos el último valor de bitrate de la telemetría (si existe) para saber si de verdad recibe señal
         const history = frontendTelemetryCache[i.channel.toString()];
         const lastBitrate = (history && history.length > 0) ? history[history.length - 1].y : 0;
         const isOnline = i.enabled && lastBitrate > 0;
-        
+
         let statusClass = isOnline ? 'ok' : (i.enabled ? 'warning' : '');
         if (!i.enabled) statusClass = 'error';
-        
+
         const isOfflineCategory = !isOnline; // Si está esperando señal o apagado, es offline/erróneo
-        
+
         if (currentDashboardFilter === 'active' && !isOnline) return;
         if (currentDashboardFilter === 'offline' && !isOfflineCategory) return;
-        
+
         html += `
             <div class="sys-stat-card ${statusClass}" style="padding:12px 15px; border-left: 4px solid ${isOnline ? 'var(--color-green)' : (i.enabled ? 'var(--color-yellow)' : 'var(--color-red)')};">
                 <div style="font-size:0.7rem; opacity:0.7; font-family:monospace;">${i.url.split('://')[0].toUpperCase()}</div>
@@ -169,15 +177,15 @@ function renderDashboardStreams() {
             </div>
         `;
     });
-    
+
     // Evaluate outputs
     outputs.forEach(o => {
         let isOnline = o.enabled; // Outputs son activos por el mero hecho de estar enabled
         let statusClass = isOnline ? 'ok' : 'error';
-        
+
         if (currentDashboardFilter === 'active' && !isOnline) return;
         if (currentDashboardFilter === 'offline' && isOnline) return;
-        
+
         html += `
             <div class="sys-stat-card ${statusClass}" style="padding:12px 15px; border-left: 4px solid ${isOnline ? 'var(--color-green)' : 'var(--color-red)'}; background:rgba(255,255,255,0.02);">
                 <div style="font-size:0.7rem; opacity:0.7; font-family:monospace;">${o.url.split('://')[0].toUpperCase()}</div>
@@ -188,9 +196,9 @@ function renderDashboardStreams() {
             </div>
         `;
     });
-    
+
     if (html === '') html = '<div style="color:var(--text-muted); padding:20px; text-align:center; width:100%;">No hay elementos en esta categoría.</div>';
-    
+
     container.innerHTML = html;
 }
 
@@ -228,7 +236,7 @@ function switchTab(tabId) {
         document.getElementById('topbar-title').innerText = 'Analítica';
         document.getElementById('topbar-subtitle').innerText = 'Telemetría de red y estado de las señales';
         document.getElementById('btn-add-input').style.display = 'none';
-        
+
         // Por defecto, todas las entradas activas en la gráfica
         if (selectedAnalyticsChannels.size === 0) inputs.filter(i => i.enabled).forEach(i => selectedAnalyticsChannels.add(String(i.channel)));
         populateAnalyticsGrid();
@@ -256,7 +264,7 @@ function switchTab(tabId) {
         document.getElementById('topbar-title').innerText = 'Ajustes';
         document.getElementById('topbar-subtitle').innerText = 'Puertos y usuarios';
         document.getElementById('btn-add-input').style.display = 'none';
-        
+
         fetchSettingsData();
     } else if (tabId === 'storage') {
         document.getElementById('streamsContainer').style.display = 'none';
@@ -267,7 +275,7 @@ function switchTab(tabId) {
         document.getElementById('topbar-title').innerText = 'Grabaciones';
         document.getElementById('topbar-subtitle').innerText = 'Discos USB y archivos grabados';
         document.getElementById('btn-add-input').style.display = 'none';
-        
+
         fetchStorage();
     }
 }
@@ -516,7 +524,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         img.style.filter = 'grayscale(100%) opacity(40%) blur(1px)';
                     }
                 }
-                
+
                 // Buscar el botón justo al lado y actualizar su icono
                 const btn = img.nextElementSibling;
                 if (btn && btn.tagName === 'BUTTON') {
@@ -530,7 +538,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (data.event === 'input_toggled') {
             const inp = inputs.find(i => i.channel == data.channel);
             if (inp) inp.enabled = data.enabled;
-            
+
             // LED
             const led = document.getElementById(`led-${data.channel}`);
             if (led) {
@@ -574,11 +582,11 @@ document.addEventListener('DOMContentLoaded', () => {
             // Toggle Icon
             const btn = document.querySelector(`#outputs-container-${out ? out.channel : ''} button[onclick="toggleOutput(${data.id})"] i`);
             if (btn) btn.className = `fa-solid ${data.enabled ? 'fa-toggle-on' : 'fa-toggle-off'}`;
-            
+
             if (currentDashboardFilter !== null) renderDashboardStreams();
             return;
         }
-        
+
         fetchData();
     });
 
@@ -596,7 +604,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (data.active) {
                 bitElem.innerText = data.bitrate.replace('bits/s', 'ps');
                 timeElem.innerText = data.time;
-                
+
                 const bitVal = parseFloat(data.bitrate);
                 if (bitVal > 0) {
                     ledElem.className = 'connection-led active tooltip'; // green (receiving data)
@@ -609,7 +617,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 ledElem.className = 'connection-led error tooltip'; // red
             }
         }
-        
+
+        pushSpark(String(data.channel), data.active ? kbpsOf(data.bitrate) : 0);
+        trackSignal(data);
+
         // Barra de estado: verde = llegan datos, gris = habilitada esperando señal, vacía = parada
         const qbarElem = document.getElementById(`qbar-${data.channel}`);
         if (qbarElem) {
@@ -623,7 +634,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (imgElem) {
             const bitVal = data.active && data.bitrate ? parseFloat(data.bitrate) : 0;
             const isPreviewLive = imgElem.classList.contains('preview-active');
-            
+
             if (bitVal > 0) {
                 // Hay señal
                 if (!imgElem.classList.contains('has-signal')) {
@@ -649,7 +660,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
         }
-        
+
         if (data.codec) {
             const codecElem = document.getElementById(`codec-${data.channel}`);
             if (codecElem && data.codec.length > 0) codecElem.innerText = data.codec;
@@ -689,7 +700,7 @@ document.addEventListener('DOMContentLoaded', () => {
             cpuBar.style.width = stats.cpuLoad + '%';
             cpuBar.style.background = stats.cpuLoad > 85 ? 'var(--color-red)' : 'var(--accent-blue)';
         }
-        
+
         // RAM
         const ramLabel = document.getElementById('sys_ram');
         const ramTotalLabel = document.getElementById('sys_ram_total');
@@ -749,7 +760,7 @@ async function fetchData() {
         ]);
         inputs = await resIn.json();
         outputs = await resOut.json();
-        
+
         renderStreams();
     } catch (e) {
         console.error("Error fetching data:", e);
@@ -762,13 +773,27 @@ function renderStreams() {
     document.querySelectorAll('.stream-card.expand-mode').forEach(c => expandedIds.add(c.id));
 
     const container = document.getElementById('streamsContainer');
-    container.innerHTML = '';
-    
     const serverIp = window.location.hostname;
 
-    inputs.forEach(input => {
+    // Estado vacío: explica qué hacer en lugar de una pantalla en blanco
+    if (!inputs.length) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <i class="fa-solid fa-satellite-dish"></i>
+                <h3>Aún no hay señales</h3>
+                <p>Añade la primera entrada SRT, UDP o RTMP para empezar a recibir y repartir señal.</p>
+                ${currentUser && currentUser.role === ROLE_ADMIN ? '<button class="btn-primary" onclick="openAddInputModal()"><i class="fa-solid fa-plus"></i> Añadir entrada</button>' : ''}
+            </div>`;
+        return;
+    }
+    container.querySelectorAll(':scope > :not(.stream-card)').forEach(n => n.remove());
+
+    // Sólo se reconstruye la tarjeta cuya configuración ha cambiado: las demás se quedan tal cual
+    // (sin parpadeos, conservan su minigráfico, su vídeo y lo que el usuario tenga abierto)
+    const keep = new Set();
+    inputs.forEach((input, index) => {
         const inputOutputs = outputs.filter(o => o.channel === input.channel);
-        
+
         let protocolBadge = 'srt';
         let protocolText = 'SRT-L';
         if (input.url.startsWith('udp')) { protocolBadge = 'udp'; protocolText = 'UDP'; }
@@ -785,7 +810,7 @@ function renderStreams() {
             <div class="stream-card ${isExpandedClass}" id="input-card-${input.channel}">
                 <div class="stream-header">
                     <div class="left-section">
-                        <button class="btn-expand" onclick="toggleExpand(${input.channel})"><i class="fa-solid fa-chevron-down"></i></button>
+                        <button class="btn-expand" onclick="toggleExpand(${input.channel})" aria-label="Desplegar salidas"><i class="fa-solid fa-chevron-down"></i></button>
                         <div id="led-${input.channel}" class="connection-led ${input.enabled ? 'active yellow' : 'error'} tooltip">
                             <i class="fa-solid fa-lightbulb"></i>
                             <span class="tooltiptext">${input.enabled ? 'Habilitada' : 'Deshabilitada'}</span>
@@ -799,12 +824,13 @@ function renderStreams() {
                     </div>
                     <div class="mid-section">
                         <div class="stat-item ${!input.enabled ? 'disabled' : ''}">
-                            <i class="fa-solid fa-clock"></i> <span id="time-${input.channel}">--:--:--</span>
+                            <i class="fa-solid fa-clock"></i> <span id="time-${input.channel}">${input.enabled ? '<span class="sk"></span>' : '—'}</span>
                         </div>
                         <div class="stat-item ${!input.enabled ? 'disabled' : ''}">
-                            <i class="fa-solid fa-gauge-high"></i> <span class="monospaced" id="bitrate-${input.channel}">-- Mbps</span>
+                            <i class="fa-solid fa-gauge-high"></i> <span class="monospaced" id="bitrate-${input.channel}">${input.enabled ? '<span class="sk"></span>' : '—'}</span>
                         </div>
-                        <div class="quality-bar">
+                        <div class="quality-bar" title="Bitrate del último minuto">
+                            <svg class="spark" data-key="${input.channel}" viewBox="0 0 120 28" preserveAspectRatio="none" aria-hidden="true"><path class="spark-area"/><path class="spark-line"/></svg>
                             <div class="fill ${input.enabled ? 'idle' : ''}" id="qbar-${input.channel}" style="width: ${input.enabled ? '100%' : '0%'}"></div>
                         </div>
                     </div>
@@ -820,8 +846,8 @@ function renderStreams() {
                         </div>
                     </div>
                 </div>
-                
-                <div class="stream-outputs" id="outputs-container-${input.channel}">
+
+                <div class="stream-outputs" id="outputs-container-${input.channel}"><div class="so-inner">
                     <div class="thumb-container" style="padding: 1rem 1.5rem; background: rgba(0,0,0,0.3); border-bottom: 1px solid rgba(255,255,255,0.05); display: flex; gap: 20px; align-items: center;">
                         <div class="thumb-box" id="thumb-box-${input.channel}" style="position:relative; width:160px; height:90px; border-radius:6px; overflow:hidden; border:1px solid rgba(255,255,255,0.1); box-shadow: 0 4px 10px rgba(0,0,0,0.5);">
                             <img id="thumb-img-${input.channel}" class="${input.preview_enabled && input.enabled ? 'preview-active' : ''}" data-src="/thumbs/thumb_${input.channel}.jpg" src="${input.enabled ? '/thumbs/thumb_' + input.channel + '.jpg' + (input.preview_enabled ? '?t=' + Date.now() : '') : '/images/bars.svg'}" onerror="if(!this.src.includes('bars.svg')){this.src='/images/bars.svg';}" onclick="openLive(${input.channel})" title="Ver en directo" style="cursor:${input.enabled ? 'pointer' : 'default'}; width:100%; height:100%; object-fit:cover; filter: ${input.preview_enabled && input.enabled ? 'none' : 'grayscale(100%) opacity(40%) blur(1px)'}; transition: filter 0.3s;" />
@@ -872,12 +898,13 @@ function renderStreams() {
                             </div>
                             <div class="mid-section">
                                 <div class="stat-item ${!out.enabled ? 'disabled' : ''}">
-                                    <i class="fa-solid fa-clock"></i> <span id="time-out_${out.id}">--:--:--</span>
+                                    <i class="fa-solid fa-clock"></i> <span id="time-out_${out.id}">${out.enabled ? '<span class="sk"></span>' : '—'}</span>
                                 </div>
                                 <div class="stat-item ${!out.enabled ? 'disabled' : ''}">
-                                    <i class="fa-solid fa-gauge-high"></i> <span class="monospaced" id="bitrate-out_${out.id}">-- Mbps</span>
+                                    <i class="fa-solid fa-gauge-high"></i> <span class="monospaced" id="bitrate-out_${out.id}">${out.enabled ? '<span class="sk"></span>' : '—'}</span>
                                 </div>
-                                <div class="quality-bar">
+                                <div class="quality-bar" title="Bitrate del último minuto">
+                                    <svg class="spark" data-key="out_${out.id}" viewBox="0 0 120 28" preserveAspectRatio="none" aria-hidden="true"><path class="spark-area"/><path class="spark-line"/></svg>
                                     <div class="fill ${out.enabled ? 'idle' : ''}" id="qbar-out_${out.id}" style="width: ${out.enabled ? '100%' : '0%'}"></div>
                                 </div>
                             </div>
@@ -892,23 +919,38 @@ function renderStreams() {
                             </div>
                         </div>
                     `).join('')}
-                </div>
+                </div></div>
             </div>
         `;
-        container.innerHTML += inputHTML;
+        const cardId = `input-card-${input.channel}`;
+        keep.add(cardId);
+        const key = JSON.stringify([input, inputOutputs, serverIp]);
+        let card = document.getElementById(cardId);
+        if (!card || card.dataset.key !== key) {
+            const tpl = document.createElement('template');
+            tpl.innerHTML = inputHTML.trim();
+            const fresh = tpl.content.firstElementChild;
+            fresh.dataset.key = key;
+            if (card) {
+                fresh.classList.toggle('expand-mode', card.classList.contains('expand-mode'));
+                card.replaceWith(fresh);
+            } else {
+                container.appendChild(fresh);
+            }
+            card = fresh;
+            redrawSparks(card);
+            // Si en unos segundos no ha llegado ningún dato, el marcador de carga pasa a "—"
+            setTimeout(() => card.querySelectorAll('.sk').forEach(sk => sk.replaceWith('—')), 6000);
+        }
+        if (container.children[index] !== card) container.insertBefore(card, container.children[index] || null);
     });
+    container.querySelectorAll(':scope > .stream-card').forEach(c => { if (!keep.has(c.id)) c.remove(); });
     syncThumbPlayers(); // Recoloca los vídeos en vivo en las tarjetas nuevas sin cortarlos
 }
 
 function toggleExpand(channel) {
     const card = document.getElementById(`input-card-${channel}`);
-    card.classList.toggle('expand-mode');
-    const icon = card.querySelector('.btn-expand i');
-    if (card.classList.contains('expand-mode')) {
-        icon.className = 'fa-solid fa-chevron-down';
-    } else {
-        icon.className = 'fa-solid fa-chevron-right';
-    }
+    card.classList.toggle('expand-mode'); // la flecha gira y el contenido se despliega por CSS
     syncThumbPlayers(); // Plegada no se ve: su vídeo en vivo se para
 }
 
@@ -939,7 +981,12 @@ function openModal(id) {
 function closeModal(id) {
     // Sale por el mismo camino por el que entró (escala + opacidad invertidas) y luego se oculta
     const ov = document.getElementById(id);
-    if (ov.style.display === 'flex' && !ov.classList.contains('closing')) {
+    if (ov._instantClose) { // ya ha salido de la pantalla arrastrándola: sin animación de cierre
+        ov._instantClose = false;
+        clearTimeout(ov._closeTimer);
+        ov.classList.remove('closing');
+        ov.style.display = 'none';
+    } else if (ov.style.display === 'flex' && !ov.classList.contains('closing')) {
         ov.classList.add('closing');
         ov._closeTimer = setTimeout(() => { ov.style.display = 'none'; ov.classList.remove('closing'); }, 160);
     } else if (!ov.classList.contains('closing')) {
@@ -991,7 +1038,7 @@ function updateInputFields() {
     const portContainer = document.getElementById('inp_port_container');
     const ipLabel = document.getElementById('inp_ip_label');
     const portLabel = document.getElementById('inp_port_label');
-    
+
     document.getElementById('inp_srt_opts').style.display = proto === 'srt' ? 'block' : 'none';
     if (proto === 'srt') {
         modeContainer.style.display = 'block';
@@ -1034,7 +1081,7 @@ function updateOutputFields() {
     const diskContainer = document.getElementById('out_disk_container');
     const ipLabel = document.getElementById('out_ip_label');
     const portLabel = document.getElementById('out_port_label');
-    
+
     // Default hiding
     diskContainer.style.display = 'none';
     document.getElementById('out_srt_opts').style.display = proto === 'srt' ? 'block' : 'none';
@@ -1068,13 +1115,13 @@ function updateOutputFields() {
         portContainer.style.display = 'none';
         ipContainer.style.display = 'none';
         diskContainer.style.display = 'block';
-        
+
         // Cargar discos para el dropdown
         fetch('/api/disks').then(r=>r.json()).then(disks => {
             const select = document.getElementById('out_disk');
             select.innerHTML = disks.map(d => `<option value="${d.path}">${d.name}</option>`).join('');
         });
-        
+
         if (!document.getElementById('out_location').value || document.getElementById('out_location').value.startsWith('rec_')) {
             const channel = document.getElementById('out_channel').value;
             const inData = inputs.find(i => i.channel == channel);
@@ -1096,10 +1143,10 @@ function openEditInput(channel) {
     if (!input) return;
     document.getElementById('inp_is_edit').value = 'true';
     document.getElementById('inp_edit_channel').value = channel;
-    
+
     document.getElementById('inp_name').value = input.name;
     // Watchdog config fields removed
-    
+
     // Parse url broadly
     document.getElementById('inp_is_edit').dataset.url = input.url;
     fillSrtFields('inp', input.url.startsWith('srt') ? input.url : '');
@@ -1123,7 +1170,7 @@ function openEditInput(channel) {
         if(portMatch) document.getElementById('inp_port').value = portMatch[1];
     }
     updateInputFields();
-    
+
     // Changing Modal Header
     document.querySelector('#inputModal .modal-header h3').innerText = 'Editar entrada';
     openModal('inputModal');
@@ -1328,7 +1375,7 @@ async function submitLatency(e) {
 
     const match = currentUrl.match(/latency=(\d+)/);
     let newUrl = currentUrl;
-    
+
     if (newVal === '') {
         // Remove latency completely
         newUrl = newUrl.replace(/([&?])latency=\d+&?/, '$1').replace(/[&?]$/, '');
@@ -1367,14 +1414,14 @@ async function fetchStorage() {
     try {
         const res = await fetch('/api/disks');
         const disks = await res.json();
-        
+
         // Populate Grid
         const grid = document.getElementById('storageDisksGrid');
         grid.innerHTML = '';
         const select = document.getElementById('storageDiskSelect');
         const currentSelection = select.value;
         select.innerHTML = '';
-        
+
         if (disks.length === 0) {
             grid.innerHTML = '<div style="grid-column: span 3; text-align:center; padding: 20px; color:var(--text-muted);">No hay discos externos conectados.</div>';
             return;
@@ -1402,9 +1449,9 @@ async function fetchStorage() {
         } else {
             select.selectedIndex = 0;
         }
-        
+
         fetchFiles();
-        
+
     } catch(e) { console.error('fetchStorage failed', e); }
 }
 
@@ -1414,10 +1461,10 @@ async function fetchFiles() {
     try {
         const res = await fetch(`/api/files?disk=${encodeURIComponent(parentDisk)}`);
         const files = await res.json();
-        
+
         const tbody = document.getElementById('storageFilesList');
         tbody.innerHTML = '';
-        
+
         if (files.length === 0) {
             tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding: 20px; color:var(--text-muted);">No hay grabaciones en este disco.</td></tr>';
             return;
@@ -1427,7 +1474,7 @@ async function fetchFiles() {
             const sizeMB = (f.size / (1024*1024)).toFixed(1);
             const dStr = new Date(f.date).toLocaleString('es-ES', { dateStyle:'short', timeStyle:'short' });
             const sName = f.name;
-            
+
             tbody.innerHTML += `
                 <tr style="border-bottom: 1px solid rgba(255,255,255,0.05); transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='transparent'">
                     <td style="padding: 12px 10px; color: var(--text-main); font-weight: 500;"><i class="fa-regular fa-file-video" style="color:var(--accent-blue); margin-right:8px;"></i>${sName}</td>
@@ -1472,12 +1519,12 @@ function previewFile(url, fname) {
 function openEditOutput(id) {
     const out = outputs.find(o => o.id === id);
     if (!out) return;
-    
+
     document.getElementById('out_is_edit').value = 'true';
     document.getElementById('out_edit_id').value = id;
     document.getElementById('out_location').value = out.location;
     document.getElementById('out_vcodec').value = out.vcodec || 'copy';
-    
+
     // Parse url broadly
     document.getElementById('out_is_edit').dataset.url = out.url;
     fillSrtFields('out', out.url.startsWith('srt') ? out.url : '');
@@ -1495,7 +1542,7 @@ function openEditOutput(id) {
         const fullDiskUrl = out.url.replace('disk://', '');
         const lastSlash = fullDiskUrl.lastIndexOf('/') > fullDiskUrl.lastIndexOf('\\') ? fullDiskUrl.lastIndexOf('/') : fullDiskUrl.lastIndexOf('\\');
         document.getElementById('out_location').value = fullDiskUrl.substring(lastSlash + 1);
-        
+
         // Wait briefly for updateOutputFields to populate the disk select, then select the right one
         setTimeout(() => {
             const select = document.getElementById('out_disk');
@@ -1519,7 +1566,7 @@ function openEditOutput(id) {
         if(ipMatch) document.getElementById('out_ip').value = ipMatch[1];
     }
     updateOutputFields();
-    
+
     document.querySelector('#outputModal .modal-header h3').innerText = 'Editar salida';
     openModal('outputModal');
 }
@@ -1555,7 +1602,7 @@ async function submitInput(e) {
         name: document.getElementById('inp_name').value,
         url: outUrl
     };
-    
+
     const isEdit = document.getElementById('inp_is_edit').value === 'true';
     const cId = document.getElementById('inp_edit_channel').value;
     const res = await fetch(isEdit ? `/api/inputs/${cId}` : '/api/inputs', {
@@ -1565,7 +1612,7 @@ async function submitInput(e) {
         const err = await res.json().catch(() => ({}));
         return toast(err.error || 'No se pudo guardar la entrada');
     }
-    
+
     closeModal('inputModal');
     toast(isEdit ? 'Entrada actualizada' : 'Entrada creada', 'ok');
     e.target.reset();
@@ -1622,7 +1669,7 @@ async function submitOutput(e) {
         const err = await res.json().catch(() => ({}));
         return toast(err.error || 'No se pudo guardar la salida');
     }
-    
+
     closeModal('outputModal');
     toast(isEdit ? 'Salida actualizada' : 'Salida creada', 'ok');
     e.target.reset();
@@ -1638,7 +1685,7 @@ async function fetchSettingsData() {
         ]);
         const users = await resUsers.json();
         const ports = await resPorts.json();
-        
+
         // Populate Ports
         if (ports) {
             document.getElementById('cfg_chanMin').value = ports.chanMin;
@@ -1769,9 +1816,15 @@ async function deleteUser(username) {
     } catch(e) { console.error(e); }
 }
 
-async function toggleInput(channel) {
-    await fetch(`/api/inputs/${channel}/toggle`, { method: 'POST' });
+async function toggleInput(channel, fromUndo = false) {
+    const inp = inputs.find(i => i.channel == channel);
+    const wasEnabled = inp && inp.enabled;
+    const res = await fetch(`/api/inputs/${channel}/toggle`, { method: 'POST' });
     fetchData();
+    if (!res.ok) return toast('No se pudo cambiar el estado de la entrada');
+    if (wasEnabled && !fromUndo) {
+        toast(`«${inp.name || 'Entrada ' + channel}» deshabilitada`, 'info', { label: 'Deshacer', fn: () => toggleInput(channel, true) });
+    }
 }
 
 /* =======================================
@@ -2008,8 +2061,14 @@ async function deleteInput(channelId) {
     }
 }
 
-async function toggleOutput(id) {
-    await fetch(`/api/outputs/${id}/toggle`, { method: 'POST' });
+async function toggleOutput(id, fromUndo = false) {
+    const out = outputs.find(o => o.id == id);
+    const wasEnabled = out && out.enabled;
+    const res = await fetch(`/api/outputs/${id}/toggle`, { method: 'POST' });
+    if (!res.ok) return toast('No se pudo cambiar el estado de la salida');
+    if (wasEnabled && !fromUndo) {
+        toast(`Salida «${out.location || 'sin nombre'}» deshabilitada`, 'info', { label: 'Deshacer', fn: () => toggleOutput(id, true) });
+    }
 }
 
 async function deleteOutput(id) {
@@ -2395,3 +2454,152 @@ async function removeEncoderVpn(id) {
     closeModal('encoderVpnModal');
     fetchEncoders();
 }
+
+
+/* =======================================
+ *  MINIGRÁFICOS DE BITRATE (último minuto) Y AVISOS DE SEÑAL
+ * ======================================= */
+const SPARK_POINTS = 60;
+const sparkBuf = {}; // 'canal' | 'out_id' -> [kbps...]
+
+function kbpsOf(str) {
+    const v = parseFloat(str) || 0;
+    if (/mbit|mbps/i.test(str)) return v * 1000;
+    return v;
+}
+function pushSpark(key, kbps) {
+    const b = sparkBuf[key] || (sparkBuf[key] = []);
+    b.push(kbps);
+    if (b.length > SPARK_POINTS) b.shift();
+    const svg = document.querySelector(`svg.spark[data-key="${key}"]`);
+    if (svg) drawSpark(svg, b);
+}
+function redrawSparks(root) {
+    root.querySelectorAll('svg.spark').forEach(svg => drawSpark(svg, sparkBuf[svg.dataset.key] || []));
+}
+function drawSpark(svg, buf) {
+    const line = svg.querySelector('.spark-line');
+    const area = svg.querySelector('.spark-area');
+    if (buf.length < 2) { line.setAttribute('d', ''); area.setAttribute('d', ''); return; }
+    const max = Math.max(...buf, 1) * 1.15;
+    const step = 120 / (SPARK_POINTS - 1);
+    const x0 = 120 - (buf.length - 1) * step; // los datos entran por la derecha
+    const pts = buf.map((v, i) => [x0 + i * step, 27 - (v / max) * 25]);
+    const d = pts.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(1)} ${y.toFixed(1)}`).join(' ');
+    line.setAttribute('d', d);
+    area.setAttribute('d', `${d} L120 28 L${x0.toFixed(1)} 28 Z`);
+}
+
+// Aviso cuando una entrada pierde la señal (3 s seguidos sin datos) o la recupera
+const SIGNAL_LOST_MS = 3000;
+const signalAlerts = {}; // canal -> { has, lowSince }
+function trackSignal(data) {
+    const key = String(data.channel);
+    if (key.startsWith('out_')) return; // sólo entradas: las salidas dependen de su entrada
+    const inp = inputs.find(i => String(i.channel) === key);
+    if (!inp || !inp.enabled) { delete signalAlerts[key]; return; }
+    const has = data.active && kbpsOf(data.bitrate) > 0;
+    const st = signalAlerts[key];
+    const name = inp.name || 'Entrada ' + key;
+    if (!st) { signalAlerts[key] = { has, lowSince: has ? 0 : Date.now() }; return; } // primer dato: sin aviso
+    if (has) {
+        if (!st.has) toast(`Señal recuperada · ${name}`, 'ok');
+        st.has = true; st.lowSince = 0;
+    } else if (st.has) {
+        st.lowSince = st.lowSince || Date.now();
+        if (Date.now() - st.lowSince >= SIGNAL_LOST_MS) {
+            st.has = false;
+            toast(`Sin señal · ${name}`, 'warn');
+        }
+    }
+}
+
+/* =======================================
+ *  HOJAS INFERIORES EN EL MÓVIL: se arrastran con el dedo y se lanzan para cerrar
+ * ======================================= */
+const sheetMQ = window.matchMedia('(max-width: 768px)');
+const reduceMotionMQ = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+// Muelle críticamente amortiguado (damping 1, sin rebote) que hereda la velocidad del dedo
+function springTo(from, to, velocity, onUpdate, onDone, response = 0.32, damping = 1) {
+    const k = Math.pow(2 * Math.PI / response, 2);
+    const c = 4 * Math.PI * damping / response;
+    let x = from, v = velocity, last = performance.now();
+    function frame(now) {
+        const dt = Math.min(0.032, (now - last) / 1000);
+        last = now;
+        for (let i = 0; i < 4; i++) { // subpasos: integración estable
+            const a = -k * (x - to) - c * v;
+            v += a * dt / 4;
+            x += v * dt / 4;
+        }
+        onUpdate(x);
+        if (Math.abs(x - to) < 0.5 && Math.abs(v) < 20) { onUpdate(to); onDone && onDone(); return; }
+        requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+}
+// Proyección del gesto (la misma que usa iOS para el desplazamiento por inercia)
+const projectFling = (v, rate = 0.998) => (v / 1000) * rate / (1 - rate);
+// Resistencia progresiva al tirar hacia arriba
+const rubberband = (o, dim, c = 0.55) => (o * dim * c) / (dim + c * Math.abs(o));
+
+function initSheets() {
+    document.querySelectorAll('.modal-overlay').forEach(ov => {
+        const sheet = ov.querySelector('.modal');
+        if (!sheet || sheet.querySelector('.sheet-grabber')) return;
+        const grabber = document.createElement('div');
+        grabber.className = 'sheet-grabber';
+        grabber.setAttribute('aria-hidden', 'true');
+        sheet.prepend(grabber);
+        const handles = [grabber, sheet.querySelector('.modal-header')].filter(Boolean);
+        handles.forEach(h => h.addEventListener('pointerdown', e => startSheetDrag(e, ov, sheet)));
+    });
+}
+
+function startSheetDrag(e, ov, sheet) {
+    if (!sheetMQ.matches || e.button > 0 || e.target.closest('button, a, input, select')) return;
+    const h = sheet.getBoundingClientRect().height;
+    const startY = e.clientY;
+    const samples = [{ y: 0, t: performance.now() }];
+    let y = 0;
+    sheet.setPointerCapture(e.pointerId);
+    sheet.style.animation = 'none';
+    sheet.style.transition = 'none';
+    const apply = (val) => {
+        y = val;
+        sheet.style.transform = `translateY(${val}px)`;
+        const p = Math.max(0, Math.min(1, 1 - val / h));
+        ov.style.backgroundColor = `rgba(0,0,0,${(0.6 * p).toFixed(3)})`;
+    };
+    const move = (ev) => {
+        const dy = ev.clientY - startY;
+        apply(dy >= 0 ? dy : rubberband(dy, h));
+        samples.push({ y: dy, t: performance.now() });
+        if (samples.length > 6) samples.shift();
+    };
+    const up = () => {
+        sheet.removeEventListener('pointermove', move);
+        sheet.removeEventListener('pointerup', up);
+        sheet.removeEventListener('pointercancel', up);
+        const a = samples[0], b = samples[samples.length - 1];
+        const v = b.t > a.t ? (b.y - a.y) / ((b.t - a.t) / 1000) : 0; // px/s al soltar
+        const projected = y + projectFling(v);
+        const close = projected > h * 0.5 && v > -200;
+        const reset = () => { sheet.style.transform = ''; sheet.style.animation = ''; sheet.style.transition = ''; ov.style.backgroundColor = ''; };
+        if (close) {
+            springTo(y, h + 20, v, apply, () => {
+                ov._instantClose = true;
+                closeModalById(ov.id);
+                reset();
+            }, 0.3);
+        } else {
+            springTo(y, 0, v, apply, reset, 0.35);
+        }
+    };
+    sheet.addEventListener('pointermove', move);
+    sheet.addEventListener('pointerup', up);
+    sheet.addEventListener('pointercancel', up);
+}
+document.addEventListener('DOMContentLoaded', initSheets);
+if (document.readyState !== 'loading') initSheets();

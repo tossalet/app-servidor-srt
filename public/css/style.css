@@ -664,3 +664,128 @@ input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; marg
     .status-badge .dot { width: 9px; height: 9px; }
     .status-badge.offline { background: none; }
 }
+
+/* =====================================================================
+   SISTEMA VISUAL: escala tipográfica + tres niveles de superficie
+   ===================================================================== */
+:root {
+    /* Escala tipográfica: tamaño, peso y leading van juntos */
+    --fs-display: 2.25rem;   /* cifras grandes del Resumen */
+    --fs-title: 1.375rem;    /* título de página */
+    --fs-headline: 1.0625rem;/* títulos de sección y nombres de señal */
+    --fs-body: 0.9375rem;
+    --fs-callout: 0.8125rem;
+    --fs-caption: 0.6875rem; /* etiquetas pequeñas en mayúsculas */
+
+    /* Superficies: fondo < tarjeta < elevada. Borde superior un poco más claro (luz desde arriba) */
+    --surface-1: rgba(255, 255, 255, 0.025);
+    --surface-2: rgba(255, 255, 255, 0.045);
+    --surface-3: #182033;
+    --surface-border: rgba(255, 255, 255, 0.07);
+    --surface-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
+    --shadow-lg: 0 24px 60px -12px rgba(0, 0, 0, 0.6), 0 2px 6px rgba(0, 0, 0, 0.3);
+    --radius: 14px;
+}
+body { font-size: var(--fs-body); -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; background-image: radial-gradient(1200px 600px at 20% -10%, rgba(59,130,246,0.07), transparent 60%); }
+
+/* Títulos */
+.page-title h1 { font-size: var(--fs-title); font-weight: 700; letter-spacing: -0.025em; }
+.page-title p { font-size: var(--fs-callout); }
+.main-content h2 { font-size: var(--fs-headline) !important; font-weight: 650 !important; letter-spacing: -0.01em; }
+.main-content h3 { letter-spacing: -0.005em; }
+.stream-name { font-size: var(--fs-headline); font-weight: 600; letter-spacing: -0.01em; }
+
+/* Superficies de nivel 1: sin desenfoque (no hay nada detrás que desenfocar) */
+.stream-card, .sys-card, .sys-stat-card, .history-section, .signal-status, .enc-card, .history-chart, .settings-card, .storage-header, .storage-files, .analytics-header, .chart-wrapper {
+    background: var(--surface-1) !important;
+    border: 1px solid var(--surface-border) !important;
+    box-shadow: var(--surface-highlight), var(--shadow-sm);
+    border-radius: var(--radius) !important;
+    backdrop-filter: none !important; -webkit-backdrop-filter: none !important;
+}
+.stream-card:hover { border-color: rgba(255,255,255,0.11) !important; box-shadow: var(--surface-highlight), 0 8px 24px rgba(0,0,0,0.25); }
+.sidebar { background: rgba(8, 11, 19, 0.6); backdrop-filter: none; -webkit-backdrop-filter: none; }
+/* Nivel 3 (elevado): ventanas */
+.modal { background: var(--surface-3); border: 1px solid rgba(255,255,255,0.09); box-shadow: var(--surface-highlight), var(--shadow-lg); border-radius: 18px; }
+.output-row { background: transparent; border-bottom-color: rgba(255,255,255,0.04); }
+.expand-mode .stream-header { background: rgba(255,255,255,0.015); border-bottom-color: var(--surface-border); }
+.thumb-container { background: rgba(0,0,0,0.18) !important; }
+
+/* Resumen: cifras como en un instrumento */
+.sys-card h3, .sys-sc-title {
+    font-size: var(--fs-caption) !important; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-muted);
+}
+.sys-card h3 i { opacity: 0.7; }
+.sys-value { font-size: var(--fs-display); font-weight: 600; letter-spacing: -0.035em; line-height: 1.1; }
+.sys-unit { font-size: var(--fs-callout); letter-spacing: 0; }
+.sys-sc-value { font-size: var(--fs-display); font-weight: 600; letter-spacing: -0.035em; }
+.sys-stat-card { position: relative; overflow: hidden; }
+.sys-stat-card::before { content: ""; position: absolute; left: 0; top: 14px; bottom: 14px; width: 3px; border-radius: 0 3px 3px 0; background: var(--text-muted); }
+.sys-stat-card.ok::before { background: var(--color-green); }
+.sys-stat-card.error::before { background: var(--color-red); }
+.sys-bar { background: rgba(255,255,255,0.06); }
+
+/* Iconos: mismo tamaño óptico y tono apagado; el color se reserva para el estado */
+.nav-item i { font-size: 0.95rem; opacity: 0.8; }
+.nav-item.active i { opacity: 1; }
+.stat-item i { color: var(--text-muted); opacity: 0.6; font-size: 0.8rem; }
+.action-btn i { font-size: 0.85rem; }
+.sys-card h3 i, .history-header h2 i, .signal-status-head h3 i { color: var(--text-muted); }
+
+/* ---------- Despliegue animado de las salidas ---------- */
+.stream-outputs { display: grid !important; grid-template-rows: 0fr; transition: grid-template-rows 320ms cubic-bezier(0.32, 0.72, 0, 1); }
+.expand-mode .stream-outputs { grid-template-rows: 1fr; }
+.so-inner { overflow: hidden; min-height: 0; opacity: 0; transition: opacity 200ms var(--ease-out); }
+.expand-mode .so-inner { opacity: 1; transition-delay: 60ms; }
+.btn-expand i { transition: transform 260ms cubic-bezier(0.32, 0.72, 0, 1); }
+.stream-card:not(.expand-mode) .btn-expand i { transform: rotate(-90deg); }
+
+/* ---------- Minigráfico de bitrate ---------- */
+.quality-bar { height: 28px; border-radius: 6px; overflow: hidden; background: rgba(255,255,255,0.03); }
+.quality-bar .spark { position: absolute; inset: 0; width: 100%; height: 100%; }
+.spark-line { fill: none; stroke: var(--text-muted); stroke-width: 1.5; vector-effect: non-scaling-stroke; stroke-linejoin: round; stroke-linecap: round; opacity: 0.5; }
+.spark-area { fill: rgba(148, 163, 184, 0.08); }
+.quality-bar .fill { position: absolute; left: 0; bottom: 0; height: 2px; border-radius: 0; }
+.quality-bar:has(.fill.green) .spark-line { stroke: var(--color-green); opacity: 1; }
+.quality-bar:has(.fill.green) .spark-area { fill: rgba(16, 185, 129, 0.14); }
+.quality-bar .fill.idle { background: rgba(255,255,255,0.18); }
+
+/* ---------- Carga y estado vacío ---------- */
+.sk { display: inline-block; width: 4.5em; height: 0.85em; border-radius: 4px; vertical-align: -0.1em; background: rgba(255,255,255,0.08); animation: skPulse 1.6s ease-in-out infinite; }
+@keyframes skPulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+.empty-state { text-align: center; padding: 4rem 1.5rem; border: 1px dashed rgba(255,255,255,0.12); border-radius: var(--radius); background: var(--surface-1); }
+.empty-state > i { font-size: 2.25rem; color: var(--accent-blue); opacity: 0.8; margin-bottom: 1rem; }
+.empty-state h3 { font-size: var(--fs-title); font-weight: 650; margin-bottom: 0.5rem; }
+.empty-state p { color: var(--text-muted); max-width: 36ch; margin: 0 auto 1.5rem; line-height: 1.5; }
+.empty-state .btn-primary { display: inline-flex; }
+
+/* ---------- Avisos: tipo info y botón Deshacer ---------- */
+.toast.info > i { color: var(--accent-blue); }
+.toast .toast-action { width: auto; height: auto; padding: 6px 10px; color: var(--accent-blue); font-weight: 600; font-size: var(--fs-callout); }
+.toast .toast-action:hover { color: #93c5fd; }
+
+/* ---------- Móvil: ventanas como hojas inferiores ---------- */
+.sheet-grabber { display: none; }
+@media (max-width: 768px) {
+    .modal-overlay { align-items: flex-end; padding: 0; }
+    .modal {
+        width: 100% !important; max-width: 100% !important; border-radius: 20px 20px 0 0;
+        max-height: 92vh; max-height: 92dvh; padding: 0.5rem 1.25rem calc(1.25rem + env(safe-area-inset-bottom));
+        border-bottom: none; animation: sheetIn 420ms cubic-bezier(0.32, 0.72, 0, 1);
+        will-change: transform;
+    }
+    .sheet-grabber { display: block; width: 36px; height: 5px; border-radius: 3px; background: rgba(255,255,255,0.25); margin: 0 auto 0.75rem; touch-action: none; cursor: grab; }
+    .modal-header { touch-action: none; }
+    .modal-overlay.closing .modal { animation: sheetOut 260ms cubic-bezier(0.32, 0.72, 0, 1) forwards; }
+    .quality-bar { min-width: 120px; }
+}
+@keyframes sheetIn { from { transform: translateY(100%); } to { transform: none; } }
+@keyframes sheetOut { from { transform: none; } to { transform: translateY(100%); } }
+
+@media (prefers-reduced-motion: reduce) {
+    .stream-outputs, .so-inner, .btn-expand i { transition: none !important; }
+    .sk { animation: none; }
+    .modal, .modal-overlay.closing .modal { animation-name: overlayIn; }
+    .modal-overlay.closing .modal { animation-name: overlayOut; }
+}
