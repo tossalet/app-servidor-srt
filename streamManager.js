@@ -738,6 +738,7 @@ async function spawnOutputProcess(st) {
     const child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     const startedAt = Date.now();
     st.proc = child;
+    st.startedAt = startedAt;
     st.isDisk = isDisk;
     st.tail = '';
     st.lastSize = null;
@@ -866,6 +867,13 @@ function getCounts() {
     return { inputsRunning: inputs.size, inputsLive, outputsRunning: outputs.size };
 }
 
+// Última línea de error útil. srt-live-transmit escribe "N bytes lost, M bytes sent..." mientras
+// nadie recoge la salida y deja de escribirla al conectarse el receptor: no es un error actual.
+function lastErrorOf(st) {
+    const line = (st.tail || '').trim().split(/\r?\n/).filter(l => !/bytes lost, \d+ bytes sent/.test(l)).pop() || '';
+    return srt.maskSecrets(line).slice(0, 160);
+}
+
 const protocolOf = (url) => (url || '').split('://')[0] || 'unknown';
 
 // Estado para /metrics. Sin URLs: pueden llevar passphrase o claves de streaming.
@@ -897,7 +905,11 @@ function getMetricsSnapshot() {
         running: !!st.proc,
         // Entregando datos al destino ahora mismo (informe con bitrate > 0 en los últimos 4 s)
         delivering: !!st.dataAt && now - st.dataAt < 4000,
-        lastError: srt.maskSecrets(st.tail.trim().split(/\r?\n/).pop() || '').slice(0, 160),
+        // En modo listener es el receptor (vMix, OBS...) quien se conecta: esperarlo es normal
+        listener: /^srt:\/\/[^?]*\?(.*&)?mode=listener(&|$)/.test(st.cfg.url),
+        port: (st.cfg.url.match(/^srt:\/\/[^/?]*:(\d+)/) || [])[1] || '',
+        startedAt: st.startedAt || 0,
+        lastError: lastErrorOf(st),
         // Sin informe en 5 s: no está entregando
         bitrateBps: now - st.lastUpdate > 5000 ? 0 : (st.lastKbps || 0) * 1000,
         restarts: st.restarts || 0,

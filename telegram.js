@@ -33,6 +33,7 @@ const ENABLED = !!(TOKEN && CHATS.length);
 // Tiempos de los avisos
 const STABLE_MS = 3000;        // un cambio tiene que durar esto para avisar (filtra parpadeos)
 const START_GRACE_MS = 15000;  // un stream recién encendido tiene este margen para arrancar
+const LISTENER_GRACE_MS = 60000; // salida en modo listener (re)arrancada: margen para que el receptor se reconecte
 const FLAP_WINDOW_MS = 5 * 60000;
 const FLAP_LIMIT = 4;          // cambios en la ventana para considerarlo inestable
 const FLAP_QUIET_MS = 2 * 60000;
@@ -244,6 +245,12 @@ function watchStreams() {
             t.startAt = now;
             continue;
         }
+        // Listener recién (re)arrancado: el receptor (vMix...) tarda en reconectarse; aún no es un fallo
+        if (o.listener && !o.delivering && now - o.startedAt < LISTENER_GRACE_MS) {
+            if (t.rep === null) t.startAt = now;
+            t.cand = null;
+            continue;
+        }
         const label = `La salida ${outName(o.id)} (${inName(o.channel)})`;
         const r = step(t, o.delivering, now);
         if (r === 'up') {
@@ -254,7 +261,9 @@ function watchStreams() {
         } else if (r) {
             t.downAt = r === 'first-down' ? t.startAt : now - STABLE_MS;
             if (r === 'first-down' || flapGate(t, key, label, now)) {
-                const why = o.lastError ? `\nÚltimo error: ${o.lastError}` : '';
+                const why = o.listener
+                    ? `\nNingún receptor conectado${o.port ? ` al puerto ${o.port}` : ''}.`
+                    : (o.lastError ? `\nÚltimo error: ${o.lastError}` : '');
                 notify(r === 'first-down'
                     ? `🔴 La salida ${outName(o.id)} (${inName(o.channel)}) no consigue emitir.\nLa entrada tiene señal, pero el destino no la recibe: ¿está abierto el receptor (vMix, OBS...)?${why}`
                     : `🔴 La salida ${outName(o.id)} (${inName(o.channel)}) ha dejado de emitir · ${clock()}\nLa entrada sigue con señal: el receptor se ha cerrado, desconectado o rechaza la conexión.${why}`);
