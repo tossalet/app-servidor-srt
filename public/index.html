@@ -52,9 +52,15 @@
                     <h1 id="topbar-title">Señales</h1>
                     <p id="topbar-subtitle">Entradas y salidas en directo</p>
                 </div>
-                <button class="btn-primary" id="btn-add-input" onclick="openAddInputModal()">
-                    <i class="fa-solid fa-plus"></i> Añadir entrada
-                </button>
+                <div class="topbar-actions">
+                    <div class="view-toggle" id="view-toggle" role="group" aria-label="Vista de las señales">
+                        <button type="button" data-view="list" aria-pressed="true" title="Lista" onclick="setStreamsView('list')"><i class="fa-solid fa-list"></i></button>
+                        <button type="button" data-view="grid" aria-pressed="false" title="Mosaico" onclick="setStreamsView('grid')"><i class="fa-solid fa-table-cells-large"></i></button>
+                    </div>
+                    <button class="btn-primary" id="btn-add-input" onclick="openAddInputModal()">
+                        <i class="fa-solid fa-plus"></i> Añadir entrada
+                    </button>
+                </div>
             </header>
 
             <section class="streams-container" id="streamsContainer">

@@ -208,6 +208,7 @@ function switchTab(tabId) {
     document.getElementById('encodersContainer').style.display = tabId === 'encoders' ? 'block' : 'none';
     // El botón de la cabecera cambia de función en la pestaña Encoders
     const addBtn = document.getElementById('btn-add-input');
+    document.getElementById('view-toggle').hidden = tabId !== 'streams';
     addBtn.onclick = tabId === 'encoders' ? openAddEncoderModal : openAddInputModal;
     addBtn.innerHTML = tabId === 'encoders' ? '<i class="fa-solid fa-plus"></i> Añadir encoder' : '<i class="fa-solid fa-plus"></i> Añadir entrada';
 
@@ -219,7 +220,7 @@ function switchTab(tabId) {
         addBtn.style.display = currentUser && currentUser.role === ROLE_ADMIN ? 'inline-block' : 'none';
         fetchEncoders();
     } else if (tabId === 'streams') {
-        document.getElementById('streamsContainer').style.display = 'block';
+        document.getElementById('streamsContainer').style.display = ''; // lista o mosaico, según su clase
         document.getElementById('analyticsContainer').style.display = 'none';
         document.getElementById('systemContainer').style.display = 'none';
         document.getElementById('settingsContainer').style.display = 'none';
@@ -2603,3 +2604,18 @@ function startSheetDrag(e, ov, sheet) {
 }
 document.addEventListener('DOMContentLoaded', initSheets);
 if (document.readyState !== 'loading') initSheets();
+
+/* =======================================
+ *  VISTA DE SEÑALES: LISTA O MOSAICO (se recuerda en este navegador)
+ * ======================================= */
+function setStreamsView(mode) {
+    if (mode !== 'grid') mode = 'list';
+    document.getElementById('streamsContainer').classList.toggle('view-grid', mode === 'grid');
+    document.querySelectorAll('#view-toggle button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.view === mode)));
+    try { localStorage.setItem('streamsView', mode); } catch (e) {}
+}
+document.addEventListener('DOMContentLoaded', () => {
+    let mode = 'list';
+    try { mode = localStorage.getItem('streamsView') || 'list'; } catch (e) {}
+    setStreamsView(mode);
+});

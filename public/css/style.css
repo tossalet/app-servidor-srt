@@ -789,3 +789,32 @@ body { font-size: var(--fs-body); -webkit-font-smoothing: antialiased; -moz-osx-
     .modal, .modal-overlay.closing .modal { animation-name: overlayIn; }
     .modal-overlay.closing .modal { animation-name: overlayOut; }
 }
+
+/* ---------- Vista de señales: lista o mosaico ---------- */
+.topbar-actions { display: flex; align-items: center; gap: 10px; }
+.view-toggle { display: inline-flex; gap: 2px; padding: 3px; border-radius: 10px; background: var(--surface-1); border: 1px solid var(--surface-border); }
+.view-toggle[hidden] { display: none; }
+.view-toggle button { width: 34px; height: 30px; border-radius: 7px; background: transparent; color: var(--text-muted); display: flex; align-items: center; justify-content: center; font-size: 0.85rem; }
+.view-toggle button:hover { color: var(--text-main); }
+.view-toggle button[aria-pressed="true"] { background: rgba(255,255,255,0.09); color: var(--text-main); box-shadow: var(--shadow-sm); }
+
+/* Mosaico: cada entrada es una tesela con su imagen siempre a la vista; las salidas, al desplegar */
+.streams-container.view-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); gap: 1rem; align-items: start; }
+.view-grid .stream-card { margin-bottom: 0; }
+.view-grid .stream-header, .view-grid .output-row { flex-direction: column; align-items: stretch; gap: 12px; padding: 1rem 1.1rem; }
+.view-grid .left-section, .view-grid .mid-section, .view-grid .right-section, .view-grid .left-section.sub { width: 100% !important; }
+.view-grid .left-section { flex-wrap: wrap; gap: 10px; }
+.view-grid .stream-header .stream-name { flex: 1 1 100%; order: 10; }
+.view-grid .left-section.sub { padding-left: 0; }
+.view-grid .mid-section { gap: 14px; }
+.view-grid .right-section { justify-content: flex-end; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 10px; }
+.view-grid .stream-header { border-bottom: 1px solid var(--surface-border); }
+.view-grid .stream-outputs { grid-template-rows: 1fr; }
+.view-grid .so-inner { opacity: 1; }
+.view-grid .stream-card:not(.expand-mode) .output-row { display: none; }
+.view-grid .thumb-container { flex-wrap: wrap; gap: 12px !important; padding: 0.9rem 1.1rem !important; }
+.view-grid .thumb-box { flex: 1 1 0; width: auto !important; height: auto !important; aspect-ratio: 16 / 9; }
+.view-grid .thumb-container > div:last-child { flex: 1 1 100%; }
+.view-grid .thumb-container > div:last-child > p:nth-of-type(2) { display: none; } /* la ayuda larga no cabe en la tesela */
+.view-grid .output-row { border-top: 1px solid var(--surface-border); }
+@media (max-width: 768px) { .view-toggle { display: none; } }
