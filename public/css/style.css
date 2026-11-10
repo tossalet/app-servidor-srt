@@ -790,6 +790,11 @@ body { font-size: var(--fs-body); -webkit-font-smoothing: antialiased; -moz-osx-
     .modal-overlay.closing .modal { animation-name: overlayOut; }
 }
 
+/* Conexiones a una salida RTMP local (reproductores tirando del servidor) */
+.rtmp-viewers { display: inline-flex; align-items: center; gap: 5px; font-size: 0.7rem; font-weight: 600; color: var(--text-muted); cursor: help; white-space: nowrap; }
+.rtmp-viewers:empty { display: none; }
+.rtmp-viewers.has { color: var(--accent-blue); }
+
 /* ---------- Vista de señales: lista o mosaico ---------- */
 .topbar-actions { display: flex; align-items: center; gap: 10px; }
 .view-toggle { display: inline-flex; gap: 2px; padding: 3px; border-radius: 10px; background: var(--surface-1); border: 1px solid var(--surface-border); }

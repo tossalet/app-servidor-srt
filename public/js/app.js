@@ -124,6 +124,7 @@ async function submitOwnPassword(e) {
 // State
 let inputs = [];
 let outputs = [];
+let rtmpViewers = {}; // id de salida -> { count, clients } (salidas RTMP locales)
 let telemetryChart = null;
 let selectedAnalyticsChannels = new Set();
 let frontendTelemetryCache = {};
@@ -437,7 +438,7 @@ function signalRow(key, name, proto, enabled, isOutput, codecText, url) {
     const srt = s && s.srt;
     const dash = '—';
     return `<tr class="${isOutput ? 'sig-out' : 'sig-in'}">
-        <td>${isOutput ? '<span class="sig-branch">↳</span>' : ''}${escapeHtml(name)} <span class="sig-proto">${proto}</span></td>
+        <td>${isOutput ? '<span class="sig-branch">↳</span>' : ''}${escapeHtml(name)} <span class="sig-proto">${proto}</span>${isOutput && enabled && isLocalRtmpOut(url) ? ` <span class="rtmp-viewers" data-viewers="${key.slice(4)}"></span>` : ''}</td>
         <td><span class="sig-state ${st.cls}">${st.text}</span></td>
         <td>${kbps === null ? dash : `${(kbps / 1000).toFixed(2)} Mbps`}</td>
         <td>${s && s.time && st.cls === 'good' ? s.time : dash}</td>
@@ -465,6 +466,7 @@ function renderSignalStatus() {
         });
     });
     body.innerHTML = rows || '<tr><td colspan="10" style="color:var(--text-muted);">No hay señales configuradas.</td></tr>';
+    paintRtmpViewers();
     document.getElementById('signal-status-count').textContent =
         `${live} en vivo · ${waiting} sin señal · ${off} apagadas`;
 }
@@ -691,6 +693,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     socket.on('audio_levels', renderAudioLevels);
     socket.on('encoders_status', applyEncoderStatus);
+    socket.on('rtmp_viewers', (v) => { rtmpViewers = v || {}; paintRtmpViewers(); });
 
     socket.on('sys_stats', (stats) => {
         // CPU
@@ -895,6 +898,7 @@ function renderStreams() {
                                     <span class="stream-url muted" title="${maskUrl(out.url).replace(/127\.0\.0\.1|0\.0\.0\.0/g, serverIp)}">${maskUrl(out.url).replace(/127\.0\.0\.1|0\.0\.0\.0/g, serverIp)}</span>
                                     ${out.url.startsWith('srt') ? `<span style="font-size:0.70rem; font-weight:normal; display:flex; align-items:center; gap:6px;">Latencia SRT <b style="color:#fff;">${currentLatencyMs(out.url, true)}</b><button onclick="editLatency('out_${out.id}')" style="background:transparent; border:none; color:var(--accent-blue); cursor:pointer; font-size:0.8rem; padding:0;" title="Editar latencia de esta salida"><i class="fa-solid fa-pen"></i></button>${srtCipherBadge(out.url)}</span>` : ''}
                                     <span id="srtstats-out_${out.id}" style="font-size:0.70rem; color:var(--text-muted); font-weight:normal;"></span>
+                                    ${isLocalRtmpOut(out.url) && out.enabled ? `<span class="rtmp-viewers" data-viewers="${out.id}"></span>` : ''}
                                 </span>
                             </div>
                             <div class="mid-section">
@@ -947,6 +951,7 @@ function renderStreams() {
     });
     container.querySelectorAll(':scope > .stream-card').forEach(c => { if (!keep.has(c.id)) c.remove(); });
     syncThumbPlayers(); // Recoloca los vídeos en vivo en las tarjetas nuevas sin cortarlos
+    paintRtmpViewers();
 }
 
 function toggleExpand(channel) {
@@ -1242,6 +1247,29 @@ const srtParam = (url, key) => (srtUrlParams(url).find(([k]) => k === key) || []
 
 // Oculta la passphrase al mostrar URLs en pantalla
 const maskUrl = (url) => (url || '').replace(/(passphrase=)[^&]+/g, '$1••••••');
+
+/* Conexiones a las salidas RTMP locales (reproductores tirando de rtmp://servidor/out/clave) */
+const isLocalRtmpOut = (url) => /^rtmp:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//.test(url || '');
+
+function viewersAgo(ms) {
+    const s = Math.max(0, Math.round(ms / 1000));
+    if (s < 60) return `${s} s`;
+    if (s < 3600) return `${Math.floor(s / 60)} min`;
+    return `${Math.floor(s / 3600)} h ${Math.floor(s % 3600 / 60)} min`;
+}
+
+// Rellena los contadores que haya en pantalla (dashboard y tabla de Analytics)
+function paintRtmpViewers() {
+    document.querySelectorAll('[data-viewers]').forEach(el => {
+        const v = rtmpViewers[el.dataset.viewers];
+        const n = v ? v.count : 0;
+        el.classList.toggle('has', n > 0);
+        el.innerHTML = `<i class="fa-solid fa-eye"></i> ${n} ${n === 1 ? 'conexión' : 'conexiones'}`;
+        el.title = n
+            ? v.clients.map(c => `${c.ip} · conectado hace ${viewersAgo(Date.now() - c.since)}`).join('\n')
+            : 'Nadie está tirando de esta salida ahora mismo';
+    });
+}
 
 function srtCipherBadge(url) {
     if (!(url || '').startsWith('srt') || !srtParam(url, 'passphrase')) return '';

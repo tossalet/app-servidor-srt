@@ -47,7 +47,23 @@ function restartRtmpServer(newPort) {
     startRtmpServer(newPort);
 }
 
+// "::ffff:192.168.1.20:51234" -> "192.168.1.20"
+function cleanIp(ip) {
+    let s = String(ip || '');
+    const i = s.lastIndexOf(':');
+    if (i > 0 && /^\d+$/.test(s.slice(i + 1))) s = s.slice(0, i);
+    return s.replace(/^::ffff:/, '');
+}
+
+// Reproductores conectados a cada stream (vMix, VLC, OBS... tirando de rtmp://servidor/out/clave)
+function viewers(streamPath) {
+    const b = Context.broadcasts.get(streamPath);
+    if (!b) return [];
+    return [...b.subscribers.values()].map(s => ({ ip: cleanIp(s.ip), since: s.createTime, bytes: s.outBytes || 0 }));
+}
+
 module.exports = {
     startRtmpServer,
-    restartRtmpServer
+    restartRtmpServer,
+    viewers
 };

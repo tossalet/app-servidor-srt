@@ -854,6 +854,40 @@ setInterval(() => {
 }, 1000);
 
 /* =======================================
+ *  CONEXIONES A LAS SALIDAS RTMP LOCALES
+ *  Una salida "RTMP local" publica en el servidor RTMP de esta máquina (rtmp://127.0.0.1:1935/out/clave)
+ *  y los reproductores (vMix, VLC, OBS...) tiran de ahí: el servidor RTMP sabe cuántos hay.
+ *  De un RTMP remoto (YouTube, Facebook...) no se puede saber: esas conexiones sólo las ve la plataforma.
+ * ======================================= */
+const LOCAL_RTMP_OUT = /^rtmp:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?(\/[^?#]+)/;
+
+// { id: { count, clients: [{ ip, since, bytes }] } } de las salidas RTMP locales en marcha
+function rtmpViewers() {
+    const rtmpServer = require('./rtmpServer');
+    const out = {};
+    for (const st of outputs.values()) {
+        const m = (st.cfg.url || '').match(LOCAL_RTMP_OUT);
+        if (!m) continue;
+        const clients = rtmpServer.viewers(m[1]);
+        out[st.id] = { count: clients.length, clients };
+    }
+    return out;
+}
+
+// El panel recibe el recuento cada 2 s, sólo si ha cambiado (o cada 30 s para quien acaba de entrar)
+let lastViewersJson = '';
+let lastViewersAt = 0;
+setInterval(() => {
+    const v = rtmpViewers();
+    // Sin los bytes: cambian siempre y no hacen falta para saber si ha cambiado el recuento
+    const json = JSON.stringify(Object.entries(v).map(([id, x]) => [id, x.clients.map(c => c.ip + c.since)]));
+    if (json === lastViewersJson && Date.now() - lastViewersAt < 30000) return;
+    lastViewersJson = json;
+    lastViewersAt = Date.now();
+    emit('rtmp_viewers', v);
+}, 2000);
+
+/* =======================================
  *  ESTADO / APAGADO
  * ======================================= */
 
@@ -950,6 +984,7 @@ module.exports = {
     getTelemetry,
     getCounts,
     getMetricsSnapshot,
+    rtmpViewers,
     shutdown,
     THUMBS_DIR,
     HLS_DIR,

@@ -583,6 +583,7 @@ io.on('connection', (socket) => {
     // Histórico completo una sola vez; después sólo se envía el punto nuevo en cada 'stats'
     socket.emit('telemetry_snapshot', streamManager.getTelemetry());
     socket.emit('encoders_status', encoders.statusList());
+    socket.emit('rtmp_viewers', streamManager.rtmpViewers());
 });
 
 // Un fallo puntual en una promesa no debe tumbar todos los streams

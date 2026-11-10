@@ -395,6 +395,40 @@ function login(username, ip, ok) {
     notify(`⚠️ Intento de acceso al panel con usuario o contraseña incorrectos ("${String(username || '').slice(0, 40)}") desde ${ip}.`);
 }
 
+/* =======================================
+ *  CONEXIONES A LAS SALIDAS RTMP LOCALES (cada 2 s)
+ *  Sólo se avisa de quien sigue conectado 3 s: los reproductores que tantean y se van no cuentan
+ * ======================================= */
+let viewersNow = {};
+const viewerSeen = new Map(); // `${id}|${ip}|${since}` -> { notified }
+function watchViewers() {
+    viewersNow = streamManager.rtmpViewers();
+    const now = Date.now();
+    const alive = new Set();
+    for (const [id, v] of Object.entries(viewersNow)) {
+        for (const c of v.clients) {
+            const k = `${id}|${c.ip}|${c.since}`;
+            alive.add(k);
+            const e = viewerSeen.get(k) || { notified: false };
+            viewerSeen.set(k, e);
+            if (!e.notified && now - c.since >= STABLE_MS) {
+                e.notified = true;
+                notify(`👁 Nueva conexión a la salida ${outName(id)} desde ${c.ip}. Ahora ${v.count === 1 ? 'hay 1 conexión' : `hay ${v.count} conexiones`}.`);
+            }
+        }
+    }
+    for (const [k, e] of viewerSeen) {
+        if (alive.has(k)) continue;
+        viewerSeen.delete(k);
+        if (!e.notified) continue;
+        const [id, ip, since] = k.split('|');
+        // Si se ha parado la salida entera, ya avisa el panel: no un mensaje por reproductor
+        if (!viewersNow[id]) continue;
+        const left = viewersNow[id].count;
+        notify(`👋 ${ip} se ha desconectado de la salida ${outName(id)} tras ${dur(now - Number(since))}. ${left === 1 ? 'Queda 1 conexión' : left ? `Quedan ${left} conexiones` : 'Ya no queda nadie conectado'}.`);
+    }
+}
+
 function encoder(name, host, online, error) {
     notify(online ? `✅ El encoder ${name} (${host}) vuelve a estar en línea.` : `🔴 El encoder ${name} (${host}) no responde: ${error || 'sin conexión'}.`);
 }
@@ -411,6 +445,7 @@ async function statusText(detailed) {
     await refreshConf();
     const snap = streamManager.getMetricsSnapshot();
     const live = new Map(snap.inputs.map(i => [i.channel, i]));
+    viewersNow = streamManager.rtmpViewers();
     const liveOut = new Map(snap.outputs.map(o => [o.id, o]));
     const lines = [`📡 Estado · ${clock()}`];
     let nLive = 0, nNoSignal = 0, nOff = 0;
@@ -448,7 +483,10 @@ async function statusText(detailed) {
             else if (i && !i.signal) ol = `⚪ ${outName(id)} · esperando señal`;
             else ol = `🔴 ${outName(id)} · NO EMITE`;
             const codec = oc.vcodec && oc.vcodec !== 'copy' ? ` · ${oc.vcodec}` : '';
-            lines.push(`   ↳ ${ol}${codec}`);
+            const v = viewersNow[id];
+            const conns = v ? ` · 👁 ${v.count} ${v.count === 1 ? 'conexión' : 'conexiones'}` : '';
+            lines.push(`   ↳ ${ol}${codec}${conns}`);
+            if (detailed && v && v.count) lines.push(`      ${v.clients.map(c => `${c.ip} (hace ${dur(Date.now() - c.since)})`).join(' · ')}`);
             if (detailed && o) {
                 const d = [];
                 if (o.srt) d.push(`RTT ${Math.round(o.srt.rtt)} ms`);
@@ -605,6 +643,7 @@ function init() {
     timers.push(setInterval(() => { try { watchStreams(); } catch (e) { console.error('[TELEGRAM]', e.message); } }, 1000));
     timers.push(setInterval(() => { try { watchSrt(); } catch (e) { console.error('[TELEGRAM]', e.message); } }, SRT_CHECK_MS));
     timers.push(setInterval(() => watchHost().catch(() => {}), 5000));
+    timers.push(setInterval(() => { try { watchViewers(); } catch (e) { console.error('[TELEGRAM]', e.message); } }, 2000));
 
     api('setMyCommands', {
         commands: [

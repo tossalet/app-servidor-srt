@@ -145,11 +145,13 @@ async function collect() {
         if (i.protocol === 'srt' && i.engine === 'srt-live-transmit') addSrt(r, l, i.srt, i.srtTotals, 'recv');
     }
 
+    const viewers = streamManager.rtmpViewers();
     for (const o of snap.outputs) {
         const l = { id: o.id, channel: o.channel, location: o.location, protocol: o.protocol };
         r.gauge('tsst_output_up', '1 si el proceso de salida está en marcha', { ...l, vcodec: o.vcodec }, o.running ? 1 : 0);
         r.gauge('tsst_output_bitrate_bits_per_second', 'Bitrate de salida', l, o.bitrateBps);
         r.counter('tsst_output_restarts_total', 'Reinicios del proceso de salida', l, o.restarts);
+        if (viewers[o.id]) r.gauge('tsst_output_rtmp_viewers', 'Reproductores conectados a una salida RTMP local', l, viewers[o.id].count);
         if (o.srtTotals || o.srt) addSrt(r, { channel: o.channel, output: o.id, location: o.location }, o.srt, o.srtTotals, 'send');
     }
 

@@ -158,6 +158,7 @@ El instalador lo guarda en `/opt/srt-server/.env` (`TELEGRAM_BOT_TOKEN`, `TELEGR
 | 🟠 Latencia SRT corta | Latencia menor que 3 × RTT, una vez por conexión |
 | ▶️ ⏸️ ➕ ✏️ 🗑️ | Quién enciende, apaga, crea, cambia o borra una entrada o salida en el panel |
 | 🔐 ⚠️ | Accesos al panel e intentos fallidos |
+| 👁 👋 | Un reproductor (vMix, VLC, OBS...) se conecta a una salida RTMP local o se desconecta, con su IP y cuántos quedan. El panel y `/estado` muestran el número de conexiones, y `/metrics` lo da como `tsst_output_rtmp_viewers`. En una salida RTMP remota (YouTube, Facebook...) no se puede saber: esas conexiones solo las ve la plataforma |
 | Encoders | Un encoder remoto deja de responder o vuelve |
 | Servidor | CPU o RAM por encima del 90 %, temperatura por encima de 80 °C, arranque y apagado del servidor |
 
