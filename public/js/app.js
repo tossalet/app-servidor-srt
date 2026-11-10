@@ -1439,98 +1439,167 @@ async function submitLatency(e) {
 // ===================================
 // FILE MANAGEMENT LOGIC
 // ===================================
+// Disco elegido y archivos cargados: la búsqueda filtra en el navegador sin volver a pedirlos
+let recDisk = null;
+let recFiles = [];
+let recDisks = [];
+
+function fmtBytes(n) {
+    if (!n) return '0 B';
+    const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.min(u.length - 1, Math.floor(Math.log(n) / Math.log(1024)));
+    const v = n / Math.pow(1024, i);
+    return `${v.toLocaleString('es-ES', { maximumFractionDigits: v < 10 && i > 1 ? 1 : 0 })} ${u[i]}`;
+}
+
+function diskLabel(d) {
+    if (d.id === 'local_test' || d.id === 'local_unix') return d.name;
+    const seg = String(d.path).replace(/[\\/]+$/, '').split(/[\\/]/).pop();
+    return seg || d.path;
+}
+
 async function fetchStorage() {
+    const grid = document.getElementById('storageDisksGrid');
+    if (!recDisks.length) grid.innerHTML = '<div class="rec-disk sk-card"></div><div class="rec-disk sk-card"></div>';
     try {
         const res = await fetch('/api/disks');
-        const disks = await res.json();
+        recDisks = await res.json();
+        if (!Array.isArray(recDisks)) recDisks = [];
+    } catch (e) {
+        grid.innerHTML = '<div class="rec-empty"><i class="fa-solid fa-plug-circle-xmark"></i><p>No se pudo consultar los discos.</p></div>';
+        return;
+    }
+    if (!recDisks.length) {
+        recDisk = null;
+        grid.innerHTML = '<div class="rec-empty"><i class="fa-brands fa-usb"></i><h3>No hay discos conectados</h3><p>Conecta un USB al servidor y pulsa recargar.</p></div>';
+        document.getElementById('storageFilesList').innerHTML = '';
+        document.getElementById('recSummary').textContent = '';
+        return;
+    }
+    if (!recDisks.find(d => d.path === recDisk)) recDisk = recDisks[0].path;
+    renderDisks();
+    fetchFiles();
+}
 
-        // Populate Grid
-        const grid = document.getElementById('storageDisksGrid');
-        grid.innerHTML = '';
-        const select = document.getElementById('storageDiskSelect');
-        const currentSelection = select.value;
-        select.innerHTML = '';
-
-        if (disks.length === 0) {
-            grid.innerHTML = '<div style="grid-column: span 3; text-align:center; padding: 20px; color:var(--text-muted);">No hay discos externos conectados.</div>';
-            return;
-        }
-
-        disks.forEach(d => {
-            // UI Grid
-            grid.innerHTML += `
-                <div class="analytics-card" style="box-shadow: 0 4px 10px rgba(0,0,0,0.5);">
-                    <div class="acard-title"><i class="fa-solid fa-hard-drive"></i> ${d.name}</div>
-                    <div class="acard-badge" style="background:var(--accent-blue);">Activo</div>
-                    <div style="font-size: 0.8rem; margin-top: 10px; color: var(--text-muted); text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${d.path}</div>
+function renderDisks() {
+    document.getElementById('storageDisksGrid').innerHTML = recDisks.map(d => {
+        const pct = d.size ? Math.min(100, Math.round(d.used / d.size * 100)) : null;
+        const level = pct === null ? '' : pct >= 90 ? 'crit' : pct >= 75 ? 'warn' : '';
+        const sel = d.path === recDisk;
+        return `
+            <button class="rec-disk ${sel ? 'selected' : ''}" role="radio" aria-checked="${sel}" data-path="${escapeHtml(d.path)}" onclick="selectDisk(this.dataset.path)">
+                <div class="rec-disk-top">
+                    <span class="rec-disk-icon"><i class="fa-solid fa-hard-drive"></i></span>
+                    <span class="rec-disk-name">${escapeHtml(diskLabel(d))}${diskLabel(d) !== d.path ? `<small>${escapeHtml(d.path)}</small>` : ''}</span>
+                    ${sel ? '<i class="fa-solid fa-circle-check rec-disk-check"></i>' : ''}
                 </div>
-            `;
-            // Select Population
-            const opt = document.createElement('option');
-            opt.value = d.path; // Enviamos absolPath limpio a /api/files
-            opt.innerText = d.name;
-            select.appendChild(opt);
-        });
+                ${pct === null ? '<div class="rec-disk-meta">Capacidad desconocida</div>' : `
+                <div class="rec-cap ${level}"><div style="width:${pct}%"></div></div>
+                <div class="rec-disk-meta"><span><b>${fmtBytes(d.size - d.used)}</b> libres</span><span>${pct}% de ${fmtBytes(d.size)}</span></div>`}
+            </button>`;
+    }).join('');
+}
 
-        // Maintain selection or def to first
-        if (currentSelection && disks.find(d => d.path === currentSelection)) {
-            select.value = currentSelection;
-        } else {
-            select.selectedIndex = 0;
-        }
-
-        fetchFiles();
-
-    } catch(e) { console.error('fetchStorage failed', e); }
+function selectDisk(p) {
+    if (p === recDisk) return;
+    recDisk = p;
+    recFiles = [];
+    renderDisks();
+    fetchFiles();
 }
 
 async function fetchFiles() {
-    const parentDisk = document.getElementById('storageDiskSelect').value;
-    if (!parentDisk) return;
+    if (!recDisk) return;
+    const list = document.getElementById('storageFilesList');
+    if (!recFiles.length) list.innerHTML = '<div class="rec-row sk-row"></div><div class="rec-row sk-row"></div><div class="rec-row sk-row"></div>';
     try {
-        const res = await fetch(`/api/files?disk=${encodeURIComponent(parentDisk)}`);
-        const files = await res.json();
-
-        const tbody = document.getElementById('storageFilesList');
-        tbody.innerHTML = '';
-
-        if (files.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding: 20px; color:var(--text-muted);">No hay grabaciones en este disco.</td></tr>';
-            return;
-        }
-
-        files.forEach(f => {
-            const sizeMB = (f.size / (1024*1024)).toFixed(1);
-            const dStr = new Date(f.date).toLocaleString('es-ES', { dateStyle:'short', timeStyle:'short' });
-            const sName = f.name;
-
-            tbody.innerHTML += `
-                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05); transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='transparent'">
-                    <td style="padding: 12px 10px; color: var(--text-main); font-weight: 500;"><i class="fa-regular fa-file-video" style="color:var(--accent-blue); margin-right:8px;"></i>${sName}</td>
-                    <td style="padding: 12px 10px;">${sizeMB} MB</td>
-                    <td style="padding: 12px 10px;">${dStr}</td>
-                    <td style="padding: 12px 10px; text-align:right;">
-                        <button onclick="previewFile('${f.url}', '${f.name}')" class="action-btn toggle-enabled" title="Previsualizar" style="background:var(--accent-blue);"><i class="fa-solid fa-play"></i></button>
-                        <a href="${f.url}" download="${f.name}" class="action-btn toggle-enabled" title="Descargar" style="text-decoration:none; display:inline-flex; align-items:center; justify-content:center; margin-left: 5px;"><i class="fa-solid fa-download"></i></a>
-                        <button onclick="deleteFile('${f.url}')" class="action-btn terminate" title="Eliminar" style="margin-left: 5px;"><i class="fa-solid fa-trash"></i></button>
-                    </td>
-                </tr>
-            `;
-        });
-    } catch(e) { console.error('fetchFiles failed', e); }
+        const res = await fetch(`/api/files?disk=${encodeURIComponent(recDisk)}`);
+        recFiles = await res.json();
+        if (!Array.isArray(recFiles)) recFiles = [];
+    } catch (e) {
+        recFiles = [];
+        list.innerHTML = '<div class="rec-empty"><p>No se pudo leer el disco.</p></div>';
+        return;
+    }
+    renderFiles();
 }
 
-async function deleteFile(urlPath) {
-    if (confirm("¿Estás seguro de eliminar esta grabación de forma permanente?")) {
-        try {
-            await fetch('/api/files/delete', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ filepath: urlPath })
-            });
-            fetchFiles();
-        } catch(e) { toast('No se pudo borrar la grabación'); }
+function recDayLabel(d) {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const day = new Date(d); day.setHours(0, 0, 0, 0);
+    const diff = Math.round((today - day) / 86400000);
+    if (diff === 0) return 'Hoy';
+    if (diff === 1) return 'Ayer';
+    const txt = day.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', year: day.getFullYear() === today.getFullYear() ? undefined : 'numeric' });
+    return txt.charAt(0).toUpperCase() + txt.slice(1);
+}
+
+function renderFiles() {
+    const list = document.getElementById('storageFilesList');
+    const q = (document.getElementById('recSearch').value || '').trim().toLowerCase();
+    const files = q ? recFiles.filter(f => f.name.toLowerCase().includes(q)) : recFiles;
+    const total = recFiles.reduce((a, f) => a + (f.size || 0), 0);
+    document.getElementById('recSummary').textContent = recFiles.length
+        ? `${recFiles.length} archivo${recFiles.length > 1 ? 's' : ''} · ${fmtBytes(total)}` : '';
+
+    if (!recFiles.length) {
+        list.innerHTML = '<div class="rec-empty"><i class="fa-regular fa-folder-open"></i><h3>Todavía no hay grabaciones</h3><p>Añade a una entrada una salida de tipo grabación y los archivos aparecerán aquí.</p></div>';
+        return;
     }
+    if (!files.length) {
+        list.innerHTML = `<div class="rec-empty"><p>Ninguna grabación contiene «${escapeHtml(q)}».</p></div>`;
+        return;
+    }
+    const isAdmin = currentUser && currentUser.role === ROLE_ADMIN;
+    const now = Date.now();
+    let html = '', lastDay = '';
+    files.forEach(f => {
+        const date = new Date(f.date);
+        const day = recDayLabel(date);
+        if (day !== lastDay) { html += `<div class="rec-day">${day}</div>`; lastDay = day; }
+        const ext = (f.name.split('.').pop() || '').toUpperCase();
+        // Escrito hace menos de 15 s: casi seguro que se está grabando ahora mismo
+        const live = now - date.getTime() < 15000;
+        const idx = recFiles.indexOf(f);
+        html += `
+            <div class="rec-row ${live ? 'live' : ''}">
+                <button class="rec-thumb" onclick="previewRec(${idx})" title="Reproducir" aria-label="Reproducir ${escapeHtml(f.name)}"><i class="fa-solid fa-play"></i></button>
+                <div class="rec-info">
+                    <div class="rec-name" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</div>
+                    <div class="rec-meta">
+                        ${live ? '<span class="rec-live"><span></span>Grabando</span>' : ''}
+                        <span>${date.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}</span>
+                        <span>${fmtBytes(f.size)}</span>
+                        <span class="rec-ext">${escapeHtml(ext)}</span>
+                    </div>
+                </div>
+                <div class="rec-actions">
+                    <a class="action-btn" href="${f.url}" download="${escapeHtml(f.name)}" title="Descargar" aria-label="Descargar"><i class="fa-solid fa-download"></i></a>
+                    ${isAdmin ? `<button class="action-btn delete-btn" onclick="deleteRec(${idx})" title="${live ? 'No se puede borrar mientras se graba' : 'Borrar'}" aria-label="Borrar" ${live ? 'disabled' : ''}><i class="fa-solid fa-trash"></i></button>` : ''}
+                </div>
+            </div>`;
+    });
+    list.innerHTML = html;
+}
+
+function previewRec(i) { const f = recFiles[i]; if (f) previewFile(f.url, f.name); }
+
+async function deleteRec(i) {
+    const f = recFiles[i];
+    if (!f) return;
+    if (!confirm(`¿Borrar «${f.name}» (${fmtBytes(f.size)})? No se puede deshacer.`)) return;
+    try {
+        const r = await fetch('/api/files/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filepath: f.url })
+        });
+        if (!r.ok) throw new Error();
+        toast(`Borrada · ${f.name}`, 'ok');
+        recFiles = recFiles.filter(x => x !== f);
+        renderFiles();
+        fetchStorage(); // el espacio libre del disco cambia
+    } catch (e) { toast('No se pudo borrar la grabación'); }
 }
 
 function previewFile(url, fname) {

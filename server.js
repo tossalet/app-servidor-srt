@@ -409,7 +409,10 @@ app.get('/api/disks', async (req, res) => {
                 drives.push({
                     id: f.mount.replace(/[:\\\/]/g, '_'), // ID seguro
                     name: `[${f.fs}] ${f.mount}`, // ej: [sda1] /media/pi/USB
-                    path: f.mount
+                    path: f.mount,
+                    device: f.fs,
+                    size: f.size || 0, // bytes totales y usados: barra de capacidad en el panel
+                    used: f.used || 0
                 });
             }
         });
@@ -420,6 +423,14 @@ app.get('/api/disks', async (req, res) => {
                 drives.push({ id: 'local_test', name: 'Disco Prueba', path: mediaRoot });
             } else if (fs.existsSync(mediaRoot)) { // Unix fallback
                 drives.push({ id: 'local_unix', name: 'Ruta Host Local', path: mediaRoot });
+            }
+            // Capacidad de la ruta por defecto (statfs existe desde Node 18.15)
+            for (const d of drives) {
+                try {
+                    const s = await fs.promises.statfs(d.path);
+                    d.size = s.blocks * s.bsize;
+                    d.used = (s.blocks - s.bfree) * s.bsize;
+                } catch (e) { /* sin datos de capacidad */ }
             }
         }
 

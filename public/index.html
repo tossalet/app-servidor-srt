@@ -73,40 +73,28 @@
             </section>
 
             <section class="storage-container" id="storageContainer" style="display:none; padding-bottom: 2rem;">
-                <div class="storage-header" style="padding: 1.5rem; background: rgba(0,0,0,0.2); border-radius: 12px; margin-bottom: 1.5rem;">
-                    <h2 style="margin-bottom: 0.5rem; display:flex; align-items:center; gap:10px;">
-                        <i class="fa-solid fa-usb"></i> Discos Externos Conectados
-                        <button onclick="fetchStorage()" style="background:transparent; border:none; color:var(--accent-blue); cursor:pointer; margin-left:auto;"><i class="fa-solid fa-rotate-right"></i></button>
-                    </h2>
-                    <p style="color:var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">Lista de unidades USB detectadas por el sistema listas para la grabación continua.</p>
-                    <div id="storageDisksGrid" class="analytics-grid">
-                        <!-- Discos UI -->
+                <div class="rec-section">
+                    <div class="rec-head">
+                        <div>
+                            <h2>Discos</h2>
+                            <p>Elige dónde mirar. Las salidas de grabación escriben en estas unidades.</p>
+                        </div>
+                        <button class="rec-icon-btn" onclick="fetchStorage()" title="Volver a buscar discos" aria-label="Volver a buscar discos"><i class="fa-solid fa-rotate-right"></i></button>
                     </div>
+                    <div id="storageDisksGrid" class="rec-disks" role="radiogroup" aria-label="Disco"></div>
                 </div>
 
-                <div class="storage-files" style="padding: 1.5rem; background: rgba(0,0,0,0.2); border-radius: 12px;">
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 1rem;">
-                        <h3 ><i class="fa-regular fa-folder-open"></i> Explorador de Grabaciones</h3>
-                        <select id="storageDiskSelect" onchange="fetchFiles()" class="form-control" style="width:200px; padding: 5px; height: 32px; font-size: 0.8rem;">
-                            <!-- Opciones -->
-                        </select>
+                <div class="rec-section">
+                    <div class="rec-head">
+                        <div>
+                            <h2>Grabaciones <span id="recSummary" class="rec-summary"></span></h2>
+                        </div>
+                        <label class="rec-search">
+                            <i class="fa-solid fa-magnifying-glass"></i>
+                            <input type="search" id="recSearch" placeholder="Buscar por nombre" oninput="renderFiles()" autocomplete="off">
+                        </label>
                     </div>
-                    
-                    <div style="overflow-x: auto;">
-                        <table style="width: 100%; text-align: left; border-collapse: collapse; font-size: 0.9rem;">
-                            <thead>
-                                <tr style="border-bottom: 1px solid rgba(255,255,255,0.1); color: var(--text-muted);">
-                                    <th style="padding: 10px;">Nombre</th>
-                                    <th style="padding: 10px;">Tamaño</th>
-                                    <th style="padding: 10px;">Fecha</th>
-                                    <th style="padding: 10px; text-align:right;">Acciones</th>
-                                </tr>
-                            </thead>
-                            <tbody id="storageFilesList">
-                                <!-- Archivos -->
-                            </tbody>
-                        </table>
-                    </div>
+                    <div id="storageFilesList" class="rec-list"></div>
                 </div>
             </section>
             
