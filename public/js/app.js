@@ -89,7 +89,7 @@ async function loadSession() {
     const status = await fetch('/api/status').then(r => r.json()).catch(() => ({}));
     if (status.grafanaPort) {
         const link = document.getElementById('nav-grafana');
-        link.href = `${window.location.protocol}//${window.location.hostname}:${status.grafanaPort}/d/tsst`;
+        link.href = `${status.grafanaProtocol || 'http'}://${window.location.hostname}:${status.grafanaPort}/d/tsst`;
         // Mismo enlace junto al historial del dashboard, para ir al detalle
         const histLink = document.getElementById('history-grafana');
         histLink.href = link.href;
@@ -2392,7 +2392,7 @@ function renderEncoders() {
         const s = encoderStateHtml(enc);
         const st = enc.status || {};
         const led = st.online === undefined ? 'yellow' : (s.ok ? '' : 'error');
-        const proxyUrl = `http://${window.location.hostname}:${enc.proxy_port}/`;
+        const proxyUrl = `${window.location.protocol}//${window.location.hostname}:${enc.proxy_port}/`; // Mismo protocolo que el panel
         return `
         <div class="enc-card">
             <div class="enc-head">

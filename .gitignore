@@ -3,3 +3,8 @@ onpremise.db
 media/
 *.log
 .env
+certs/
+onpremise.db-shm
+onpremise.db-wal
+session.secret
+.claude/

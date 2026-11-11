@@ -3,7 +3,7 @@
  *
  * - Cada encoder tiene la IP con la que el servidor lo alcanza: la de su LAN detrás del router del
  *   sitio (vía túnel WireGuard) o la del propio túnel si el router redirige el puerto.
- * - Proxy autenticado: la web del encoder se abre en http://IP_DEL_SERVIDOR:<puerto propio>, uno por
+ * - Proxy autenticado: la web del encoder se abre en http(s)://IP_DEL_SERVIDOR:<puerto propio>, uno por
  *   encoder (las webs de los encoders usan rutas absolutas y no funcionan bajo un subdirectorio).
  *   Sólo entra quien tiene sesión en el panel; la cookie del panel nunca se reenvía al encoder.
  * - Vigilancia cada 10 s: conexión TCP a la web del encoder y, si tiene túnel, el último handshake
@@ -12,6 +12,7 @@
  *   router (claves, IP del túnel y red LAN del sitio) y da su archivo de configuración.
  */
 const http = require('http');
+const tlsConfig = require('./tlsConfig'); // El proxy usa HTTPS si el panel lo usa
 const https = require('https');
 const net = require('net');
 const tls = require('tls');
@@ -291,7 +292,7 @@ function handleRequest(id, req, res) {
         const h = { ...pres.headers };
         // Redirecciones absolutas al encoder -> relativas al proxy
         if (h.location && h.location.startsWith(origin)) h.location = h.location.slice(origin.length) || '/';
-        // Cookies del encoder: sin Domain (es la IP del servidor) ni Secure (el proxy va por HTTP)
+        // Cookies del encoder: sin Domain (es la IP del servidor) ni Secure (el proxy puede ir por HTTP)
         if (h['set-cookie']) h['set-cookie'] = h['set-cookie'].map(c => c.replace(/;\s*domain=[^;]*/ig, '').replace(/;\s*secure/ig, '').replace(/;\s*samesite=none/ig, '; SameSite=Lax'));
         delete h['strict-transport-security'];
         res.writeHead(pres.statusCode || 502, h);
@@ -329,7 +330,7 @@ function startProxy(enc) {
     const current = proxies.get(enc.id);
     if (current && current.port === port) return;
     stopProxy(enc.id);
-    const server = http.createServer((req, res) => handleRequest(enc.id, req, res));
+    const server = tlsConfig.createServer((req, res) => handleRequest(enc.id, req, res));
     server.on('upgrade', (req, socket, head) => handleUpgrade(enc.id, req, socket, head));
     server.on('error', (err) => {
         console.error(`[ENCODERS] Proxy de "${enc.name}" en el puerto ${port}: ${err.message}`);

@@ -23,11 +23,16 @@ services:
       - tsst_data:/usr/src/app/data
       # rslave: los USB que se conectan DESPUÉS de arrancar el contenedor también se ven dentro
       - /media:/media:rslave
+      # HTTPS opcional: deja fullchain.pem y privkey.pem en ./certs y define
+      # TLS_CERT_FILE=/certs/fullchain.pem TLS_KEY_FILE=/certs/privkey.pem. Sin ellas, HTTP.
+      - ./certs:/certs:ro
     environment:
       - NODE_ENV=production
       - GRAFANA_PORT=${GRAFANA_PORT:-} # Ponlo a 4001 (panel + 1) si usas el perfil monitoring: aparece "Gráficas" en el panel
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-} # Bot de Telegram: avisos y comandos (/estado, /informe...)
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      - TLS_CERT_FILE=${TLS_CERT_FILE:-}
+      - TLS_KEY_FILE=${TLS_KEY_FILE:-}
 
   prometheus:
     image: prom/prometheus:v3.1.0

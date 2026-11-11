@@ -1,5 +1,5 @@
 const express = require('express');
-const http = require('http');
+const tlsConfig = require('./tlsConfig'); // HTTPS si hay TLS_CERT_FILE/TLS_KEY_FILE; si no, HTTP
 const { Server } = require('socket.io');
 const path = require('path');
 const fs = require('fs');
@@ -16,7 +16,7 @@ const telegram = require('./telegram');
 const si = require('systeminformation');
 
 const app = express();
-const server = http.createServer(app);
+const server = tlsConfig.createServer(app);
 // Sin CORS: el panel se sirve desde el mismo origen y la cookie de sesión es SameSite=Strict
 const io = new Server(server);
 io.use(auth.socketAuth);
@@ -81,8 +81,14 @@ app.use('/media', express.static(mediaRoot));
 
 // Simple API status endpoint
 app.get('/api/status', (req, res) => {
-    // grafanaPort: el panel muestra el enlace "Gráficas" sólo si hay Grafana instalado
-    res.json({ online: true, app: 'TSST SERVER', version: '1.0.0', grafanaPort: parseInt(process.env.GRAFANA_PORT, 10) || null });
+    // grafanaPort: el panel muestra el enlace "Gráficas" sólo si hay Grafana instalado.
+    // Grafana va por HTTP salvo que el instalador le haya puesto el certificado (GRAFANA_PROTOCOL=https)
+    res.json({
+        online: true, app: 'TSST SERVER', version: '1.0.0',
+        grafanaPort: parseInt(process.env.GRAFANA_PORT, 10) || null,
+        grafanaProtocol: process.env.GRAFANA_PROTOCOL === 'https' ? 'https' : 'http',
+        https: tlsConfig.enabled
+    });
 });
 
 const os = require('os');
@@ -619,5 +625,5 @@ process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 const PORT = process.env.PORT || 4000;
 telegram.init();
 server.listen(PORT, () => {
-    console.log(`TSST SERVER running on port ${PORT}`);
+    console.log(`TSST SERVER running on port ${PORT} (${tlsConfig.protocol.toUpperCase()})`);
 });

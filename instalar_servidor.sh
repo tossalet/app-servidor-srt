@@ -10,7 +10,7 @@ fi
 
 # Instalar whiptail por si no está (librería para dibujar menús visuales en la consola)
 apt-get update -qq
-apt-get install -y whiptail
+apt-get install -y whiptail openssl
 
 # Bienvenida
 whiptail --title "Instalador Servidor SRT TSST" --msgbox "Bienvenido al asistente de instalación del Servidor SRT/RTMP para mini PC Intel.\n\nConfiguraremos el panel, instalaremos Node.js, FFmpeg y los drivers de Intel Quick Sync, y optimizaremos el sistema para vídeo en directo." 14 65
@@ -87,14 +87,50 @@ if whiptail --title "Encoders remotos" --yesno "$WG_QUESTION" 16 70; then
     case "$WG_ENDPOINT" in *[!A-Za-z0-9.:-]*) WG_ENDPOINT="" ;; esac
 fi
 
+# HTTPS opcional: si no se activa, el panel va por HTTP en la red local como siempre
+INSTALL_TLS="no"
+OLD_CERT=$(sed -n 's/^TLS_CERT_FILE=//p' /opt/srt-server/.env 2>/dev/null | head -1)
+OLD_KEY=$(sed -n 's/^TLS_KEY_FILE=//p' /opt/srt-server/.env 2>/dev/null | head -1)
+OLD_DOMAIN=$(sed -n 's/^TLS_DOMAIN=//p' /opt/srt-server/.env 2>/dev/null | head -1)
+TLS_QUESTION="¿Activar HTTPS en el panel con un certificado SSL?\n\nNecesitas tener ya en este equipo el certificado (con su cadena intermedia, fullchain) y su clave privada, en formato PEM.\n\nSi dices que no, el panel funciona por HTTP en la red local."
+[ -n "$OLD_CERT" ] && TLS_QUESTION="Este servidor ya usa HTTPS con:\n$OLD_CERT\n\n¿Mantener HTTPS?"
+if whiptail --title "HTTPS" --yesno "$TLS_QUESTION" 15 70; then
+    TLS_CERT="${OLD_CERT:-/etc/ssl/produccionvalencia/fullchain.pem}"
+    TLS_KEY="${OLD_KEY:-/etc/ssl/produccionvalencia/privkey.pem}"
+    while true; do
+        TLS_CERT=$(whiptail --title "HTTPS" --inputbox "Ruta del certificado (fullchain, PEM):" 10 70 "$TLS_CERT" 3>&1 1>&2 2>&3) || break
+        TLS_KEY=$(whiptail --title "HTTPS" --inputbox "Ruta de la clave privada (PEM):" 10 70 "$TLS_KEY" 3>&1 1>&2 2>&3) || break
+        TLS_ERR=""
+        case "$TLS_CERT$TLS_KEY" in *[!A-Za-z0-9._/-]*) TLS_ERR="Las rutas sólo pueden llevar letras, números, . _ / -" ;; esac
+        if [ -z "$TLS_ERR" ]; then
+            if ! openssl x509 -in "$TLS_CERT" -noout 2>/dev/null; then TLS_ERR="No encuentro un certificado válido en $TLS_CERT"
+            elif ! openssl pkey -in "$TLS_KEY" -noout 2>/dev/null; then TLS_ERR="No encuentro una clave privada válida en $TLS_KEY"
+            elif [ "$(openssl x509 -in "$TLS_CERT" -noout -pubkey | openssl sha256)" != "$(openssl pkey -in "$TLS_KEY" -pubout | openssl sha256)" ]; then TLS_ERR="La clave no corresponde a ese certificado"
+            elif ! openssl x509 -in "$TLS_CERT" -noout -checkend 0 > /dev/null; then TLS_ERR="El certificado está caducado"
+            fi
+        fi
+        if [ -z "$TLS_ERR" ]; then
+            TLS_NAMES=$(openssl x509 -in "$TLS_CERT" -noout -ext subjectAltName 2>/dev/null | grep -o 'DNS:[^,]*' | sed 's/DNS://' | tr '\n' ' ')
+            TLS_END=$(openssl x509 -in "$TLS_CERT" -noout -enddate | cut -d= -f2)
+            TLS_DOMAIN=$(whiptail --title "HTTPS" --inputbox "Certificado válido para: $TLS_NAMES\nCaduca: $TLS_END\n\nNombre con el que se entra al panel (ej. restream.produccionvalencia.es):" 13 70 "$OLD_DOMAIN" 3>&1 1>&2 2>&3) || break
+            case "$TLS_DOMAIN" in *[!A-Za-z0-9.-]*) TLS_DOMAIN="" ;; esac
+            INSTALL_TLS="yes"
+            break
+        fi
+        whiptail --title "HTTPS" --yesno "$TLS_ERR.\n\n¿Probar con otras rutas? (No = seguir sin HTTPS)" 11 70 || break
+    done
+fi
+
 MONITORING_TEXT="No"
 if [ "$INSTALL_MONITORING" = "yes" ]; then MONITORING_TEXT="Sí (Grafana en puerto $GRAFANA_PORT)"; fi
 
 # Confirmación Final
+TLS_TEXT="No (HTTP en la red local)"
+if [ "$INSTALL_TLS" = "yes" ]; then TLS_TEXT="Sí (${TLS_DOMAIN:-certificado propio})"; fi
 WG_TEXT="No"
 if [ "$INSTALL_WG" = "yes" ]; then WG_TEXT="Sí (UDP $WG_PORT, ${WG_ENDPOINT:-sin dirección pública})"; fi
 
-whiptail --title "Resumen de Instalación" --yesno "Se procederá a instalar con la siguiente configuración:\n\n- Panel Web: Puerto $WEB_PORT\n- Señal SRT: Puerto Base $SRT_PORT\n- Monitorización: $MONITORING_TEXT\n- Bot de Telegram: $TELEGRAM\n- WireGuard (encoders): $WG_TEXT\n\n¿Deseas iniciar la instalación ahora?" 17 70
+whiptail --title "Resumen de Instalación" --yesno "Se procederá a instalar con la siguiente configuración:\n\n- Panel Web: Puerto $WEB_PORT\n- Señal SRT: Puerto Base $SRT_PORT\n- Monitorización: $MONITORING_TEXT\n- Bot de Telegram: $TELEGRAM\n- WireGuard (encoders): $WG_TEXT\n- HTTPS: $TLS_TEXT\n\n¿Deseas iniciar la instalación ahora?" 18 70
 
 if [ $? -ne 0 ]; then
     clear
@@ -143,6 +179,14 @@ ExecStart=/bin/sh -c 'for g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_gove
 WantedBy=multi-user.target
 EOF
 
+# Los logs del sistema no pueden llenar el disco: máximo 500 MB
+mkdir -p /etc/systemd/journald.conf.d
+cat <<EOF > /etc/systemd/journald.conf.d/90-tsst.conf
+[Journal]
+SystemMaxUse=500M
+EOF
+systemctl restart systemd-journald
+
 # Un servidor no debe suspenderse nunca
 systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target > /dev/null 2>&1
 
@@ -179,7 +223,14 @@ echo "SRT_BASE_PORT=$SRT_PORT" >> .env
 # El panel muestra el enlace "Gráficas" si hay Grafana
 if [ "$INSTALL_MONITORING" = "yes" ]; then echo "GRAFANA_PORT=$GRAFANA_PORT" >> .env; fi
 # Dirección pública que se pone en la configuración de los routers de los encoders
-ENV_REPLACED='PORT|SRT_BASE_PORT|GRAFANA_PORT|TELEGRAM_BOT_TOKEN|TELEGRAM_CHAT_ID'
+ENV_REPLACED='PORT|SRT_BASE_PORT|GRAFANA_PORT|GRAFANA_PROTOCOL|TELEGRAM_BOT_TOKEN|TELEGRAM_CHAT_ID|TLS_CERT_FILE|TLS_KEY_FILE|TLS_DOMAIN'
+# HTTPS (tlsConfig.js): sin estas variables el panel va por HTTP
+if [ "$INSTALL_TLS" = "yes" ]; then
+    echo "TLS_CERT_FILE=$TLS_CERT" >> .env
+    echo "TLS_KEY_FILE=$TLS_KEY" >> .env
+    [ -n "$TLS_DOMAIN" ] && echo "TLS_DOMAIN=$TLS_DOMAIN" >> .env
+    [ "$INSTALL_MONITORING" = "yes" ] && echo "GRAFANA_PROTOCOL=https" >> .env
+fi
 # Bot de Telegram (telegram.js)
 if [ "$TELEGRAM" = "yes" ]; then
     echo "TELEGRAM_BOT_TOKEN=$TG_TOKEN" >> .env
@@ -306,6 +357,37 @@ Environment=GF_ANALYTICS_CHECK_FOR_UPDATES=false
 Environment=GF_NEWS_NEWS_FEED_ENABLED=false
 Environment=GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/tsst/tsst.json
 EOF
+    # HTTPS también en Grafana: copia del certificado legible por el usuario grafana.
+    # Una unidad .path vuelve a copiarlo y reinicia Grafana cuando se renueva el certificado.
+    rm -f /etc/systemd/system/tsst-grafana-tls.path /etc/systemd/system/tsst-grafana-tls.service
+    if [ "$INSTALL_TLS" = "yes" ]; then
+        mkdir -p /etc/grafana/tls
+        cat <<EOF > /etc/systemd/system/tsst-grafana-tls.service
+[Unit]
+Description=Copia el certificado del panel TSST a Grafana
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'install -m 640 -o root -g grafana $TLS_CERT /etc/grafana/tls/fullchain.pem && install -m 640 -o root -g grafana $TLS_KEY /etc/grafana/tls/privkey.pem && systemctl try-restart grafana-server'
+EOF
+        cat <<EOF > /etc/systemd/system/tsst-grafana-tls.path
+[Unit]
+Description=Vigila el certificado del panel TSST
+
+[Path]
+PathChanged=$TLS_CERT
+
+[Install]
+WantedBy=multi-user.target
+EOF
+        install -m 640 -o root -g grafana "$TLS_CERT" /etc/grafana/tls/fullchain.pem
+        install -m 640 -o root -g grafana "$TLS_KEY" /etc/grafana/tls/privkey.pem
+        cat <<EOF >> /etc/systemd/system/grafana-server.service.d/tsst.conf
+Environment=GF_SERVER_PROTOCOL=https
+Environment=GF_SERVER_CERT_FILE=/etc/grafana/tls/fullchain.pem
+Environment=GF_SERVER_CERT_KEY=/etc/grafana/tls/privkey.pem
+EOF
+    fi
     cat <<EOF > /etc/systemd/system/prometheus.service.d/tsst.conf
 [Service]
 Nice=10
@@ -313,10 +395,11 @@ EOF
     systemctl daemon-reload
     systemctl enable prometheus grafana-server
     systemctl restart prometheus grafana-server
+    [ "$INSTALL_TLS" = "yes" ] && systemctl enable --now tsst-grafana-tls.path > /dev/null 2>&1
 
     # Contraseña del admin de Grafana (también vale en reinstalaciones). Se espera a que arranque.
     for i in $(seq 1 30); do
-        curl -s "http://127.0.0.1:$GRAFANA_PORT/api/health" > /dev/null && break
+        curl -sk "$( [ "$INSTALL_TLS" = "yes" ] && echo https || echo http )://127.0.0.1:$GRAFANA_PORT/api/health" > /dev/null && break
         sleep 2
     done
     if [ -n "$GRAFANA_PASS" ]; then
@@ -326,16 +409,23 @@ EOF
 fi
 
 LOCAL_IP=$(hostname -I | awk '{print $1}')
+# Con HTTPS se entra por el nombre del certificado; por IP el navegador avisaría de certificado no válido
+PROTO="http"; HOST="$LOCAL_IP"
+if [ "$INSTALL_TLS" = "yes" ]; then PROTO="https"; HOST="${TLS_DOMAIN:-$LOCAL_IP}"; fi
 
 GRAFANA_TEXT=""
-if [ "$INSTALL_MONITORING" = "yes" ]; then GRAFANA_TEXT="\n\n📊 Gráficas y alertas (Grafana, usuario admin):\n👉 http://$LOCAL_IP:$GRAFANA_PORT"; fi
+if [ "$INSTALL_MONITORING" = "yes" ]; then GRAFANA_TEXT="\n\n📊 Gráficas y alertas (Grafana, usuario admin):\n👉 $PROTO://$HOST:$GRAFANA_PORT"; fi
 
-whiptail --title "¡Instalación Completada!" --msgbox "El Servidor SRT se ha instalado correctamente y arrancará solo cada vez que enciendas el mini PC.\n\nPuedes acceder a tu panel de control desde cualquier navegador en la red ingresando a:\n\n👉 http://$LOCAL_IP:$WEB_PORT$GRAFANA_TEXT" 18 65
+whiptail --title "¡Instalación Completada!" --msgbox "El Servidor SRT se ha instalado correctamente y arrancará solo cada vez que enciendas el mini PC.\n\nPuedes acceder a tu panel de control desde cualquier navegador en la red ingresando a:\n\n👉 $PROTO://$HOST:$WEB_PORT$GRAFANA_TEXT" 18 65
 
 clear
 echo "✅ ¡Instalación Finalizada con éxito!"
-echo "📍 Panel Web en: http://$LOCAL_IP:$WEB_PORT"
-if [ "$INSTALL_MONITORING" = "yes" ]; then echo "📊 Grafana en: http://$LOCAL_IP:$GRAFANA_PORT (usuario admin)"; fi
+echo "📍 Panel Web en: $PROTO://$HOST:$WEB_PORT"
+if [ "$INSTALL_MONITORING" = "yes" ]; then echo "📊 Grafana en: $PROTO://$HOST:$GRAFANA_PORT (usuario admin)"; fi
+if [ "$INSTALL_TLS" = "yes" ]; then
+    echo "🔒 HTTPS activo. Caduca: $TLS_END. Al renovar, sustituye $TLS_CERT y $TLS_KEY: el panel lo recarga solo."
+    echo "   El nombre $HOST debe apuntar a este equipo (DNS público + puerto abierto en el router, o DNS local)."
+fi
 if [ "$INSTALL_WG" = "yes" ]; then
     echo "🔐 WireGuard activo en UDP $WG_PORT. Abre ese puerto hacia $LOCAL_IP en el router de aquí."
     echo "   Los accesos de los routers de los encoders se crean en el panel: Encoders → VPN."

@@ -86,7 +86,22 @@ El panel, la API, las miniaturas, las grabaciones y la telemetría en vivo piden
   - La sesión va en una cookie HttpOnly SameSite=Strict, firmada con `data/session.secret`.
   - Cambiar una contraseña o borrar un usuario cierra sus sesiones al momento.
   - Tras 5 intentos fallidos, la IP queda bloqueada de forma progresiva: 30 s, 60 s… hasta 15 min.
-- El panel va por HTTP en la red local. Para acceder desde Internet, ponlo detrás de un proxy HTTPS o de una VPN.
+- El panel va por HTTP en la red local, salvo que actives HTTPS (abajo). Para acceder desde Internet, usa HTTPS o una VPN.
+
+## HTTPS (opcional)
+
+El instalador pregunta si quieres HTTPS. Si dices que no, todo sigue por HTTP, que es lo normal en una instalación en red local.
+
+Si dices que sí, pide la ruta del certificado (con su cadena intermedia, `fullchain`) y de su clave privada, en PEM. Por defecto propone `/etc/ssl/produccionvalencia/fullchain.pem` y `privkey.pem`. Antes de seguir comprueba que la clave corresponde al certificado y que no está caducado.
+
+- El panel, la API, el socket y los proxies de los encoders van por HTTPS **en los mismos puertos**. Si hay Grafana, también lleva el certificado.
+- Se entra por el nombre del certificado (p. ej. `https://restream.produccionvalencia.es:3000`), que debe apuntar a este equipo. Por IP el navegador avisará de que el certificado no es válido.
+- **Renovación:** sustituye los dos ficheros por los nuevos. El panel los recarga solo en menos de un minuto, sin cortar señales, y Grafana se reinicia solo con el nuevo.
+- En el log (`journalctl -u tsst-srt`) aparece el certificado en uso y un aviso cuando queden menos de 30 días.
+- Si el certificado falta o está mal, el servidor no se cae: avisa en el log y arranca por HTTP.
+- Variables: `TLS_CERT_FILE`, `TLS_KEY_FILE` y `TLS_DOMAIN` (sólo para mostrar la dirección) en `/opt/srt-server/.env`. En Docker, ver `docker-compose.yml`.
+
+El instalador también limita los logs del sistema a 500 MB, para que nunca llenen el disco.
 
 ## Encoders remotos (URAY y similares)
 
@@ -230,3 +245,5 @@ Las métricas SRT sólo existen cuando la señal va por `srt-live-transmit`.
 | `PROMETHEUS_URL` | Dónde está Prometheus para el historial del dashboard (por defecto `http://127.0.0.1:9090`) |
 | `METRICS_TOKEN` | Token Bearer para leer `/metrics` desde otra máquina |
 | `SESSION_HOURS` | Duración de la sesión en horas (por defecto 168 = 7 días) |
+| `TLS_CERT_FILE`, `TLS_KEY_FILE` | Certificado (fullchain) y clave en PEM: activan HTTPS en el panel y los proxies |
+| `GRAFANA_PROTOCOL` | `https` si Grafana lleva el certificado (lo pone el instalador) |
