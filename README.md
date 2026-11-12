@@ -72,6 +72,20 @@ API: `POST /api/inputs/:channel/delay` con `{ "delay_ms": 240 }`.
 
 `Passthrough` (copy) es lo recomendado: casi no usa CPU. Si hace falta convertir, usa **H.264/H.265 por GPU Intel Quick Sync** (VAAPI): decodifica y codifica en la iGPU. Puedes comprobarlo con `vainfo`. Si tu GPU no es `/dev/dri/renderD128`, configura `VAAPI_DEVICE`.
 
+En CPUs Intel anteriores a la 5.ª generación (Haswell o más antiguas), `vainfo` carga el driver `i965` en lugar de `iHD`. Es lo normal: H.264 por Quick Sync funciona, pero H.265 no se puede codificar por hardware.
+
+## Discos para grabar
+
+El panel sólo muestra los discos montados en `/media` o `/mnt`. El instalador deja preparado el montaje automático:
+
+- Cualquier disco que no sea el del sistema (USB o interno) se monta en `/media/<etiqueta>` al conectarlo y en cada arranque. Si no tiene etiqueta, en `/media/disco-<uuid>`. La ruta es siempre la misma, así que las grabaciones configuradas siguen funcionando aunque cambie el orden de los discos.
+- Formatos: ext4, xfs, btrfs, NTFS, exFAT y FAT32. Un NTFS que se quitó de Windows sin expulsar se repara solo al montarlo.
+- No se montan los discos que SMART da por rotos, ni los que ya están en `/etc/fstab`.
+- Al quitar el disco se desmonta solo. Si una grabación apunta a un disco que no está, la salida espera a que vuelva en lugar de escribir en el disco del sistema.
+- Para grabar sólo en el servidor, ext4 es lo mejor. NTFS funciona, pero gasta algo más de CPU.
+
+Qué ha pasado con un disco: `journalctl -t tsst-automount`. Estado de salud: `smartctl -H /dev/sdX`.
+
 ## Acceso y usuarios
 
 El panel, la API, las miniaturas, las grabaciones y la telemetría en vivo piden iniciar sesión.

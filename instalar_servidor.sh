@@ -190,6 +190,81 @@ systemctl restart systemd-journald
 # Un servidor no debe suspenderse nunca
 systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target > /dev/null 2>&1
 
+echo "💽 Configurando el montaje automático de discos (USB e internos)..."
+# Sin escritorio nadie monta los discos, y el panel sólo ve los montados en /media o /mnt.
+# Cada disco que no sea del sistema se monta en /media/<etiqueta>: al pincharlo y en cada arranque.
+apt-get install -y ntfs-3g exfatprogs smartmontools
+cat <<'EOF' > /usr/local/sbin/tsst-automount
+#!/bin/bash
+# Monta /dev/$1 en /media/<etiqueta> si es un disco de datos. Lo lanza tsst-automount@.service.
+K="$1"; DEV="/dev/$K"
+log() { logger -t tsst-automount "$K: $1"; echo "$1"; }
+[ -b "$DEV" ] || exit 0
+# Ya montado (a mano, por fstab o por un arranque anterior)
+findmnt -rn -S "$DEV" > /dev/null && exit 0
+
+FSTYPE=$(lsblk -dno FSTYPE "$DEV")
+case "$FSTYPE" in ext2|ext3|ext4|xfs|btrfs|ntfs|exfat|vfat) ;; *) exit 0 ;; esac
+UUID=$(lsblk -dno UUID "$DEV")
+
+# Lo que está en fstab lo monta el sistema a su manera
+if [ -n "$UUID" ] && grep -v '^[[:space:]]*#' /etc/fstab | grep -q "$UUID"; then exit 0; fi
+grep -v '^[[:space:]]*#' /etc/fstab | grep -qE "^[[:space:]]*$DEV[[:space:]]" && exit 0
+
+# Nunca el disco del sistema (/, /boot, swap...)
+DISK=$(lsblk -dno PKNAME "$DEV"); [ -z "$DISK" ] && DISK="$K"
+for src in $(findmnt -rno SOURCE /; findmnt -rno SOURCE /boot; findmnt -rno SOURCE /boot/efi; swapon --show=NAME --noheadings); do
+    lsblk -rsno NAME,TYPE "$src" 2>/dev/null | awk '$2=="disk"{print $1}' | grep -qx "$DISK" && exit 0
+done
+
+# Un disco que SMART da por roto no se usa para grabar (bit 3 = DISK FAILING)
+smartctl -H "/dev/$DISK" > /dev/null 2>&1
+if [ $(( $? & 8 )) -ne 0 ]; then
+    log "SMART dice que /dev/$DISK está fallando: no se monta. Cambia el disco."
+    exit 0
+fi
+
+# Mismo disco, misma ruta en cada arranque: las grabaciones apuntan a /media/<etiqueta>
+NAME=$(lsblk -dno LABEL "$DEV" | sed 's/[^A-Za-z0-9._-]/_/g')
+[ -z "$NAME" ] && [ -n "$UUID" ] && NAME="disco-${UUID:0:8}"
+[ -z "$NAME" ] && NAME="$K"
+MP="/media/$NAME"
+mountpoint -q "$MP" && MP="/media/$NAME-$K"
+mkdir -p "$MP"
+
+TYPE="$FSTYPE"
+# ntfs-3g: lee y escribe, y repara solo el "unclean" de quitarlo de Windows sin expulsar
+[ "$FSTYPE" = "ntfs" ] && TYPE="ntfs-3g"
+if systemd-mount --automount=no --collect -t "$TYPE" -o noatime "$DEV" "$MP"; then
+    log "montado en $MP ($FSTYPE)"
+else
+    rmdir "$MP" 2>/dev/null
+    log "no se ha podido montar ($FSTYPE). Si es NTFS y Windows lo dejó hibernado, expúlsalo bien en Windows o prueba: ntfsfix -d $DEV"
+fi
+EOF
+chmod 755 /usr/local/sbin/tsst-automount
+
+cat <<'EOF' > /etc/systemd/system/tsst-automount@.service
+[Unit]
+Description=Montaje automático de /dev/%I (TSST)
+After=dev-%i.device
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/tsst-automount %I
+TimeoutStartSec=120
+EOF
+
+# Al quitar el disco, systemd lo desmonta solo (el montaje depende del dispositivo)
+cat <<'EOF' > /etc/udev/rules.d/90-tsst-automount.rules
+ACTION!="remove", SUBSYSTEM=="block", KERNEL=="sd*|nvme*|mmcblk*", ENV{ID_FS_USAGE}=="filesystem", ENV{SYSTEMD_WANTS}+="tsst-automount@%k.service"
+EOF
+rm -f /etc/udev/rules.d/99-tsst-usb.rules
+systemctl daemon-reload
+udevadm control --reload-rules
+# Montar ya los discos que estén conectados ahora
+udevadm trigger --subsystem-match=block --action=change
+
 echo "📂 Configurando el entorno de la aplicación..."
 APP_DIR="/opt/srt-server"
 BACKUP_DIR=""

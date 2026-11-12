@@ -663,6 +663,25 @@ function diskTarget(url) {
     return { destUrl, format };
 }
 
+// Grabación en un disco de /media/... o /mnt/... que no está montado: la ruta caería en el disco
+// del sistema. Devuelve la carpeta del disco que falta, o null si se puede grabar.
+// Grabar directamente en /media (sin disco externo) sigue permitido.
+function unmountedDisk(file) {
+    if (process.platform !== 'linux') return null;
+    const dir = path.dirname(path.resolve(file));
+    const m = dir.match(/^\/(?:media|mnt)\/[^/]+/);
+    if (!m) return null;
+    try {
+        const rootDev = fs.statSync('/').dev;
+        // Carpeta existente más cercana: si está en el mismo sistema de archivos que /, no hay disco
+        let p = dir;
+        while (!fs.existsSync(p)) p = path.dirname(p);
+        return fs.statSync(p).dev === rootDev ? m[0] : null;
+    } catch (e) {
+        return null;
+    }
+}
+
 // Opciones de vídeo según el códec elegido en la UI
 function videoArgs(vcodec) {
     switch (vcodec) {
@@ -705,6 +724,20 @@ async function spawnOutputProcess(st) {
             format = 'flv';
         } else if (isDisk) {
             ({ destUrl, format } = diskTarget(url));
+            const missing = unmountedDisk(destUrl);
+            if (missing) {
+                // Disco quitado: sin esto el mkdir de abajo crearía la carpeta en el disco del sistema
+                // y la grabación lo llenaría. Se reintenta hasta que vuelva a estar montado.
+                if (st.waitingDisk !== missing) console.log(`[OUT-${st.id}] ${missing} no está montado. Esperando al disco...`);
+                st.waitingDisk = missing;
+                st.tail = `Disco no montado: ${missing}`;
+                st.restartTimer = setTimeout(() => {
+                    st.restartTimer = null;
+                    if (!st.stopped) spawnOutputProcess(st).catch(logError(`OUT-${st.id}`));
+                }, RESTART_MAX_MS);
+                return;
+            }
+            st.waitingDisk = null;
             await fs.promises.mkdir(path.dirname(destUrl), { recursive: true }).catch(() => {});
             if (st.stopped) return;
         } else if (url.startsWith('udp://')) {
