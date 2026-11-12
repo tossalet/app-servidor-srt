@@ -391,6 +391,11 @@ if [ "$INSTALL_MONITORING" = "yes" ]; then
     apt-get install -y --no-install-recommends prometheus
     cp "$MON/prometheus.yml" /etc/prometheus/prometheus.yml
     sed -i "s/localhost:4000/localhost:$WEB_PORT/" /etc/prometheus/prometheus.yml
+    # Con HTTPS el panel no responde por HTTP: sin esto Prometheus no guarda nada y el historial
+    # del panel sale vacío. El certificado es del dominio, no de localhost: no se comprueba el nombre.
+    if [ "$INSTALL_TLS" = "yes" ]; then
+        sed -i "s/^  - job_name: tsst$/  - job_name: tsst\n    scheme: https\n    tls_config:\n      insecure_skip_verify: true/" /etc/prometheus/prometheus.yml
+    fi
     # Sólo escucha en local (Grafana está en el mismo equipo) y guarda 30 días
     echo 'ARGS="--web.listen-address=127.0.0.1:9090 --storage.tsdb.retention.time=30d"' > /etc/default/prometheus
 
