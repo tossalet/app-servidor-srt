@@ -1037,6 +1037,31 @@ function openOutputModal(channel) {
 }
 
 // API Interactions
+// Puerto ocupado: aviso bajo el campo mientras se escribe (el servidor lo vuelve a comprobar al guardar).
+// Sólo cuando este equipo abre el puerto: SRT listener/rendezvous y entradas UDP.
+let portHintTimer = null;
+function checkPortHint(px) {
+    const hint = document.getElementById(`${px}_port_hint`);
+    if (!hint) return;
+    const show = (text, cls) => { hint.textContent = text || ''; hint.className = `port-hint ${cls || ''}`; hint.hidden = !text; };
+    const proto = document.getElementById(`${px}_protocol`).value;
+    const mode = document.getElementById(`${px}_mode`).value;
+    const port = parseInt(document.getElementById(`${px}_port`).value, 10);
+    const listens = (proto === 'srt' && mode !== 'caller') || (px === 'inp' && proto === 'udp');
+    if (!listens || !(port > 0 && port < 65536)) return show('');
+    const isEdit = document.getElementById(`${px}_is_edit`).value === 'true';
+    const id = isEdit ? document.getElementById(px === 'inp' ? 'inp_edit_channel' : 'out_edit_id').value : '';
+    clearTimeout(portHintTimer);
+    portHintTimer = setTimeout(async () => {
+        const q = new URLSearchParams({ port, ...(id ? { kind: px === 'inp' ? 'input' : 'output', id } : {}) });
+        const r = await fetch(`/api/port-check?${q}`).then(x => x.json()).catch(() => ({}));
+        if (parseInt(document.getElementById(`${px}_port`).value, 10) !== port) return; // ya ha cambiado
+        if (r.error) show(r.error, 'is-error');
+        else if (r.warning) show(r.warning, 'is-warning');
+        else show('');
+    }, 250);
+}
+
 function updateInputFields() {
     const proto = document.getElementById('inp_protocol').value;
     const modeContainer = document.getElementById('inp_mode_container');
@@ -1077,6 +1102,7 @@ function updateInputFields() {
         portLabel.innerText = 'Puerto (externo)';
         document.getElementById('inp_port').type = 'number';
     }
+    checkPortHint('inp');
 }
 
 function updateOutputFields() {
@@ -1142,6 +1168,7 @@ function updateOutputFields() {
         portLabel.innerText = 'Puerto';
         document.getElementById('out_port').type = 'number';
     }
+    checkPortHint('out');
 }
 
 function openEditInput(channel) {
@@ -1710,6 +1737,8 @@ async function submitInput(e) {
         const err = await res.json().catch(() => ({}));
         return toast(err.error || 'No se pudo guardar la entrada');
     }
+    const saved = await res.json().catch(() => ({}));
+    if (saved.warning) setTimeout(() => toast(saved.warning, 'info'), 400);
 
     closeModal('inputModal');
     toast(isEdit ? 'Entrada actualizada' : 'Entrada creada', 'ok');
@@ -1767,6 +1796,8 @@ async function submitOutput(e) {
         const err = await res.json().catch(() => ({}));
         return toast(err.error || 'No se pudo guardar la salida');
     }
+    const saved = await res.json().catch(() => ({}));
+    if (saved.warning) setTimeout(() => toast(saved.warning, 'info'), 400);
 
     closeModal('outputModal');
     toast(isEdit ? 'Salida actualizada' : 'Salida creada', 'ok');
@@ -1919,7 +1950,10 @@ async function toggleInput(channel, fromUndo = false) {
     const wasEnabled = inp && inp.enabled;
     const res = await fetch(`/api/inputs/${channel}/toggle`, { method: 'POST' });
     fetchData();
-    if (!res.ok) return toast('No se pudo cambiar el estado de la entrada');
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        return toast(err.error || 'No se pudo cambiar el estado de la entrada');
+    }
     if (wasEnabled && !fromUndo) {
         toast(`«${inp.name || 'Entrada ' + channel}» deshabilitada`, 'info', { label: 'Deshacer', fn: () => toggleInput(channel, true) });
     }
@@ -2163,7 +2197,10 @@ async function toggleOutput(id, fromUndo = false) {
     const out = outputs.find(o => o.id == id);
     const wasEnabled = out && out.enabled;
     const res = await fetch(`/api/outputs/${id}/toggle`, { method: 'POST' });
-    if (!res.ok) return toast('No se pudo cambiar el estado de la salida');
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        return toast(err.error || 'No se pudo cambiar el estado de la salida');
+    }
     if (wasEnabled && !fromUndo) {
         toast(`Salida «${out.location || 'sin nombre'}» deshabilitada`, 'info', { label: 'Deshacer', fn: () => toggleOutput(id, true) });
     }

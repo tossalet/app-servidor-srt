@@ -7,6 +7,7 @@ const db = require('./db');
 const auth = require('./auth');
 const metrics = require('./metrics');
 const srt = require('./srt');
+const portCheck = require('./portCheck');
 const history = require('./history');
 const streamManager = require('./streamManager');
 const sysMonitor = require('./sysMonitor');
@@ -127,8 +128,33 @@ function validateSrtBody(req, res, next) {
     next();
 }
 
-app.post('/api/inputs', validateSrtBody, (req, res) => {
+const dbGet = (sql, params) => new Promise((resolve, reject) => db.get(sql, params, (err, row) => err ? reject(err) : resolve(row)));
+
+// Puerto ya usado por otra entrada/salida o por otro programa: 409 con el motivo y null.
+// Si se puede, devuelve { warning? } para añadirlo a la respuesta.
+async function portGuard(res, url, opts) {
+    try {
+        const r = await portCheck.check(url, opts);
+        if (r.error) { res.status(409).json({ error: r.error }); return null; }
+        return r;
+    } catch (e) {
+        console.error('[PORTS]', e.message);
+        return {}; // Si la comprobación falla, no se bloquea el guardado
+    }
+}
+
+// Aviso en el formulario mientras se escribe el puerto
+app.get('/api/port-check', async (req, res) => {
+    const port = parseInt(req.query.port, 10);
+    if (!(port > 0 && port < 65536)) return res.json({});
+    const self = req.query.kind && req.query.id ? { kind: req.query.kind, id: req.query.id } : null;
+    try { res.json(await portCheck.describe(port, self)); } catch (e) { res.json({}); }
+});
+
+app.post('/api/inputs', validateSrtBody, async (req, res) => {
     const { url, name, provider, location, remote, audiowtdg, wtdgsecs, enabled } = req.body;
+    const guard = await portGuard(res, url, { isInput: true, willEnable: enabled !== false });
+    if (!guard) return;
 
     // Asignar Udpsrv respetando los límites de Firewall (Settings)
     db.get('SELECT udpMin, udpMax FROM ports LIMIT 1', [], (err, ports) => {
@@ -147,7 +173,7 @@ app.post('/api/inputs', validateSrtBody, (req, res) => {
         db.run(query, params, function(err) {
             if (err) return res.status(500).json({ error: err.message });
             const channelId = this.lastID;
-            res.status(201).json({ channel: channelId });
+            res.status(201).json({ channel: channelId, warning: guard.warning });
             io.emit('db_update', { event: 'inputs_changed' });
 
             // If enabled, auto-start stream Manager
@@ -163,9 +189,10 @@ app.post('/api/inputs', validateSrtBody, (req, res) => {
 // For simplicity, a toggle endpoint
 app.post('/api/inputs/:channel/toggle', (req, res) => {
     const channelId = req.params.channel;
-    db.get('SELECT * FROM inputs WHERE channel = ?', [channelId], (err, row) => {
+    db.get('SELECT * FROM inputs WHERE channel = ?', [channelId], async (err, row) => {
         if (err || !row) return res.status(404).json({ error: 'Not found' });
         const newEnabled = row.enabled ? 0 : 1;
+        if (newEnabled && !await portGuard(res, row.url, { isInput: true, self: { kind: 'input', id: channelId } })) return;
         db.run('UPDATE inputs SET enabled = ? WHERE channel = ?', [newEnabled, channelId], function(err) {
             io.emit('db_update', { event: 'input_toggled', channel: channelId, enabled: newEnabled });
             res.json({ enabled: newEnabled });
@@ -271,9 +298,15 @@ app.post('/api/inputs/:channel/delay', (req, res) => {
     });
 });
 
-app.put('/api/inputs/:channel', validateSrtBody, (req, res) => {
+app.put('/api/inputs/:channel', validateSrtBody, async (req, res) => {
     const channelId = req.params.channel;
     const { url, name } = req.body;
+    let guard = {};
+    const prev = await dbGet('SELECT url, enabled FROM inputs WHERE channel = ?', [channelId]).catch(() => null);
+    if (prev && url) {
+        guard = await portGuard(res, url, { isInput: true, self: { kind: 'input', id: channelId }, willEnable: !!prev.enabled, previousUrl: prev.url });
+        if (!guard) return;
+    }
     // Campos no enviados se conservan (el editor de latencia sólo manda la URL)
     const query = `UPDATE inputs SET url = COALESCE(?, url), name = COALESCE(?, name) WHERE channel = ?`;
 
@@ -285,7 +318,7 @@ app.put('/api/inputs/:channel', validateSrtBody, (req, res) => {
         db.get('SELECT * FROM inputs WHERE channel = ?', [channelId], (err, row) => {
             if (row && row.enabled) streamManager.startInput(row);
             io.emit('db_update', { event: 'inputs_changed' });
-            res.json({ updated: this.changes });
+            res.json({ updated: this.changes, warning: guard.warning });
         });
     });
 });
@@ -318,9 +351,11 @@ app.get('/api/outputs', (req, res) => {
     });
 });
 
-app.post('/api/outputs', validateSrtBody, (req, res) => {
+app.post('/api/outputs', validateSrtBody, async (req, res) => {
     const { channel, url, location, remote, enabled, vcodec } = req.body;
     if (!channel) return res.status(400).json({ error: "Input 'channel' is required" });
+    const guard = await portGuard(res, url, { isInput: false, willEnable: enabled !== false });
+    if (!guard) return;
 
     // We need the udpsrv of the parent channel to link them
     db.get('SELECT udpsrv FROM inputs WHERE channel = ?', [channel], (err, parentRaw) => {
@@ -334,7 +369,7 @@ app.post('/api/outputs', validateSrtBody, (req, res) => {
         db.run(query, params, function(err) {
             if (err) return res.status(500).json({ error: err.message });
             const outId = this.lastID;
-            res.status(201).json({ id: outId });
+            res.status(201).json({ id: outId, warning: guard.warning });
             io.emit('db_update', { event: 'outputs_changed' });
 
             if (enabled !== false) {
@@ -348,9 +383,10 @@ app.post('/api/outputs', validateSrtBody, (req, res) => {
 
 app.post('/api/outputs/:id/toggle', (req, res) => {
     const id = req.params.id;
-    db.get('SELECT * FROM outputs WHERE id = ?', [id], (err, row) => {
+    db.get('SELECT * FROM outputs WHERE id = ?', [id], async (err, row) => {
         if (err || !row) return res.status(404).json({ error: 'Not found' });
         const newEnabled = row.enabled ? 0 : 1;
+        if (newEnabled && !await portGuard(res, row.url, { isInput: false, self: { kind: 'output', id } })) return;
         db.run('UPDATE outputs SET enabled = ? WHERE id = ?', [newEnabled, id], function(err) {
             io.emit('db_update', { event: 'output_toggled', id: id, enabled: newEnabled });
             res.json({ enabled: newEnabled });
@@ -365,9 +401,15 @@ app.post('/api/outputs/:id/toggle', (req, res) => {
     });
 });
 
-app.put('/api/outputs/:id', validateSrtBody, (req, res) => {
+app.put('/api/outputs/:id', validateSrtBody, async (req, res) => {
     const id = req.params.id;
     const { url, location, vcodec } = req.body;
+    let guard = {};
+    const prev = await dbGet('SELECT url, enabled FROM outputs WHERE id = ?', [id]).catch(() => null);
+    if (prev && url) {
+        guard = await portGuard(res, url, { isInput: false, self: { kind: 'output', id }, willEnable: !!prev.enabled, previousUrl: prev.url });
+        if (!guard) return;
+    }
     // Campos no enviados se conservan (el editor de latencia sólo manda la URL)
     db.run(`UPDATE outputs SET url = COALESCE(?, url), location = COALESCE(?, location), vcodec = COALESCE(?, vcodec) WHERE id = ?`,
         [url ?? null, location ?? null, vcodec ?? null, id], function(err) {
@@ -378,7 +420,7 @@ app.put('/api/outputs/:id', validateSrtBody, (req, res) => {
         db.get('SELECT o.*, i.udpsrv FROM outputs o JOIN inputs i ON o.channel = i.channel WHERE o.id = ?', [id], (err, row) => {
             if (row && row.enabled) streamManager.startOutput(row);
             io.emit('db_update', { event: 'outputs_changed' });
-            res.json({ updated: this.changes });
+            res.json({ updated: this.changes, warning: guard.warning });
         });
     });
 });

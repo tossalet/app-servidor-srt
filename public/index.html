@@ -313,7 +313,8 @@
                     </div>
                     <div class="half" id="inp_port_container">
                         <label id="inp_port_label">Puerto (externo)</label>
-                        <input type="text" id="inp_port" placeholder="5000" required>
+                        <input type="text" id="inp_port" placeholder="5000" required oninput="checkPortHint('inp')">
+                        <small id="inp_port_hint" class="port-hint" hidden></small>
                     </div>
                 </div>
 
@@ -397,7 +398,8 @@
                     </div>
                     <div class="half" id="out_port_container">
                         <label id="out_port_label">Puerto</label>
-                        <input type="text" id="out_port" placeholder="6000">
+                        <input type="text" id="out_port" placeholder="6000" oninput="checkPortHint('out')">
+                        <small id="out_port_hint" class="port-hint" hidden></small>
                     </div>
                     <div class="half" id="out_disk_container" style="display:none;">
                         <label id="out_disk_label">Unidad USB</label>
