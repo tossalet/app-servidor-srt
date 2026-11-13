@@ -6,9 +6,10 @@ const ERR_LOCAL = 'No puedes usar direcciones de este servidor como origen o des
 const ERR_FORMATO = 'Formato de URL no permitido';
 const SCHEMES = new Set(['disk', 'rtmp', 'rtmps', 'srt', 'udp', 'rtsp', 'http', 'https']);
 const ERR_CLAVE = 'Esa clave RTMP ya la usa otra señal';
+const ERR_RESOLVER = 'No se pudo resolver el host';
 
 function serverLocalHosts() {
-    const hosts = new Set(['127.0.0.1', 'localhost', '::1', '0.0.0.0']);
+    const hosts = new Set(['127.0.0.1', 'localhost', '::1', '0.0.0.0', os.hostname().toLowerCase()]);
     for (const list of Object.values(os.networkInterfaces())) {
         for (const a of list || []) hosts.add(String(a.address).toLowerCase());
     }
@@ -78,6 +79,8 @@ function canon(host) {
 // 'local' (es este servidor), 'remote' o 'bad' (forma numérica rara que oculta la IP)
 function hostKind(host, localHosts) {
     const h = String(host).toLowerCase().replace(/\.+$/, '');
+    // Sin host, FFmpeg/libsrt conecta con este mismo equipo
+    if (h === '') return 'local';
     const locals = new Set([...localHosts].map(canon));
     if (h.includes(':')) {
         const g = parseIPv6(h);
@@ -103,12 +106,13 @@ function localRtmpPath(url, localHosts) {
  * Devuelve null si el operador puede usar la URL, o el texto del error.
  *  items: [{ kind, channel, url }] todas las entradas y salidas actuales
  *  canSeeChannel(channel) -> boolean; localHosts: Set de hosts del servidor
+ *  forceLocal: tratar el host como de este servidor (nombre que resuelve aquí)
  */
-function checkOperatorUrl(url, { isInput, items = [], canSeeChannel, localHosts }) {
+function checkOperatorUrl(url, { isInput, items = [], canSeeChannel, localHosts, forceLocal = false }) {
     const p = parse(url);
     if (!p || !SCHEMES.has(p.scheme)) return ERR_FORMATO;
     if (p.scheme === 'disk') return null;
-    const kind = hostKind(p.host, localHosts);
+    const kind = forceLocal ? 'local' : hostKind(p.host, localHosts);
     if (kind === 'bad') return ERR_LOCAL;
 
     if (p.scheme === 'rtmp' || p.scheme === 'rtmps') {
@@ -119,10 +123,36 @@ function checkOperatorUrl(url, { isInput, items = [], canSeeChannel, localHosts 
         return ajena ? ERR_CLAVE : null;
     }
 
-    if (p.scheme === 'srt' && (p.host === '' || p.params.get('mode') === 'listener')) return null;
+    // Sólo el listener explícito escucha; srt://:9000 a secas o en caller conecta con este equipo
+    if (p.scheme === 'srt' && p.params.get('mode') === 'listener') return null;
     if (p.scheme === 'udp' && isInput && (p.at || p.host === '' || p.host === '0.0.0.0')) return null;
 
     return kind === 'local' ? ERR_LOCAL : null;
 }
 
-module.exports = { checkOperatorUrl, serverLocalHosts };
+// Nombre de host que hay que resolver por DNS antes de dar la URL por buena, o null
+// (IPs literales, host vacío, URLs que sólo escuchan o que checkOperatorUrl ya decide solo)
+function hostToResolve(url, isInput) {
+    const p = parse(url);
+    if (!p || !SCHEMES.has(p.scheme) || p.scheme === 'disk') return null;
+    if (p.scheme === 'srt' && p.params.get('mode') === 'listener') return null;
+    if (p.scheme === 'udp' && isInput && (p.at || p.host === '' || p.host === '0.0.0.0')) return null;
+    const h = p.host.replace(/\.+$/, '');
+    if (h === '' || h.includes(':') || isDottedQuad(h)) return null;
+    if (h.split('.').every(x => /^(0x[0-9a-f]*|\d+)$/.test(x))) return null;
+    return h;
+}
+
+/**
+ * Decide con las direcciones a las que resuelve el host de la URL (dns.lookup all).
+ * Si alguna es de este servidor, se aplican las mismas reglas que con 127.0.0.1
+ * (incluidas las claves RTMP /live y /out). Devuelve null o el texto del error.
+ * Queda el hueco de que FFmpeg vuelva a resolver más tarde (DNS rebinding): asumido.
+ */
+function checkResolvedHost(url, addresses, opts) {
+    if (!Array.isArray(addresses) || !addresses.length) return ERR_RESOLVER;
+    const local = addresses.some(a => hostKind(a, opts.localHosts) !== 'remote');
+    return local ? checkOperatorUrl(url, { ...opts, forceLocal: true }) : null;
+}
+
+module.exports = { checkOperatorUrl, serverLocalHosts, hostToResolve, checkResolvedHost, ERR_RESOLVER };

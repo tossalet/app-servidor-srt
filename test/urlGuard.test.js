@@ -1,6 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { checkOperatorUrl, serverLocalHosts } = require('../urlGuard');
+const os = require('os');
+const { checkOperatorUrl, serverLocalHosts, hostToResolve, checkResolvedHost } = require('../urlGuard');
 
 const localHosts = new Set(['127.0.0.1', 'localhost', '::1', '0.0.0.0', '192.168.0.50']);
 const items = [
@@ -62,4 +63,47 @@ test('esquemas y formatos no permitidos', () => {
 test('serverLocalHosts incluye los fijos', () => {
     const s = serverLocalHosts();
     for (const h of ['127.0.0.1', 'localhost', '::1', '0.0.0.0']) assert.ok(s.has(h));
+    assert.ok(s.has(os.hostname().toLowerCase()));
+});
+
+const LOCAL = 'No puedes usar direcciones de este servidor como origen o destino';
+
+test('SRT con host vacío: sólo se permite en modo listener explícito', () => {
+    assert.strictEqual(check('srt://:9000?mode=caller', true), LOCAL);
+    assert.strictEqual(check('srt://:9000', true), LOCAL);
+    assert.strictEqual(check('srt://:9000?mode=rendezvous', false), LOCAL);
+    assert.strictEqual(check('srt://:9000?mode=caller', false), LOCAL);
+    assert.strictEqual(check('srt://0.0.0.0:9000?mode=listener', true), null);
+    assert.strictEqual(check('srt://:9000?mode=listener', true), null);
+    assert.strictEqual(check('srt://:9000?mode=listener', false), null);
+});
+
+test('hostToResolve: sólo nombres que hay que resolver', () => {
+    assert.strictEqual(hostToResolve('srt://encoder.example.com:9000?mode=caller', true), 'encoder.example.com');
+    assert.strictEqual(hostToResolve('rtmp://LocalTest.me/out/x', false), 'localtest.me');
+    assert.strictEqual(hostToResolve('srt://203.0.113.5:9000', true), null);
+    assert.strictEqual(hostToResolve('srt://[2001:db8::6]:9000', true), null);
+    assert.strictEqual(hostToResolve('srt://:9000?mode=listener', true), null);
+    assert.strictEqual(hostToResolve('srt://servidor:9000?mode=listener', true), null);
+    assert.strictEqual(hostToResolve('udp://@grupo:5000', true), null);
+    assert.strictEqual(hostToResolve('disk:///media/usb/a.mp4', true), null);
+    assert.strictEqual(hostToResolve('basura', true), null);
+});
+
+test('checkResolvedHost: nombres que apuntan a este servidor', () => {
+    const opts = (isInput) => ({ isInput, items, canSeeChannel, localHosts });
+    // Resuelve fuera: no añade error
+    assert.strictEqual(checkResolvedHost('srt://remoto.example.com:9000', ['203.0.113.5'], opts(true)), null);
+    // Cualquier dirección local basta para rechazar
+    assert.strictEqual(checkResolvedHost('srt://dani-v2:9000', ['203.0.113.5', '127.0.1.1'], opts(true)), LOCAL);
+    assert.strictEqual(checkResolvedHost('srt://127.0.0.1.nip.io:9000', ['127.0.0.1'], opts(false)), LOCAL);
+    assert.strictEqual(checkResolvedHost('udp://lan.example:5000', ['192.168.0.50'], opts(false)), LOCAL);
+    assert.strictEqual(checkResolvedHost('srt://v6.example:9000', ['::1'], opts(true)), LOCAL);
+    // RTMP local: mismas reglas de clave que con 127.0.0.1
+    assert.strictEqual(checkResolvedHost('rtmp://localtest.me/out/ajena', ['127.0.0.1'], opts(false)), 'Esa clave RTMP ya la usa otra señal');
+    assert.strictEqual(checkResolvedHost('rtmp://localtest.me/out/mia', ['127.0.0.1'], opts(false)), null);
+    assert.strictEqual(checkResolvedHost('rtmp://localtest.me/live/nueva', ['127.0.0.1'], opts(true)), null);
+    assert.strictEqual(checkResolvedHost('rtmp://localtest.me/otra/x', ['127.0.0.1'], opts(true)), LOCAL);
+    // Sin direcciones: falla cerrado
+    assert.strictEqual(checkResolvedHost('srt://x.example:9000', [], opts(true)), 'No se pudo resolver el host');
 });

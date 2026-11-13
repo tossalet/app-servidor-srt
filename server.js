@@ -6,7 +6,8 @@ const fs = require('fs');
 const db = require('./db');
 const auth = require('./auth');
 const access = require('./access');
-const { checkOperatorUrl, serverLocalHosts } = require('./urlGuard');
+const { checkOperatorUrl, serverLocalHosts, hostToResolve, checkResolvedHost, ERR_RESOLVER } = require('./urlGuard');
+const dns = require('dns');
 const { channelOfRecording, RECORDING_DIR } = require('./recordings');
 const metrics = require('./metrics');
 const srt = require('./srt');
@@ -160,11 +161,24 @@ function operatorUrlGuard(isInput) {
         try {
             const items = await dbAll(`SELECT 'input' AS kind, channel, url FROM inputs
                                        UNION ALL SELECT 'output' AS kind, channel, url FROM outputs`);
-            const error = checkOperatorUrl(url, {
+            const opts = {
                 isInput, items,
                 canSeeChannel: c => access.canSee(req.user, c),
                 localHosts: serverLocalHosts()
-            });
+            };
+            let error = checkOperatorUrl(url, opts);
+            // Un nombre (el del propio equipo, x.nip.io...) puede apuntar a este servidor:
+            // se resuelve y, si falla, se rechaza
+            const host = !error && hostToResolve(url, isInput);
+            if (host) {
+                let addresses;
+                try {
+                    addresses = (await dns.promises.lookup(host, { all: true })).map(a => a.address);
+                } catch (e) {
+                    return res.status(400).json({ error: ERR_RESOLVER });
+                }
+                error = checkResolvedHost(url, addresses, opts);
+            }
             if (error) return res.status(400).json({ error });
             // disk://<ruta>: la grabación se escribe en <carpeta de la ruta>/entrada_<n>; esa carpeta
             // tiene que estar dentro de los soportes (evita disk:///media/usb/../../etc/x)
