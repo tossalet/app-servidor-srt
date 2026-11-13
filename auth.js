@@ -348,7 +348,8 @@ function registerRoutes(app, io) {
         await run('UPDATE users SET role = ?, email = ?, password = ?, must_change = ? WHERE username = ?',
             [role, email, password, mustChange, u.username]);
         await loadUsers();
-        if (password !== u.password) kickSockets(u.username);
+        // Contraseña nueva: sesiones fuera. Rol nuevo: el socket se reconecta con el rol actual
+        if (password !== u.password || role !== u.role) kickSockets(u.username);
         console.log(`[AUTH] ${req.user.username} editó el usuario ${u.username}`);
         res.json(publicUser(users.get(u.username)));
     });

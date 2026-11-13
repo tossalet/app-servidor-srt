@@ -211,7 +211,11 @@ async function portGuard(req, res, url, opts) {
 app.get('/api/port-check', async (req, res) => {
     const port = parseInt(req.query.port, 10);
     if (!(port > 0 && port < 65536)) return res.json({});
-    const self = req.query.kind && req.query.id ? { kind: req.query.kind, id: req.query.id } : null;
+    const { kind, id } = req.query;
+    // self sólo si el usuario ve ese elemento: si no, se ignora (no revela canales ajenos)
+    const visible = kind === 'input' ? access.canSee(req.user, id)
+        : kind === 'output' ? access.canSeeOutput(req.user, id) : false;
+    const self = kind && id && visible ? { kind, id } : null;
     try { res.json(await portCheck.describe(port, self, c => access.canSee(req.user, c))); } catch (e) { res.json({}); }
 });
 
