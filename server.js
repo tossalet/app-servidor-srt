@@ -99,7 +99,7 @@ app.get('/api/status', (req, res) => {
     // grafanaPort: el panel muestra el enlace "Gráficas" sólo si hay Grafana instalado.
     // Grafana va por HTTP salvo que el instalador le haya puesto el certificado (GRAFANA_PROTOCOL=https)
     res.json({
-        online: true, app: 'TSST SERVER', version: '1.0.0',
+        online: true, app: 'TSST SERVER', version: require('./package.json').version,
         grafanaPort: parseInt(process.env.GRAFANA_PORT, 10) || null,
         grafanaProtocol: process.env.GRAFANA_PROTOCOL === 'https' ? 'https' : 'http',
         https: tlsConfig.enabled

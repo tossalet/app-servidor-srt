@@ -37,6 +37,7 @@
                         <strong id="session-user">—</strong>
                         <div id="session-role" style="color:var(--text-muted); font-size:0.75rem;"></div>
                     </div>
+                    <button class="about-btn" onclick="openModal('aboutModal')" title="Acerca de" aria-label="Acerca de">i</button>
                 </div>
                 <div style="display:flex; gap:8px;">
                     <button class="btn-secondary" onclick="openModal('passwordModal')" style="flex:1; padding:6px 8px; font-size:0.75rem;"><i class="fa-solid fa-key"></i> Contraseña</button>
@@ -601,6 +602,20 @@
     </div>
 
     <!-- Change Own Password Modal -->
+    <div class="modal-overlay" id="aboutModal">
+        <div class="modal" style="width: 340px;">
+            <div class="modal-header">
+                <h3><i class="fa-solid fa-circle-info"></i> Acerca de</h3>
+                <button class="close-btn" onclick="closeModal('aboutModal')"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="about-box">
+                <div class="about-name">TSST Server</div>
+                <div class="about-version">Versión <span id="app-version">2.0</span></div>
+                <div class="about-by">Hecho por <strong>Tossalet Media</strong></div>
+            </div>
+        </div>
+    </div>
+
     <div class="modal-overlay" id="passwordModal">
         <div class="modal" style="width: 400px;">
             <div class="modal-header">

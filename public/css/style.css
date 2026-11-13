@@ -433,6 +433,21 @@ input:checked + .slider:before { transform: translateX(18px); }
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; user-select: all;
 }
 .stream-name .stream-url.muted { color: var(--text-muted); }
+.stream-name .stream-url[data-copy] { cursor: copy; }
+
+/* Botón «i» junto al usuario y su ventana "Acerca de" */
+.about-btn {
+    margin-left: auto; width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
+    border: 1px solid var(--panel-border); background: transparent; color: var(--text-muted);
+    font: italic 700 0.75rem/1 Georgia, serif; cursor: pointer; display: grid; place-items: center;
+    transition: color 0.15s, border-color 0.15s;
+}
+.about-btn:hover, .about-btn:focus-visible { color: var(--accent-blue); border-color: var(--accent-blue); }
+.about-box { text-align: center; }
+.about-box .about-name { font-size: 1.15rem; font-weight: 700; margin: 0.25rem 0; }
+.about-box .about-version { font-family: var(--font-mono); color: var(--accent-blue); font-size: 0.9rem; }
+.about-box .about-by { color: var(--text-muted); margin-top: 1rem; font-size: 0.85rem; }
+.about-box .about-by strong { color: var(--text-main, #fff); }
 
 @media (max-width: 1250px) {
     .stream-header, .output-row {

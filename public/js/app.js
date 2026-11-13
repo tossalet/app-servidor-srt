@@ -98,6 +98,7 @@ async function loadSession() {
 
     // Enlace a Grafana (mismo host, su propio puerto) si está instalado
     const status = await fetch('/api/status').then(r => r.json()).catch(() => ({}));
+    if (status.version) document.getElementById('app-version').textContent = status.version.replace(/\.0$/, ''); // 2.0.0 -> 2.0
     if (status.grafanaPort) {
         const link = document.getElementById('nav-grafana');
         link.href = `${status.grafanaProtocol || 'http'}://${window.location.hostname}:${status.grafanaPort}/d/tsst`;
@@ -834,7 +835,7 @@ function renderStreams() {
                         <span id="codec-${input.channel}" class="badge-protocol udp" style="background:#4b5563;">H.26X</span>
                         <span class="stream-name" style="display:flex; flex-direction:column; line-height:1.2;">
                             ${escapeHtml(input.name || 'Channel ' + input.channel)}
-                            <span class="stream-url" title="${escapeHtml(maskUrl(input.url).replace(/127\.0\.0\.1|0\.0\.0\.0/g, serverIp))}">${escapeHtml(maskUrl(input.url).replace(/127\.0\.0\.1|0\.0\.0\.0/g, serverIp))}</span>
+                            <span class="stream-url" data-copy="${escapeHtml(displayUrl(input.url))}" title="${escapeHtml(displayUrl(input.url))} · doble clic para copiar">${escapeHtml(displayUrl(input.url))}</span>
                             ${ownerHTML(input)}
                         </span>
                     </div>
@@ -906,8 +907,8 @@ function renderStreams() {
                                     <span class="tooltiptext">${out.enabled ? 'Habilitada' : 'Deshabilitada'}</span>
                                 </div>
                                 <span class="stream-name" style="display:flex; flex-direction:column; line-height:1.2;">
-                                    ${escapeHtml(out.location || maskUrl(out.url))}
-                                    <span class="stream-url muted" title="${escapeHtml(maskUrl(out.url).replace(/127\.0\.0\.1|0\.0\.0\.0/g, serverIp))}">${escapeHtml(maskUrl(out.url).replace(/127\.0\.0\.1|0\.0\.0\.0/g, serverIp))}</span>
+                                    ${escapeHtml(out.location || displayUrl(out.url))}
+                                    <span class="stream-url muted" data-copy="${escapeHtml(displayUrl(out.url))}" title="${escapeHtml(displayUrl(out.url))} · doble clic para copiar">${escapeHtml(displayUrl(out.url))}</span>
                                     ${out.url.startsWith('srt') ? `<span style="font-size:0.70rem; font-weight:normal; display:flex; align-items:center; gap:6px;">Latencia SRT <b style="color:#fff;">${currentLatencyMs(out.url, true)}</b><button onclick="editLatency('out_${out.id}')" style="background:transparent; border:none; color:var(--accent-blue); cursor:pointer; font-size:0.8rem; padding:0;" title="Editar latencia de esta salida"><i class="fa-solid fa-pen"></i></button>${srtCipherBadge(out.url)}</span>` : ''}
                                     <span id="srtstats-out_${out.id}" style="font-size:0.70rem; color:var(--text-muted); font-weight:normal;"></span>
                                     ${isLocalRtmpOut(out.url) && out.enabled ? `<span class="rtmp-viewers" data-viewers="${out.id}"></span>` : ''}
@@ -1316,6 +1317,36 @@ const srtParam = (url, key) => (srtUrlParams(url).find(([k]) => k === key) || []
 
 // Oculta la passphrase al mostrar URLs en pantalla
 const maskUrl = (url) => (url || '').replace(/(passphrase=)[^&]+/g, '$1••••••');
+
+// URL tal como se enseña: sin passphrase, con la IP del servidor en lugar de 127.0.0.1/0.0.0.0 y sin
+// el puerto RTMP por defecto (1935); si en Ajustes se cambia a otro, la URL ya lo lleva y se ve
+const displayUrl = (url) => maskUrl(url)
+    .replace(/127\.0\.0\.1|0\.0\.0\.0/g, window.location.hostname)
+    .replace(/^(rtmps?:\/\/[^/:]+):1935(?=\/|$)/i, '$1');
+
+// Doble clic sobre una ruta: la copia al portapapeles (en HTTP no hay navigator.clipboard, se usa el método antiguo)
+async function copyText(text) {
+    try {
+        if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; }
+    } catch (e) { /* sigue con el método antiguo */ }
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed; top:-1000px; opacity:0;';
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    ta.remove();
+    return ok;
+}
+document.addEventListener('dblclick', async (e) => {
+    const el = e.target.closest('[data-copy]');
+    if (!el) return;
+    e.preventDefault();
+    const ok = await copyText(el.dataset.copy);
+    toast(ok ? 'Ruta copiada' : 'No se pudo copiar la ruta', ok ? 'ok' : 'error');
+});
 
 /* Conexiones a las salidas RTMP locales (reproductores tirando de rtmp://servidor/out/clave) */
 const isLocalRtmpOut = (url) => /^rtmp:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//.test(url || '');
