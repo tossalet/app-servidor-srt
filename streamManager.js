@@ -5,6 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const dgram = require('dgram');
 const srt = require('./srt');
+const { recordingTarget } = require('./recordings');
 
 const SOCK_BUF = 8 * 1024 * 1024;
 const RESTART_MIN_MS = 1000;
@@ -643,26 +644,6 @@ async function startOutput(outputObj) {
     return true;
 }
 
-function diskTarget(url) {
-    let destUrl = url.replace('disk://', '');
-    // AUTO-TIMESTAMP TO PREVENT OVERWRITES: NombreInput_20260418_223500.mp4
-    const now = new Date();
-    const p2 = (n) => String(n).padStart(2, '0');
-    const df = `${now.getFullYear()}${p2(now.getMonth() + 1)}${p2(now.getDate())}_${p2(now.getHours())}${p2(now.getMinutes())}${p2(now.getSeconds())}`;
-
-    const lastSlash = Math.max(destUrl.lastIndexOf('/'), destUrl.lastIndexOf('\\'));
-    const lastDot = destUrl.lastIndexOf('.');
-    if (lastDot > lastSlash) {
-        destUrl = destUrl.substring(0, lastDot) + '_' + df + destUrl.substring(lastDot);
-    } else {
-        destUrl += '_' + df + '.mp4';
-    }
-
-    const lower = destUrl.toLowerCase();
-    const format = lower.endsWith('.ts') ? 'mpegts' : lower.endsWith('.mkv') ? 'matroska' : 'mp4';
-    return { destUrl, format };
-}
-
 // Grabación en un disco de /media/... o /mnt/... que no está montado: la ruta caería en el disco
 // del sistema. Devuelve la carpeta del disco que falta, o null si se puede grabar.
 // Grabar directamente en /media (sin disco externo) sigue permitido.
@@ -723,7 +704,8 @@ async function spawnOutputProcess(st) {
         if (url.startsWith('rtmp')) {
             format = 'flv';
         } else if (isDisk) {
-            ({ destUrl, format } = diskTarget(url));
+            let recDir;
+            ({ destUrl, format, dir: recDir } = recordingTarget(url, st.channel));
             const missing = unmountedDisk(destUrl);
             if (missing) {
                 // Disco quitado: sin esto el mkdir de abajo crearía la carpeta en el disco del sistema
@@ -738,7 +720,7 @@ async function spawnOutputProcess(st) {
                 return;
             }
             st.waitingDisk = null;
-            await fs.promises.mkdir(path.dirname(destUrl), { recursive: true }).catch(() => {});
+            await fs.promises.mkdir(recDir, { recursive: true }).catch(() => {});
             if (st.stopped) return;
         } else if (url.startsWith('udp://')) {
             destUrl = withDefaults(url, { pkt_size: 1316 });
