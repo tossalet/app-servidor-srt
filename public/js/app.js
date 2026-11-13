@@ -179,8 +179,8 @@ function renderDashboardStreams() {
 
         html += `
             <div class="sys-stat-card ${statusClass}" style="padding:12px 15px; border-left: 4px solid ${isOnline ? 'var(--color-green)' : (i.enabled ? 'var(--color-yellow)' : 'var(--color-red)')};">
-                <div style="font-size:0.7rem; opacity:0.7; font-family:monospace;">${i.url.split('://')[0].toUpperCase()}</div>
-                <div style="font-size:1rem; font-weight:600; margin:5px 0;">${i.name}</div>
+                <div style="font-size:0.7rem; opacity:0.7; font-family:monospace;">${escapeHtml(i.url.split('://')[0].toUpperCase())}</div>
+                <div style="font-size:1rem; font-weight:600; margin:5px 0;">${escapeHtml(i.name)}</div>
                 <div style="font-size:1.1rem;">
                     <i class="fa-solid ${isOnline ? 'fa-circle-check' : (i.enabled ? 'fa-spinner fa-spin' : 'fa-circle-xmark')}"></i>
                 </div>
@@ -198,8 +198,8 @@ function renderDashboardStreams() {
 
         html += `
             <div class="sys-stat-card ${statusClass}" style="padding:12px 15px; border-left: 4px solid ${isOnline ? 'var(--color-green)' : 'var(--color-red)'}; background:rgba(255,255,255,0.02);">
-                <div style="font-size:0.7rem; opacity:0.7; font-family:monospace;">${o.url.split('://')[0].toUpperCase()}</div>
-                <div style="font-size:0.85rem; font-weight:500; margin:5px 0; word-break:break-all;">${(o.location || o.url).substring(0, 45)}</div>
+                <div style="font-size:0.7rem; opacity:0.7; font-family:monospace;">${escapeHtml(o.url.split('://')[0].toUpperCase())}</div>
+                <div style="font-size:0.85rem; font-weight:500; margin:5px 0; word-break:break-all;">${escapeHtml((o.location || o.url).substring(0, 45))}</div>
                 <div style="font-size:1.1rem;">
                     <i class="fa-solid ${isOnline ? 'fa-satellite-dish' : 'fa-plug-circle-xmark'}"></i>
                 </div>
@@ -831,8 +831,8 @@ function renderStreams() {
                         <div class="badge-protocol ${protocolBadge}">${protocolText}</div>
                         <span id="codec-${input.channel}" class="badge-protocol udp" style="background:#4b5563;">H.26X</span>
                         <span class="stream-name" style="display:flex; flex-direction:column; line-height:1.2;">
-                            ${input.name || 'Channel ' + input.channel}
-                            <span class="stream-url" title="${maskUrl(input.url).replace(/127\.0\.0\.1|0\.0\.0\.0/g, serverIp)}">${maskUrl(input.url).replace(/127\.0\.0\.1|0\.0\.0\.0/g, serverIp)}</span>
+                            ${escapeHtml(input.name || 'Channel ' + input.channel)}
+                            <span class="stream-url" title="${escapeHtml(maskUrl(input.url).replace(/127\.0\.0\.1|0\.0\.0\.0/g, serverIp))}">${escapeHtml(maskUrl(input.url).replace(/127\.0\.0\.1|0\.0\.0\.0/g, serverIp))}</span>
                             ${ownerHTML(input)}
                         </span>
                     </div>
@@ -904,8 +904,8 @@ function renderStreams() {
                                     <span class="tooltiptext">${out.enabled ? 'Habilitada' : 'Deshabilitada'}</span>
                                 </div>
                                 <span class="stream-name" style="display:flex; flex-direction:column; line-height:1.2;">
-                                    ${out.location || maskUrl(out.url)}
-                                    <span class="stream-url muted" title="${maskUrl(out.url).replace(/127\.0\.0\.1|0\.0\.0\.0/g, serverIp)}">${maskUrl(out.url).replace(/127\.0\.0\.1|0\.0\.0\.0/g, serverIp)}</span>
+                                    ${escapeHtml(out.location || maskUrl(out.url))}
+                                    <span class="stream-url muted" title="${escapeHtml(maskUrl(out.url).replace(/127\.0\.0\.1|0\.0\.0\.0/g, serverIp))}">${escapeHtml(maskUrl(out.url).replace(/127\.0\.0\.1|0\.0\.0\.0/g, serverIp))}</span>
                                     ${out.url.startsWith('srt') ? `<span style="font-size:0.70rem; font-weight:normal; display:flex; align-items:center; gap:6px;">Latencia SRT <b style="color:#fff;">${currentLatencyMs(out.url, true)}</b><button onclick="editLatency('out_${out.id}')" style="background:transparent; border:none; color:var(--accent-blue); cursor:pointer; font-size:0.8rem; padding:0;" title="Editar latencia de esta salida"><i class="fa-solid fa-pen"></i></button>${srtCipherBadge(out.url)}</span>` : ''}
                                     <span id="srtstats-out_${out.id}" style="font-size:0.70rem; color:var(--text-muted); font-weight:normal;"></span>
                                     ${isLocalRtmpOut(out.url) && out.enabled ? `<span class="rtmp-viewers" data-viewers="${out.id}"></span>` : ''}
@@ -1191,7 +1191,7 @@ function updateOutputFields() {
         // Cargar discos para el dropdown
         fetch('/api/disks').then(r=>r.json()).then(disks => {
             const select = document.getElementById('out_disk');
-            select.innerHTML = disks.map(d => `<option value="${d.path}">${d.name}</option>`).join('');
+            select.innerHTML = disks.map(d => `<option value="${escapeHtml(d.path)}">${escapeHtml(d.name)}</option>`).join('');
         });
 
         if (!document.getElementById('out_location').value || document.getElementById('out_location').value.startsWith('rec_')) {
