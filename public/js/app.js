@@ -84,6 +84,15 @@ async function loadSession() {
     document.getElementById('nav-settings').style.display = currentUser.role === ROLE_ADMIN ? '' : 'none';
     // Si ya se está en Encoders, los botones de administrador dependen de la sesión recién cargada
     if (document.getElementById('nav-encoders').classList.contains('active')) switchTab('encoders');
+    // El historial (Prometheus) y Grafana muestran todas las señales: sólo administradores
+    const admin = currentUser.role === ROLE_ADMIN;
+    document.getElementById('history-section').style.display = admin ? '' : 'none';
+    if (!admin) return;
+
+    // Propietarios en las tarjetas de entrada: la misma lista que el gestor de usuarios
+    fetch('/api/users').then(r => r.json()).then(list => {
+        if (Array.isArray(list)) { usersCache = list; renderStreams(); }
+    }).catch(() => {});
 
     // Enlace a Grafana (mismo host, su propio puerto) si está instalado
     const status = await fetch('/api/status').then(r => r.json()).catch(() => ({}));
@@ -786,7 +795,7 @@ function renderStreams() {
                 <i class="fa-solid fa-satellite-dish"></i>
                 <h3>Aún no hay señales</h3>
                 <p>Añade la primera entrada SRT, UDP o RTMP para empezar a recibir y repartir señal.</p>
-                ${currentUser && currentUser.role === ROLE_ADMIN ? '<button class="btn-primary" onclick="openAddInputModal()"><i class="fa-solid fa-plus"></i> Añadir entrada</button>' : ''}
+                <button class="btn-primary" onclick="openAddInputModal()"><i class="fa-solid fa-plus"></i> Añadir entrada</button>
             </div>`;
         return;
     }
@@ -824,6 +833,7 @@ function renderStreams() {
                         <span class="stream-name" style="display:flex; flex-direction:column; line-height:1.2;">
                             ${input.name || 'Channel ' + input.channel}
                             <span class="stream-url" title="${maskUrl(input.url).replace(/127\.0\.0\.1|0\.0\.0\.0/g, serverIp)}">${maskUrl(input.url).replace(/127\.0\.0\.1|0\.0\.0\.0/g, serverIp)}</span>
+                            ${ownerHTML(input)}
                         </span>
                     </div>
                     <div class="mid-section">
@@ -929,7 +939,7 @@ function renderStreams() {
         `;
         const cardId = `input-card-${input.channel}`;
         keep.add(cardId);
-        const key = JSON.stringify([input, inputOutputs, serverIp]);
+        const key = JSON.stringify([input, inputOutputs, serverIp, isAdmin() ? usersCache.map(u => u.username) : null]);
         let card = document.getElementById(cardId);
         if (!card || card.dataset.key !== key) {
             const tpl = document.createElement('template');
@@ -952,6 +962,36 @@ function renderStreams() {
     container.querySelectorAll(':scope > .stream-card').forEach(c => { if (!keep.has(c.id)) c.remove(); });
     syncThumbPlayers(); // Recoloca los vídeos en vivo en las tarjetas nuevas sin cortarlos
     paintRtmpViewers();
+}
+
+// Admin: «de ana» y un selector para pasar la entrada a otro usuario
+function ownerHTML(input) {
+    if (!isAdmin()) return '';
+    const names = usersCache.map(u => u.username);
+    if (input.owner && !names.includes(input.owner)) names.unshift(input.owner);
+    const options = names.map(n => `<option value="${escapeHtml(n)}" ${n === input.owner ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('');
+    return `<span class="stream-url muted" style="display:flex; align-items:center; gap:6px;">de ${escapeHtml(input.owner || '—')}
+        <select onchange="changeOwner(${input.channel}, this.value)" title="Cambiar el propietario" aria-label="Propietario"
+            style="background:transparent; border:1px solid rgba(255,255,255,0.15); border-radius:4px; color:var(--text-muted); font-size:0.7rem; padding:0 2px;">
+            ${input.owner ? '' : '<option value="" selected>—</option>'}${options}
+        </select></span>`;
+}
+
+async function changeOwner(channel, owner) {
+    if (!owner) return;
+    try {
+        const res = await fetch(`/api/inputs/${channel}/owner`, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ owner })
+        });
+        if (res.ok) toast(`Entrada ${channel}: ahora es de ${owner}`, 'ok');
+        else {
+            const err = await res.json().catch(() => ({}));
+            toast('No se pudo cambiar el propietario: ' + (err.error || res.status));
+        }
+    } catch (e) { console.error(e); }
+    fetchData(); // Si falla, el selector vuelve al propietario real
 }
 
 function toggleExpand(channel) {
@@ -1864,7 +1904,30 @@ function openNewUserModal() {
     document.getElementById('usr_must_change').checked = true;
     document.getElementById('usr_title').innerText = 'Añadir Nuevo Usuario';
     document.getElementById('usr_submit').innerText = 'Crear Cuenta';
+    document.getElementById('usr_access_group').style.display = 'none';
     openModal('userModal');
+}
+
+// Entradas que ve un operador: las suyas (fijas, «propia») y las que le asigna el admin
+async function loadUserAccess(username) {
+    const group = document.getElementById('usr_access_group');
+    const list = document.getElementById('usr_access_list');
+    group.style.display = 'none';
+    list.innerHTML = '';
+    const res = await fetch(`/api/users/${encodeURIComponent(username)}/access`).catch(() => null);
+    if (!res || !res.ok) return;
+    const { owned, assigned } = await res.json();
+    if (document.getElementById('usr_username').value !== username) return; // se abrió otro usuario mientras tanto
+    list.innerHTML = inputs.length ? inputs.map(i => {
+        const own = owned.includes(i.channel);
+        const checked = own || assigned.includes(i.channel);
+        return `<label style="display:flex; align-items:center; gap:8px; font-size:0.85rem; color:var(--text-main); padding:3px 0;">
+            <input type="checkbox" value="${i.channel}" ${checked ? 'checked' : ''} ${own ? 'disabled data-own="1"' : ''} style="width:auto;">
+            ${escapeHtml(i.name || 'Channel ' + i.channel)} <span style="color:var(--text-muted); font-size:0.75rem;">(canal ${i.channel})</span>
+            ${own ? '<span style="color:var(--text-muted); font-size:0.75rem;">propia</span>' : ''}
+        </label>`;
+    }).join('') : '<div style="color:var(--text-muted); font-size:0.85rem;">No hay entradas.</div>';
+    group.style.display = '';
 }
 
 function openEditUser(username) {
@@ -1881,6 +1944,8 @@ function openEditUser(username) {
     document.getElementById('usr_must_change').checked = !!u.mustChange;
     document.getElementById('usr_title').innerText = `Editar ${u.username}`;
     document.getElementById('usr_submit').innerText = 'Guardar cambios';
+    document.getElementById('usr_access_group').style.display = 'none';
+    if (u.role !== ROLE_ADMIN) loadUserAccess(u.username);
     openModal('userModal');
 }
 
@@ -1923,6 +1988,20 @@ async function submitUser(e) {
             body: JSON.stringify(payload)
         });
         if(res.ok) {
+            // Asignaciones (sólo si se mostró la lista: edición de un operador que sigue siéndolo)
+            if (isEdit && payload.role !== ROLE_ADMIN && document.getElementById('usr_access_group').style.display !== 'none') {
+                const channels = [...document.querySelectorAll('#usr_access_list input[type=checkbox]:checked:not([data-own])')]
+                    .map(c => parseInt(c.value, 10));
+                const resAcc = await fetch(`/api/users/${encodeURIComponent(username)}/access`, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ channels })
+                });
+                if (!resAcc.ok) {
+                    const err = await resAcc.json().catch(() => ({}));
+                    toast('Usuario guardado, pero no sus entradas: ' + (err.error || resAcc.status));
+                }
+            }
             closeModal('userModal');
             fetchSettingsData();
             if (isEdit && currentUser && username === currentUser.username) loadSession();
@@ -2302,7 +2381,7 @@ function renderHistorySummary(rows) {
 }
 
 async function loadHistory() {
-    if (historyLoading) return;
+    if (historyLoading || (currentUser && currentUser.role !== ROLE_ADMIN)) return; // sólo admin
     historyLoading = true;
     const msg = document.getElementById('history-msg');
     const body = document.getElementById('history-body');
@@ -2436,7 +2515,7 @@ function renderEncoders() {
                 <span class="connection-led active ${led}"></span>
                 <div style="min-width:0;">
                     <div class="enc-name">${escapeHtml(enc.name)}</div>
-                    <div class="enc-muted">${escapeHtml(enc.model || 'Encoder')} · ${escapeHtml(enc.host)}:${enc.web_port}${enc.https ? ' (HTTPS)' : ''}</div>
+                    <div class="enc-muted">${escapeHtml(enc.model || 'Encoder')}${enc.host ? ` · ${escapeHtml(enc.host)}:${enc.web_port}${enc.https ? ' (HTTPS)' : ''}` : ''}</div>
                 </div>
             </div>
             <dl class="enc-rows">

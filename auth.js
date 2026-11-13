@@ -13,6 +13,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const db = require('./db');
+const access = require('./access'); // access.js no importa auth.js: sin ciclo
 
 const ROLE_ADMIN = 4;
 const ROLE_USER = 16;
@@ -87,6 +88,9 @@ function loadUsers() {
     });
 }
 
+const all = (sql, params = []) => new Promise((resolve, reject) => {
+    db.all(sql, params, (err, rows) => err ? reject(err) : resolve(rows));
+});
 const run = (sql, params) => new Promise((resolve, reject) => {
     db.run(sql, params, function(err) { err ? reject(err) : resolve(this); });
 });
@@ -355,16 +359,52 @@ function registerRoutes(app, io) {
         if (u.username === req.user.username) return res.status(400).json({ error: 'No puedes borrar tu propia cuenta' });
         if (u.role === ROLE_ADMIN && countAdmins() <= 1) return res.status(400).json({ error: 'Debe quedar al menos un administrador' });
 
+        // Sus entradas pasan al admin que lo borra y sus asignaciones desaparecen
+        await access.dropUser(u.username, req.user.username);
         await run('DELETE FROM users WHERE username = ?', [u.username]);
         await loadUsers();
         kickSockets(u.username);
         console.log(`[AUTH] ${req.user.username} borró el usuario ${u.username}`);
+        io.emit('db_update', { event: 'inputs_changed' });
         res.json({ deleted: 1 });
+    });
+
+    /* ---------- Entradas de cada usuario (sólo admin) ---------- */
+
+    // owned: las que ha creado (o le han pasado); assigned: las que el admin le deja ver
+    app.get('/api/users/:username/access', requireAdmin, (req, res) => {
+        const u = users.get(req.params.username);
+        if (!u) return res.status(404).json({ error: 'Not found' });
+        res.json({
+            owned: access.ownedBy(u.username).map(Number),
+            assigned: access.grantsOf(u.username).map(Number),
+        });
+    });
+
+    // Sustituye las asignaciones. Se ignoran los canales que no existen y los que ya son suyos.
+    app.put('/api/users/:username/access', requireAdmin, async (req, res) => {
+        const u = users.get(req.params.username);
+        if (!u) return res.status(404).json({ error: 'Not found' });
+        const list = req.body && req.body.channels;
+        if (!Array.isArray(list)) return res.status(400).json({ error: 'channels debe ser una lista' });
+
+        const existing = new Set((await all('SELECT channel FROM inputs')).map(r => Number(r.channel)));
+        const owned = new Set(access.ownedBy(u.username).map(Number));
+        const channels = list.map(Number).filter(ch => Number.isInteger(ch) && existing.has(ch) && !owned.has(ch));
+
+        await access.setGrants(u.username, channels);
+        console.log(`[AUTH] ${req.user.username} asignó a ${u.username} las entradas [${channels.join(', ')}]`);
+        io.emit('db_update', { event: 'inputs_changed' });
+        res.json({ assigned: access.grantsOf(u.username).map(Number) });
     });
 }
 
+// Para validar el propietario de una entrada (server.js)
+const hasUser = (username) => users.has(String(username || ''));
+
 module.exports = {
     init,
+    hasUser,
     requireAuth,
     requireAdmin,
     socketAuth,

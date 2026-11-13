@@ -375,6 +375,23 @@ app.put('/api/inputs/:channel', access.requireChannel(), validateSrtBody, operat
     });
 });
 
+// Cambio de propietario de una entrada (sólo admin)
+app.put('/api/inputs/:channel/owner', auth.requireAdmin, async (req, res) => {
+    const channelId = req.params.channel;
+    const owner = req.body && req.body.owner;
+    const row = await dbGet('SELECT channel FROM inputs WHERE channel = ?', [channelId]).catch(() => null);
+    if (!row) return res.status(404).json({ error: 'Not found' });
+    if (!auth.hasUser(owner)) return res.status(400).json({ error: 'Usuario no encontrado' });
+    try {
+        await access.setOwner(row.channel, String(owner));
+    } catch (e) {
+        return res.status(500).json({ error: e.message });
+    }
+    console.log(`[ACCESS] ${req.user.username} pasó la entrada ${row.channel} a ${owner}`);
+    io.emit('db_update', { event: 'inputs_changed' });
+    res.json({ owner: String(owner) });
+});
+
 app.delete('/api/inputs/:channel', access.requireChannel(), (req, res) => {
     const channelId = req.params.channel;
     streamManager.stopInput(channelId);
