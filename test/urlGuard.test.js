@@ -107,3 +107,21 @@ test('checkResolvedHost: nombres que apuntan a este servidor', () => {
     // Sin direcciones: falla cerrado
     assert.strictEqual(checkResolvedHost('srt://x.example:9000', [], opts(true)), 'No se pudo resolver el host');
 });
+
+test('SRT con mode repetido: srt-live-transmit se queda con el último', () => {
+    assert.strictEqual(check('srt://127.0.0.1:9000?mode=listener&mode=caller', true), LOCAL);
+    assert.strictEqual(check('srt://127.0.0.1:9000?mode=listener&mode=caller', false), LOCAL);
+    assert.strictEqual(check('srt://:9000?mode=listener&mode=caller', true), LOCAL);
+    assert.strictEqual(check('srt://:9000?mode=listener&mode=caller', false), LOCAL);
+    assert.strictEqual(check('srt://:9000?mode=listener&mode=listener', true), null);
+    assert.strictEqual(hostToResolve('srt://encoder.example.com:9000?mode=listener&mode=caller', true), 'encoder.example.com');
+});
+
+test('URLs con # rechazadas (srt-live-transmit no corta en el fragmento)', () => {
+    const FORMATO = 'Formato de URL no permitido';
+    assert.strictEqual(check('srt://example.com#@127.0.0.1:9000?mode=caller', true), FORMATO);
+    assert.strictEqual(check('srt://127.0.0.1:9000?mode=listener#&mode=caller', true), FORMATO);
+    assert.strictEqual(check('srt://127.0.0.1:9000?mode=listener#&mode=caller', false), FORMATO);
+    assert.strictEqual(check('rtmp://remoto.example.com/live/a#b', false), FORMATO);
+    assert.strictEqual(check('disk:///media/usb/a#b.mp4', true), FORMATO);
+});

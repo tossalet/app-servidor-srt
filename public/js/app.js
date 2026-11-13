@@ -61,10 +61,12 @@ socket.on('connect_error', (err) => {
     if (err.message === 'unauthorized') window.location.href = '/login.html';
     setConnectionBadge(false);
 });
-// El servidor cierra el socket si borran el usuario o cambian su contraseña
+// El servidor cierra el socket si borran el usuario o cambian su contraseña o su rol.
+// socket.io no reconecta solo en ese caso: se recarga la página, que pasa por la sesión
+// (login si ya no vale, o el panel con el rol nuevo)
 socket.on('disconnect', (reason) => {
     setConnectionBadge(false);
-    if (reason === 'io server disconnect') fetch('/api/auth/me');
+    if (reason === 'io server disconnect') location.reload();
 });
 
 let currentUser = null;

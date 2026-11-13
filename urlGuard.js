@@ -96,6 +96,12 @@ function hostKind(host, localHosts) {
 }
 
 // Ruta RTMP local ("/live/clave" o "/out/clave") de una URL, o null
+// srt-live-transmit se queda con el último mode: sólo vale si todos son listener
+function onlyListener(p) {
+    const modes = p.params.getAll('mode');
+    return modes.length > 0 && modes.every(m => m === 'listener');
+}
+
 function localRtmpPath(url, localHosts) {
     const p = parse(url);
     if (!p || (p.scheme !== 'rtmp' && p.scheme !== 'rtmps') || hostKind(p.host, localHosts) === 'remote') return null;
@@ -109,6 +115,8 @@ function localRtmpPath(url, localHosts) {
  *  forceLocal: tratar el host como de este servidor (nombre que resuelve aquí)
  */
 function checkOperatorUrl(url, { isInput, items = [], canSeeChannel, localHosts, forceLocal = false }) {
+    // srt-live-transmit no trata '#' como fragmento: el host y la query no serían los que vemos aquí
+    if (String(url || '').includes('#')) return ERR_FORMATO;
     const p = parse(url);
     if (!p || !SCHEMES.has(p.scheme)) return ERR_FORMATO;
     if (p.scheme === 'disk') return null;
@@ -124,7 +132,7 @@ function checkOperatorUrl(url, { isInput, items = [], canSeeChannel, localHosts,
     }
 
     // Sólo el listener explícito escucha; srt://:9000 a secas o en caller conecta con este equipo
-    if (p.scheme === 'srt' && p.params.get('mode') === 'listener') return null;
+    if (p.scheme === 'srt' && onlyListener(p)) return null;
     if (p.scheme === 'udp' && isInput && (p.at || p.host === '' || p.host === '0.0.0.0')) return null;
 
     return kind === 'local' ? ERR_LOCAL : null;
@@ -135,7 +143,7 @@ function checkOperatorUrl(url, { isInput, items = [], canSeeChannel, localHosts,
 function hostToResolve(url, isInput) {
     const p = parse(url);
     if (!p || !SCHEMES.has(p.scheme) || p.scheme === 'disk') return null;
-    if (p.scheme === 'srt' && p.params.get('mode') === 'listener') return null;
+    if (p.scheme === 'srt' && onlyListener(p)) return null;
     if (p.scheme === 'udp' && isInput && (p.at || p.host === '' || p.host === '0.0.0.0')) return null;
     const h = p.host.replace(/\.+$/, '');
     if (h === '' || h.includes(':') || isDottedQuad(h)) return null;

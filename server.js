@@ -151,6 +151,38 @@ function validateSrtBody(req, res, next) {
 const dbGet = (sql, params) => new Promise((resolve, reject) => db.get(sql, params, (err, row) => err ? reject(err) : resolve(row)));
 const dbAll = (sql, params = []) => new Promise((resolve, reject) => db.all(sql, params, (err, rows) => err ? reject(err) : resolve(rows)));
 
+// DNS de los operadores: getaddrinfo ocupa hilos del pool de libuv (el mismo de sqlite3 y fs),
+// así que como mucho LOOKUP_SLOTS a la vez y LOOKUP_TIMEOUT_MS en total, contando la espera
+// por un hueco. Si se pasa, falla como si no resolviera. Un lookup que se pasa de tiempo
+// sigue ocupando su hueco hasta que termina de verdad.
+const LOOKUP_SLOTS = 2;
+const LOOKUP_TIMEOUT_MS = 3000;
+let lookupsActive = 0;
+const lookupQueue = [];
+
+function releaseLookupSlot() {
+    const next = lookupQueue.shift();
+    if (next) next(); // el hueco pasa directamente al siguiente
+    else lookupsActive--;
+}
+
+function operatorLookup(host) {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+            const i = lookupQueue.indexOf(start);
+            if (i !== -1) lookupQueue.splice(i, 1);
+            reject(new Error('timeout'));
+        }, LOOKUP_TIMEOUT_MS);
+        function start() {
+            dns.promises.lookup(host, { all: true })
+                .then(r => { clearTimeout(timer); resolve(r); }, e => { clearTimeout(timer); reject(e); })
+                .finally(releaseLookupSlot);
+        }
+        if (lookupsActive < LOOKUP_SLOTS) { lookupsActive++; start(); }
+        else lookupQueue.push(start);
+    });
+}
+
 // URLs de operadores: ni direcciones de este servidor ni claves RTMP de señales ajenas
 // (urlGuard.js), y las grabaciones sólo dentro de los soportes permitidos.
 // Los administradores no pasan por aquí.
@@ -173,7 +205,7 @@ function operatorUrlGuard(isInput) {
             if (host) {
                 let addresses;
                 try {
-                    addresses = (await dns.promises.lookup(host, { all: true })).map(a => a.address);
+                    addresses = (await operatorLookup(host)).map(a => a.address);
                 } catch (e) {
                     return res.status(400).json({ error: ERR_RESOLVER });
                 }

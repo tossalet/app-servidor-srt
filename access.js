@@ -76,38 +76,32 @@ async function setOwner(channel, username) {
     await reload();
 }
 
-// Ejecuta fn dentro de una transacción; la caché se recarga pase lo que pase
-async function inTransaction(fn) {
+// Sin BEGIN/COMMIT explícitos: la conexión es única y compartida, y un ROLLBACK
+// desharía escrituras de otras peticiones que cayeran en medio. Cada sentencia es
+// atómica por sí sola y el orden deja, si algo falla, un estado que falla cerrado.
+// La caché se recarga pase lo que pase.
+
+// Sustituye todas las asignaciones del usuario. Si falla el INSERT, se queda sin
+// asignaciones (no ve nada) hasta que se repita
+async function setGrants(username, channels) {
     try {
-        await dbRun('BEGIN');
-        try {
-            await fn();
-            await dbRun('COMMIT');
-        } catch (e) {
-            await dbRun('ROLLBACK').catch(() => {});
-            throw e;
-        }
+        await dbRun('DELETE FROM input_access WHERE username = ?', [username]);
+        await dbRun('INSERT OR IGNORE INTO input_access (username, channel) SELECT ?, value FROM json_each(?)',
+            [username, JSON.stringify([...new Set(channels)])]);
     } finally {
         await reload();
     }
 }
 
-// Sustituye todas las asignaciones del usuario
-async function setGrants(username, channels) {
-    await inTransaction(async () => {
-        await dbRun('DELETE FROM input_access WHERE username = ?', [username]);
-        for (const ch of [...new Set(channels)]) {
-            await dbRun('INSERT OR IGNORE INTO input_access (username, channel) VALUES (?, ?)', [username, ch]);
-        }
-    });
-}
-
-// Al borrar un usuario: sus asignaciones se eliminan y sus entradas pasan a heir
+// Al borrar un usuario: sus asignaciones se eliminan y sus entradas pasan a heir.
+// Se llama antes de borrar la fila del usuario: si falla, no se borra y se puede repetir
 async function dropUser(username, heir) {
-    await inTransaction(async () => {
+    try {
         await dbRun('DELETE FROM input_access WHERE username = ?', [username]);
         await dbRun('UPDATE inputs SET owner = ? WHERE owner = ?', [heir, username]);
-    });
+    } finally {
+        await reload();
+    }
 }
 
 // Al borrar una entrada: se eliminan las asignaciones de ese canal
