@@ -76,20 +76,38 @@ async function setOwner(channel, username) {
     await reload();
 }
 
+// Ejecuta fn dentro de una transacción; la caché se recarga pase lo que pase
+async function inTransaction(fn) {
+    try {
+        await dbRun('BEGIN');
+        try {
+            await fn();
+            await dbRun('COMMIT');
+        } catch (e) {
+            await dbRun('ROLLBACK').catch(() => {});
+            throw e;
+        }
+    } finally {
+        await reload();
+    }
+}
+
 // Sustituye todas las asignaciones del usuario
 async function setGrants(username, channels) {
-    await dbRun('DELETE FROM input_access WHERE username = ?', [username]);
-    for (const ch of [...new Set(channels)]) {
-        await dbRun('INSERT OR IGNORE INTO input_access (username, channel) VALUES (?, ?)', [username, ch]);
-    }
-    await reload();
+    await inTransaction(async () => {
+        await dbRun('DELETE FROM input_access WHERE username = ?', [username]);
+        for (const ch of [...new Set(channels)]) {
+            await dbRun('INSERT OR IGNORE INTO input_access (username, channel) VALUES (?, ?)', [username, ch]);
+        }
+    });
 }
 
 // Al borrar un usuario: sus asignaciones se eliminan y sus entradas pasan a heir
 async function dropUser(username, heir) {
-    await dbRun('DELETE FROM input_access WHERE username = ?', [username]);
-    await dbRun('UPDATE inputs SET owner = ? WHERE owner = ?', [heir, username]);
-    await reload();
+    await inTransaction(async () => {
+        await dbRun('DELETE FROM input_access WHERE username = ?', [username]);
+        await dbRun('UPDATE inputs SET owner = ? WHERE owner = ?', [heir, username]);
+    });
 }
 
 // Al borrar una entrada: se eliminan las asignaciones de ese canal

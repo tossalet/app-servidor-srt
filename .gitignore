@@ -8,3 +8,5 @@ onpremise.db-shm
 onpremise.db-wal
 session.secret
 .claude/
+onpremise.db.bak
+*.db.bak
