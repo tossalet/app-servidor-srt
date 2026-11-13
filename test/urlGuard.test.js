@@ -36,6 +36,29 @@ test('URLs rechazadas para operadores', () => {
     assert.strictEqual(check('udp://[::1]:5000', false), local);
 });
 
+test('formas ocultas de direcciones locales', () => {
+    const local = 'No puedes usar direcciones de este servidor como origen o destino';
+    const hosts = new Set([...localHosts, '2001:db8::5']);
+    const c = (u, i = true) => checkOperatorUrl(u, { isInput: i, items, canSeeChannel, localHosts: hosts });
+    for (const u of ['srt://2130706433:9000?mode=caller', 'srt://0x7f000001:9000?mode=caller',
+        'srt://0177.0.0.1:9000?mode=caller', 'srt://localhost.:9000?mode=caller',
+        'srt://[::ffff:127.0.0.1]:9000?mode=caller', 'srt://[0:0:0:0:0:0:0:1]:9000?mode=caller',
+        'srt://[::]:9000?mode=caller', 'srt://[2001:0db8:0:0:0:0:0:5]:9000?mode=caller',
+        'srt://[::ffff:192.168.0.50]:9000?mode=caller', 'srt://LOCALHOST:9000?mode=caller']) {
+        assert.strictEqual(c(u), local, u);
+    }
+    assert.strictEqual(c('srt://[2001:db8::6]:9000?mode=caller'), null);
+    assert.strictEqual(c('srt://203.0.113.5:9000?mode=caller'), null);
+});
+
+test('esquemas y formatos no permitidos', () => {
+    for (const u of ['file:///etc/passwd', 'file:/etc/x', 'pipe:0', 'concat:a|b', 'localhost:9000', 'unix:///tmp/s', '']) {
+        assert.strictEqual(check(u, true), 'Formato de URL no permitido', u);
+    }
+    assert.strictEqual(check('RTSP://camara.example.com/s', true), null);
+    assert.strictEqual(check('https://remoto.example.com/x', false), null);
+});
+
 test('serverLocalHosts incluye los fijos', () => {
     const s = serverLocalHosts();
     for (const h of ['127.0.0.1', 'localhost', '::1', '0.0.0.0']) assert.ok(s.has(h));
