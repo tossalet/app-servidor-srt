@@ -5,6 +5,9 @@ const path = require('path');
 const fs = require('fs');
 const db = require('./db');
 const auth = require('./auth');
+const access = require('./access');
+const { checkOperatorUrl, serverLocalHosts } = require('./urlGuard');
+const { channelOfRecording, RECORDING_DIR } = require('./recordings');
 const metrics = require('./metrics');
 const srt = require('./srt');
 const portCheck = require('./portCheck');
@@ -21,7 +24,11 @@ const server = tlsConfig.createServer(app);
 // Sin CORS: el panel se sirve desde el mismo origen y la cookie de sesión es SameSite=Strict
 const io = new Server(server);
 io.use(auth.socketAuth);
-auth.init().catch(err => console.error('[AUTH] Error inicializando usuarios', err));
+access.setIo(io);
+// Permisos por entrada: se cargan después de los usuarios
+auth.init().catch(err => console.error('[AUTH] Error inicializando usuarios', err))
+    .then(() => access.init())
+    .catch(err => console.error('[ACCESS] Error cargando permisos', err));
 streamManager.setIo(io);
 sysMonitor.setIo(io);
 encoders.init(io).catch(err => console.error('[ENCODERS] Error inicializando', err));
@@ -75,10 +82,16 @@ app.use('/api', (req, res, next) => {
     };
     next();
 });
-// Miniaturas servidas desde RAM (tmpfs) y sin caché
+// Miniaturas servidas desde RAM (tmpfs) y sin caché. Sólo las de entradas que el usuario ve.
+app.use('/thumbs', (req, res, next) => {
+    const m = req.path.match(/^\/thumb_(\d+)\.jpg$/);
+    if (!m || !access.canSee(req.user, m[1])) return res.status(404).end();
+    next();
+});
 app.use('/thumbs', express.static(streamManager.THUMBS_DIR, { maxAge: 0, etag: false }));
 app.use(express.static(path.join(__dirname, 'public')));
-app.use('/media', express.static(mediaRoot));
+// Acceso directo a /media sólo para administradores (los operadores van por /api/media/play)
+app.use('/media', auth.requireAdmin, express.static(mediaRoot));
 
 // Simple API status endpoint
 app.get('/api/status', (req, res) => {
@@ -94,7 +107,7 @@ app.get('/api/status', (req, res) => {
 
 const os = require('os');
 // Historial de Prometheus para el dashboard (consultas fijas; ver history.js)
-app.get('/api/history', history.handler);
+app.get('/api/history', auth.requireAdmin, history.handler);
 // Encoders remotos: lista, estado, proxy a su web y accesos WireGuard (ver encoders.js)
 encoders.registerRoutes(app);
 
@@ -113,10 +126,16 @@ app.get('/api/server-ip', (req, res) => {
 /* =======================================
  *  REST API: INPUTS
  * ======================================= */
+// Filas que el usuario puede ver (visibleChannels null = administrador, todo)
+function onlyVisible(user, rows) {
+    const visible = access.visibleChannels(user);
+    return visible ? rows.filter(r => visible.has(String(r.channel))) : rows;
+}
+
 app.get('/api/inputs', (req, res) => {
     db.all('SELECT * FROM inputs ORDER BY channel ASC', [], (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
-        res.json(rows);
+        res.json(onlyVisible(req.user, rows));
     });
 });
 
@@ -129,12 +148,43 @@ function validateSrtBody(req, res, next) {
 }
 
 const dbGet = (sql, params) => new Promise((resolve, reject) => db.get(sql, params, (err, row) => err ? reject(err) : resolve(row)));
+const dbAll = (sql, params = []) => new Promise((resolve, reject) => db.all(sql, params, (err, rows) => err ? reject(err) : resolve(rows)));
+
+// URLs de operadores: ni direcciones de este servidor ni claves RTMP de señales ajenas
+// (urlGuard.js), y las grabaciones sólo dentro de los soportes permitidos.
+// Los administradores no pasan por aquí.
+function operatorUrlGuard(isInput) {
+    return async (req, res, next) => {
+        const url = req.body && req.body.url;
+        if (!req.user || req.user.role === auth.ROLE_ADMIN || typeof url !== 'string' || !url) return next();
+        try {
+            const items = await dbAll(`SELECT 'input' AS kind, channel, url FROM inputs
+                                       UNION ALL SELECT 'output' AS kind, channel, url FROM outputs`);
+            const error = checkOperatorUrl(url, {
+                isInput, items,
+                canSeeChannel: c => access.canSee(req.user, c),
+                localHosts: serverLocalHosts()
+            });
+            if (error) return res.status(400).json({ error });
+            // disk://<ruta>: la grabación se escribe en <carpeta de la ruta>/entrada_<n>; esa carpeta
+            // tiene que estar dentro de los soportes (evita disk:///media/usb/../../etc/x)
+            const disk = url.trim().match(/^disk:\/\/(.*)$/i);
+            if (disk && !isAllowedMediaPath(path.dirname(path.resolve(disk[1])))) {
+                return res.status(400).json({ error: 'Formato de URL no permitido' });
+            }
+            next();
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    };
+}
 
 // Puerto ya usado por otra entrada/salida o por otro programa: 409 con el motivo y null.
 // Si se puede, devuelve { warning? } para añadirlo a la respuesta.
-async function portGuard(res, url, opts) {
+// Lo que el usuario no ve aparece como 'otra señal del servidor'.
+async function portGuard(req, res, url, opts) {
     try {
-        const r = await portCheck.check(url, opts);
+        const r = await portCheck.check(url, { ...opts, canSeeChannel: c => access.canSee(req.user, c) });
         if (r.error) { res.status(409).json({ error: r.error }); return null; }
         return r;
     } catch (e) {
@@ -148,12 +198,12 @@ app.get('/api/port-check', async (req, res) => {
     const port = parseInt(req.query.port, 10);
     if (!(port > 0 && port < 65536)) return res.json({});
     const self = req.query.kind && req.query.id ? { kind: req.query.kind, id: req.query.id } : null;
-    try { res.json(await portCheck.describe(port, self)); } catch (e) { res.json({}); }
+    try { res.json(await portCheck.describe(port, self, c => access.canSee(req.user, c))); } catch (e) { res.json({}); }
 });
 
-app.post('/api/inputs', validateSrtBody, async (req, res) => {
+app.post('/api/inputs', validateSrtBody, operatorUrlGuard(true), async (req, res) => {
     const { url, name, provider, location, remote, audiowtdg, wtdgsecs, enabled } = req.body;
-    const guard = await portGuard(res, url, { isInput: true, willEnable: enabled !== false });
+    const guard = await portGuard(req, res, url, { isInput: true, willEnable: enabled !== false });
     if (!guard) return;
 
     // Asignar Udpsrv respetando los límites de Firewall (Settings)
@@ -165,14 +215,16 @@ app.post('/api/inputs', validateSrtBody, async (req, res) => {
             udpsrv = Math.floor(Math.random() * (max - min + 1)) + min;
         }
 
-        const query = `INSERT INTO inputs (url, name, provider, location, remote, enabled, udpsrv, delay_ms)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
+        // Quien la crea es su propietario
+        const query = `INSERT INTO inputs (url, name, provider, location, remote, enabled, udpsrv, delay_ms, owner)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
         const params = [ url || '', name || 'Stream', provider || 'TodoStreaming', location || '', remote || '',
-                         enabled !== false ? 1 : 0, udpsrv, parseInt(req.body.delay_ms, 10) || 0 ];
+                         enabled !== false ? 1 : 0, udpsrv, parseInt(req.body.delay_ms, 10) || 0, req.user.username ];
 
-        db.run(query, params, function(err) {
+        db.run(query, params, async function(err) {
             if (err) return res.status(500).json({ error: err.message });
             const channelId = this.lastID;
+            await access.reload().catch(e => console.error('[ACCESS]', e.message));
             res.status(201).json({ channel: channelId, warning: guard.warning });
             io.emit('db_update', { event: 'inputs_changed' });
 
@@ -187,12 +239,12 @@ app.post('/api/inputs', validateSrtBody, async (req, res) => {
 });
 
 // For simplicity, a toggle endpoint
-app.post('/api/inputs/:channel/toggle', (req, res) => {
+app.post('/api/inputs/:channel/toggle', access.requireChannel(), (req, res) => {
     const channelId = req.params.channel;
     db.get('SELECT * FROM inputs WHERE channel = ?', [channelId], async (err, row) => {
         if (err || !row) return res.status(404).json({ error: 'Not found' });
         const newEnabled = row.enabled ? 0 : 1;
-        if (newEnabled && !await portGuard(res, row.url, { isInput: true, self: { kind: 'input', id: channelId } })) return;
+        if (newEnabled && !await portGuard(req, res, row.url, { isInput: true, self: { kind: 'input', id: channelId } })) return;
         db.run('UPDATE inputs SET enabled = ? WHERE channel = ?', [newEnabled, channelId], function(err) {
             io.emit('db_update', { event: 'input_toggled', channel: channelId, enabled: newEnabled });
             res.json({ enabled: newEnabled });
@@ -208,7 +260,7 @@ app.post('/api/inputs/:channel/toggle', (req, res) => {
     });
 });
 
-app.post('/api/inputs/:channel/preview', (req, res) => {
+app.post('/api/inputs/:channel/preview', access.requireChannel(), (req, res) => {
     const channelId = req.params.channel;
     db.get('SELECT preview_enabled FROM inputs WHERE channel = ?', [channelId], (err, row) => {
         if (err || !row) return res.status(404).json({ error: 'Not found' });
@@ -225,7 +277,7 @@ app.post('/api/inputs/:channel/preview', (req, res) => {
     });
 });
 
-app.post('/api/inputs/:channel/snapshot', (req, res) => {
+app.post('/api/inputs/:channel/snapshot', access.requireChannel(), (req, res) => {
     const channelId = req.params.channel;
     streamManager.startPreview(channelId, true);
     res.json({ status: 'Snapshot requested' });
@@ -233,7 +285,7 @@ app.post('/api/inputs/:channel/snapshot', (req, res) => {
 
 // Escucha del audio de un input en MP3. La respuesta se abre con el primer audio que sale:
 // si el input no tiene pista de audio, FFmpeg termina antes y se devuelve 404.
-app.get('/api/audio/:channel', async (req, res) => {
+app.get('/api/audio/:channel', access.requireChannel(), async (req, res) => {
     const child = await streamManager.startListen(req.params.channel).catch(() => null);
     if (!child) return res.status(404).json({ error: 'Entrada parada o demasiados oyentes' });
 
@@ -258,7 +310,7 @@ app.get('/api/audio/:channel', async (req, res) => {
 });
 
 // Reproductor HLS bajo demanda. Pedir la lista arranca (o mantiene vivo) el HLS del input.
-app.get('/hls/:channel/index.m3u8', async (req, res) => {
+app.get('/hls/:channel/index.m3u8', access.requireChannel(), async (req, res) => {
     if (!/^\d+$/.test(req.params.channel)) return res.status(404).end();
     const dir = streamManager.ensureHls(req.params.channel);
     if (!dir) return res.status(404).end();
@@ -272,7 +324,7 @@ app.get('/hls/:channel/index.m3u8', async (req, res) => {
     res.sendFile(file, (err) => { if (err && !res.headersSent) res.status(504).end(); });
 });
 
-app.get('/hls/:channel/:segment', (req, res) => {
+app.get('/hls/:channel/:segment', access.requireChannel(), (req, res) => {
     const { channel, segment } = req.params;
     if (!/^\d+$/.test(channel) || !/^seg_\d+\.ts$/.test(segment)) return res.status(404).end();
     res.set('Cache-Control', 'no-store');
@@ -283,7 +335,7 @@ app.get('/hls/:channel/:segment', (req, res) => {
 });
 
 // Sincronización: retardo en vivo (ms) de un input. Se aplica sin reiniciar nada.
-app.post('/api/inputs/:channel/delay', (req, res) => {
+app.post('/api/inputs/:channel/delay', access.requireChannel(), (req, res) => {
     const channelId = req.params.channel;
     const ms = parseInt(req.body.delay_ms, 10);
     if (isNaN(ms) || ms < 0 || ms > streamManager.MAX_DELAY_MS) {
@@ -298,13 +350,13 @@ app.post('/api/inputs/:channel/delay', (req, res) => {
     });
 });
 
-app.put('/api/inputs/:channel', validateSrtBody, async (req, res) => {
+app.put('/api/inputs/:channel', access.requireChannel(), validateSrtBody, operatorUrlGuard(true), async (req, res) => {
     const channelId = req.params.channel;
     const { url, name } = req.body;
     let guard = {};
     const prev = await dbGet('SELECT url, enabled FROM inputs WHERE channel = ?', [channelId]).catch(() => null);
     if (prev && url) {
-        guard = await portGuard(res, url, { isInput: true, self: { kind: 'input', id: channelId }, willEnable: !!prev.enabled, previousUrl: prev.url });
+        guard = await portGuard(req, res, url, { isInput: true, self: { kind: 'input', id: channelId }, willEnable: !!prev.enabled, previousUrl: prev.url });
         if (!guard) return;
     }
     // Campos no enviados se conservan (el editor de latencia sólo manda la URL)
@@ -323,7 +375,7 @@ app.put('/api/inputs/:channel', validateSrtBody, async (req, res) => {
     });
 });
 
-app.delete('/api/inputs/:channel', (req, res) => {
+app.delete('/api/inputs/:channel', access.requireChannel(), (req, res) => {
     const channelId = req.params.channel;
     streamManager.stopInput(channelId);
 
@@ -333,7 +385,9 @@ app.delete('/api/inputs/:channel', (req, res) => {
         // Stop related outputs
         db.all('SELECT id FROM outputs WHERE channel = ?', [channelId], (err, rows) => {
             if (rows) rows.forEach(r => streamManager.stopOutput(r.id));
-            db.run('DELETE FROM outputs WHERE channel = ?', [channelId], () => {
+            db.run('DELETE FROM outputs WHERE channel = ?', [channelId], async () => {
+                // Fuera sus asignaciones; forgetChannel recarga la caché de permisos
+                await access.forgetChannel(channelId).catch(e => console.error('[ACCESS]', e.message));
                 res.json({ deleted: true });
                 io.emit('db_update', { event: 'inputs_changed' });
             });
@@ -347,14 +401,15 @@ app.delete('/api/inputs/:channel', (req, res) => {
 app.get('/api/outputs', (req, res) => {
     db.all('SELECT * FROM outputs', [], (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
-        res.json(rows);
+        res.json(onlyVisible(req.user, rows));
     });
 });
 
-app.post('/api/outputs', validateSrtBody, async (req, res) => {
+app.post('/api/outputs', validateSrtBody, operatorUrlGuard(false), async (req, res) => {
     const { channel, url, location, remote, enabled, vcodec } = req.body;
     if (!channel) return res.status(400).json({ error: "Input 'channel' is required" });
-    const guard = await portGuard(res, url, { isInput: false, willEnable: enabled !== false });
+    if (!access.canSee(req.user, channel)) return res.status(404).json({ error: 'Not found' });
+    const guard = await portGuard(req, res, url, { isInput: false, willEnable: enabled !== false });
     if (!guard) return;
 
     // We need the udpsrv of the parent channel to link them
@@ -366,9 +421,10 @@ app.post('/api/outputs', validateSrtBody, async (req, res) => {
                        VALUES (?, ?, ?, ?, ?, ?, ?)`;
         const params = [ channel, url || '', location || '', remote || '', enabled !== false ? 1 : 0, udpsrv, vcodec || 'copy' ];
 
-        db.run(query, params, function(err) {
+        db.run(query, params, async function(err) {
             if (err) return res.status(500).json({ error: err.message });
             const outId = this.lastID;
+            await access.reload().catch(e => console.error('[ACCESS]', e.message));
             res.status(201).json({ id: outId, warning: guard.warning });
             io.emit('db_update', { event: 'outputs_changed' });
 
@@ -381,12 +437,12 @@ app.post('/api/outputs', validateSrtBody, async (req, res) => {
     });
 });
 
-app.post('/api/outputs/:id/toggle', (req, res) => {
+app.post('/api/outputs/:id/toggle', access.requireOutput(), (req, res) => {
     const id = req.params.id;
     db.get('SELECT * FROM outputs WHERE id = ?', [id], async (err, row) => {
         if (err || !row) return res.status(404).json({ error: 'Not found' });
         const newEnabled = row.enabled ? 0 : 1;
-        if (newEnabled && !await portGuard(res, row.url, { isInput: false, self: { kind: 'output', id } })) return;
+        if (newEnabled && !await portGuard(req, res, row.url, { isInput: false, self: { kind: 'output', id } })) return;
         db.run('UPDATE outputs SET enabled = ? WHERE id = ?', [newEnabled, id], function(err) {
             io.emit('db_update', { event: 'output_toggled', id: id, enabled: newEnabled });
             res.json({ enabled: newEnabled });
@@ -401,13 +457,13 @@ app.post('/api/outputs/:id/toggle', (req, res) => {
     });
 });
 
-app.put('/api/outputs/:id', validateSrtBody, async (req, res) => {
+app.put('/api/outputs/:id', access.requireOutput(), validateSrtBody, operatorUrlGuard(false), async (req, res) => {
     const id = req.params.id;
     const { url, location, vcodec } = req.body;
     let guard = {};
     const prev = await dbGet('SELECT url, enabled FROM outputs WHERE id = ?', [id]).catch(() => null);
     if (prev && url) {
-        guard = await portGuard(res, url, { isInput: false, self: { kind: 'output', id }, willEnable: !!prev.enabled, previousUrl: prev.url });
+        guard = await portGuard(req, res, url, { isInput: false, self: { kind: 'output', id }, willEnable: !!prev.enabled, previousUrl: prev.url });
         if (!guard) return;
     }
     // Campos no enviados se conservan (el editor de latencia sólo manda la URL)
@@ -425,13 +481,15 @@ app.put('/api/outputs/:id', validateSrtBody, async (req, res) => {
     });
 });
 
-app.delete('/api/outputs/:id', (req, res) => {
+app.delete('/api/outputs/:id', access.requireOutput(), (req, res) => {
     const id = req.params.id;
     streamManager.stopOutput(id);
 
-    db.run('DELETE FROM outputs WHERE id = ?', [id], function(err) {
+    db.run('DELETE FROM outputs WHERE id = ?', [id], async function(err) {
         if (err) return res.status(500).json({ error: err.message });
-        res.json({ deleted: this.changes });
+        const deleted = this.changes;
+        await access.reload().catch(e => console.error('[ACCESS]', e.message));
+        res.json({ deleted });
         io.emit('db_update', { event: 'outputs_changed' });
     });
 });
@@ -488,30 +546,52 @@ app.get('/api/disks', async (req, res) => {
     }
 });
 
+// ¿Puede el usuario reproducir esa grabación? Admin: cualquiera dentro de los soportes.
+// Operador: además tiene que estar en la carpeta entrada_<n> de una entrada que ve.
+function canSeeRecording(user, absPath) {
+    if (!isAllowedMediaPath(absPath)) return false;
+    if (user && user.role === auth.ROLE_ADMIN) return true;
+    const channel = channelOfRecording(path.resolve(absPath));
+    return channel !== null && access.canSee(user, channel);
+}
+
 app.get('/api/files', async (req, res) => {
     // ParentDisk es ahora una ruta ABSOLUTA enviada desde el frontend
     const scanPath = req.query.disk;
     if (!scanPath) return res.json([]);
+    if (!isAllowedMediaPath(scanPath)) return res.status(403).json({ error: 'Acceso denegado a esa ruta' });
 
     try {
         // Asíncrono: un USB lento no debe congelar el servidor
         const items = await fs.promises.readdir(scanPath, { withFileTypes: true }).catch(() => null);
         if (!items) return res.json([]);
-        const files = [];
 
+        // Vídeos de la carpeta y de sus subcarpetas entrada_<n> (un nivel: cada entrada graba en la suya)
+        const found = [];
         for (const item of items) {
-            if (item.isFile() && item.name.match(/\.(mp4|mkv|ts|flv)$/i)) {
-                const absolutePath = path.join(scanPath, item.name);
-                const stat = await fs.promises.stat(absolutePath);
-                files.push({
-                    name: item.name,
-                    size: stat.size,
-                    date: stat.mtime,
-                    // Devolvemos el absolutePath bruto, y usaremos una url especial para cargar videos absolutos
-                    url: `/api/media/play?path=${encodeURIComponent(absolutePath)}`,
-                    absolutePath: absolutePath
-                });
+            if (item.isFile()) found.push({ dir: scanPath, name: item.name });
+            else if (item.isDirectory() && RECORDING_DIR.test(item.name)) {
+                const dir = path.join(scanPath, item.name);
+                const sub = await fs.promises.readdir(dir, { withFileTypes: true }).catch(() => []);
+                for (const f of sub) if (f.isFile()) found.push({ dir, name: f.name });
             }
+        }
+
+        const files = [];
+        for (const { dir, name } of found) {
+            if (!name.match(/\.(mp4|mkv|ts|flv)$/i)) continue;
+            const absolutePath = path.join(dir, name);
+            if (!canSeeRecording(req.user, absolutePath)) continue;
+            const stat = await fs.promises.stat(absolutePath).catch(() => null);
+            if (!stat) continue;
+            files.push({
+                name,
+                size: stat.size,
+                date: stat.mtime,
+                // Devolvemos el absolutePath bruto, y usaremos una url especial para cargar videos absolutos
+                url: `/api/media/play?path=${encodeURIComponent(absolutePath)}`,
+                absolutePath: absolutePath
+            });
         }
         res.json(files.sort((a,b) => b.date - a.date)); // Fechas más recientes primero
     } catch (e) {
@@ -523,7 +603,8 @@ app.get('/api/files', async (req, res) => {
 app.get('/api/media/play', (req, res) => {
     const fpath = req.query.path;
     if (!isAllowedMediaPath(fpath)) return res.status(403).send('Forbidden area');
-    if (!fs.existsSync(fpath)) return res.status(404).send('Not found');
+    // Grabación de una entrada ajena: como si no existiera
+    if (!canSeeRecording(req.user, fpath) || !fs.existsSync(fpath)) return res.status(404).send('Not found');
     res.sendFile(path.resolve(fpath));
 });
 

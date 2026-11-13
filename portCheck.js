@@ -35,21 +35,24 @@ function listenPort(url, isInput) {
 
 const all = (sql) => new Promise((resolve, reject) => db.all(sql, [], (err, rows) => err ? reject(err) : resolve(rows)));
 
-// Todo lo configurado que escucha en ese puerto, salvo el propio elemento (self = { kind, id })
-async function usersOf(port, self) {
+// Todo lo configurado que escucha en ese puerto, salvo el propio elemento (self = { kind, id }).
+// canSeeChannel(channel): si se pasa, lo que el usuario no ve sale como 'otra señal del servidor'
+const AJENA = 'otra señal del servidor';
+async function usersOf(port, self, canSeeChannel) {
+    const hidden = (channel) => !!canSeeChannel && !canSeeChannel(channel);
     const [inputs, outputs] = await Promise.all([
         all('SELECT channel, name, url, enabled FROM inputs'),
-        all('SELECT o.id, o.url, o.location, o.enabled, i.name AS inputName FROM outputs o LEFT JOIN inputs i ON o.channel = i.channel')
+        all('SELECT o.id, o.channel, o.url, o.location, o.enabled, i.name AS inputName FROM outputs o LEFT JOIN inputs i ON o.channel = i.channel')
     ]);
     const found = [];
     for (const r of inputs) {
         if (self && self.kind === 'input' && String(self.id) === String(r.channel)) continue;
-        if (listenPort(r.url, true) === port) found.push({ enabled: !!r.enabled, label: `la entrada «${r.name || 'Entrada ' + r.channel}»` });
+        if (listenPort(r.url, true) === port) found.push({ enabled: !!r.enabled, label: hidden(r.channel) ? AJENA : `la entrada «${r.name || 'Entrada ' + r.channel}»` });
     }
     for (const r of outputs) {
         if (self && self.kind === 'output' && String(self.id) === String(r.id)) continue;
         if (listenPort(r.url, false) === port) {
-            found.push({ enabled: !!r.enabled, label: `la salida ${r.location ? `«${r.location}» ` : ''}de «${r.inputName || 'entrada borrada'}»` });
+            found.push({ enabled: !!r.enabled, label: hidden(r.channel) ? AJENA : `la salida ${r.location ? `«${r.location}» ` : ''}de «${r.inputName || 'entrada borrada'}»` });
         }
     }
     return found;
@@ -69,13 +72,14 @@ function systemBusy(port) {
  *  self:       { kind: 'input'|'output', id } al editar o habilitar; null al crear
  *  willEnable: el elemento va a quedar habilitado
  *  previousUrl: URL guardada antes de editar (si el puerto no cambia, el puerto ya es suyo)
+ *  canSeeChannel: opcional, oculta el nombre de lo que el usuario no ve
  * Devuelve { error } si no se puede, { warning } si se puede pero conviene saberlo, o {}.
  */
-async function check(url, { isInput, self = null, willEnable = true, previousUrl = null } = {}) {
+async function check(url, { isInput, self = null, willEnable = true, previousUrl = null, canSeeChannel = null } = {}) {
     const port = listenPort(url, isInput);
     if (!port) return {};
 
-    const users = await usersOf(port, self);
+    const users = await usersOf(port, self, canSeeChannel);
     const active = users.filter(u => u.enabled);
     if (willEnable && active.length) {
         return { error: `El puerto ${port} ya lo usa ${active[0].label}. Usa otro puerto o deshabilita esa primero.` };
@@ -95,8 +99,8 @@ async function check(url, { isInput, self = null, willEnable = true, previousUrl
 }
 
 // Para el aviso en el formulario mientras se escribe: sólo la base de datos, sin abrir el puerto
-async function describe(port, self) {
-    const users = await usersOf(port, self);
+async function describe(port, self, canSeeChannel = null) {
+    const users = await usersOf(port, self, canSeeChannel);
     const active = users.find(u => u.enabled);
     if (active) return { error: `El puerto ${port} ya lo usa ${active.label}.` };
     if (users.length) return { warning: `${users[0].label[0].toUpperCase()}${users[0].label.slice(1)} (deshabilitada) usa también el puerto ${port}.` };
