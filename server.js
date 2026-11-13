@@ -721,9 +721,16 @@ bootActiveStreams();
 io.on('connection', (socket) => {
     console.log(`Frontend Connected: ${socket.id}`);
     // Histórico completo una sola vez; después sólo se envía el punto nuevo en cada 'stats'
-    socket.emit('telemetry_snapshot', streamManager.getTelemetry());
-    socket.emit('encoders_status', encoders.statusList());
-    socket.emit('rtmp_viewers', streamManager.rtmpViewers());
+    // Cada evento inicial se filtra por usuario; si filterFor devuelve undefined, no se envía
+    const initial = [
+        ['telemetry_snapshot', streamManager.getTelemetry()],
+        ['encoders_status', encoders.statusList()],
+        ['rtmp_viewers', streamManager.rtmpViewers()]
+    ];
+    for (const [event, data] of initial) {
+        const filtered = access.filterFor(socket.data.user, event, data);
+        if (filtered !== undefined) socket.emit(event, filtered);
+    }
 });
 
 // Un fallo puntual en una promesa no debe tumbar todos los streams

@@ -396,7 +396,7 @@ async function checkAll() {
                 proxyError: prev.proxyError
             });
         }));
-        if (io) io.emit('encoders_status', statusList());
+        if (io) require('./access').broadcast('encoders_status', statusList()); // require perezoso: evita ciclo de carga
     } finally {
         checking = false;
     }

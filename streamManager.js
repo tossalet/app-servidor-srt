@@ -143,7 +143,7 @@ function pushTelemetry(key, point) {
 }
 
 function emit(event, data) {
-    if (ioInstance) ioInstance.emit(event, data);
+    if (ioInstance) require('./access').broadcast(event, data); // require perezoso: evita ciclo de carga
 }
 
 const logError = (tag) => (err) => console.error(`[${tag}]`, err && err.message ? err.message : err);
