@@ -20,6 +20,7 @@ const fs = require('fs');
 const { spawn } = require('child_process');
 const db = require('./db');
 const auth = require('./auth');
+const { operatorEncoderStatus } = require('./accessCore');
 
 const PANEL_PORT = parseInt(process.env.PORT, 10) || 4000;
 // Puertos del proxy: panel + 10 en adelante (panel 2000 -> encoders 2010, 2011...). Grafana usa panel + 1.
@@ -420,6 +421,7 @@ function publicEncoder(enc, user) {
     const out = { ...rest, proxy_port: PROXY_BASE + enc.proxy_slot, vpn: !!enc.vpn_pubkey, status: status.get(enc.id) || null };
     if (user && user.role !== auth.ROLE_ADMIN) { // el operador no ve cómo llegar al encoder
         for (const k of ['host', 'web_port', 'vpn_ip', 'vpn_lan', 'vpn_pubkey']) delete out[k];
+        out.status = operatorEncoderStatus(out.status); // ni endpoint WireGuard ni contadores
     }
     return out;
 }

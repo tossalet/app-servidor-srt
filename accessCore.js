@@ -5,6 +5,14 @@
 
 const ROLE_ADMIN = 4;
 
+// Estado de un encoder tal como lo ve un operador: de la VPN sólo si está arriba
+// y la antigüedad del handshake; ni el endpoint WireGuard ni los contadores.
+function operatorEncoderStatus(status) {
+  if (!status || !status.vpn) return status;
+  const { up, handshakeAge } = status.vpn;
+  return { ...status, vpn: { up, handshakeAge } };
+}
+
 class AccessState {
   constructor() {
     this.reset({});
@@ -88,6 +96,7 @@ class AccessState {
   }
 
   // Devuelve los datos a enviar a este usuario, o undefined si no hay nada.
+  // Para operadores falla cerrado: un evento que no está aquí no se envía.
   filterFor(user, event, data) {
     if (this._isAdmin(user)) return data;
     switch (event) {
@@ -102,11 +111,12 @@ class AccessState {
       case 'rtmp_viewers':
         return this._filterKeys(user, data, true);
       case 'encoders_status':
-        return Array.isArray(data) ? data.filter(e => this.canSeeEncoder(user, e.id)) : data;
+        if (!Array.isArray(data)) return undefined;
+        return data.filter(e => e && this.canSeeEncoder(user, e.id)).map(operatorEncoderStatus);
       default:
-        return data;
+        return undefined;
     }
   }
 }
 
-module.exports = { AccessState, ROLE_ADMIN };
+module.exports = { AccessState, ROLE_ADMIN, operatorEncoderStatus };

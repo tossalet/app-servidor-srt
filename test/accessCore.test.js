@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { AccessState } = require('../accessCore');
+const { AccessState, operatorEncoderStatus } = require('../accessCore');
 
 function crear() {
   const st = new AccessState();
@@ -100,6 +100,26 @@ test('filterFor rtmp_viewers', () => {
 test('filterFor encoders_status', () => {
   const st = crear();
   assert.deepEqual(st.filterFor(ana, 'encoders_status', [{ id: 1 }, { id: 2 }, { id: 3 }]), [{ id: 2 }]);
+  // Datos raros: falla cerrado
+  assert.equal(st.filterFor(ana, 'encoders_status', { id: 2 }), undefined);
+  assert.equal(st.filterFor(ana, 'encoders_status', null), undefined);
+});
+
+test('filterFor encoders_status: el operador no recibe datos de la VPN', () => {
+  const st = crear();
+  const vpn = { up: true, handshakeAge: 12, endpoint: '198.51.100.7:51820', rx: 100, tx: 200 };
+  const lista = [{ id: 2, online: true, vpn }, { id: 1, online: true, vpn }];
+  assert.deepEqual(st.filterFor(ana, 'encoders_status', lista), [{ id: 2, online: true, vpn: { up: true, handshakeAge: 12 } }]);
+  assert.deepEqual(lista[0].vpn, vpn); // no muta el original (lo reciben también los admins)
+  assert.equal(st.filterFor(admin, 'encoders_status', lista), lista);
+  assert.deepEqual(st.filterFor(ana, 'encoders_status', [{ id: 2, vpn: null }]), [{ id: 2, vpn: null }]);
+});
+
+test('operatorEncoderStatus', () => {
+  const vpn = { up: false, handshakeAge: null, endpoint: '198.51.100.7:51820', rx: 1, tx: 2 };
+  assert.deepEqual(operatorEncoderStatus({ online: false, vpn }), { online: false, vpn: { up: false, handshakeAge: null } });
+  assert.equal(operatorEncoderStatus(null), null);
+  assert.deepEqual(operatorEncoderStatus({ online: true }), { online: true });
 });
 
 test('filterFor admin y otros eventos', () => {
@@ -107,6 +127,10 @@ test('filterFor admin y otros eventos', () => {
   const d = { channel: '2' };
   assert.equal(st.filterFor(admin, 'stats', d), d);
   const s = { cpu: 1 }, u = { x: 1 };
-  assert.equal(st.filterFor(ana, 'sys_stats', s), s);
-  assert.equal(st.filterFor(ana, 'db_update', u), u);
+  assert.equal(st.filterFor(admin, 'sys_stats', s), s);
+  assert.equal(st.filterFor(admin, 'evento_nuevo', u), u);
+  // Eventos que filterFor no conoce: el operador no recibe nada (falla cerrado)
+  assert.equal(st.filterFor(ana, 'sys_stats', s), undefined);
+  assert.equal(st.filterFor(ana, 'db_update', u), undefined);
+  assert.equal(st.filterFor(ana, 'evento_nuevo', { channel: '1' }), undefined);
 });
