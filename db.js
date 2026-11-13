@@ -113,6 +113,15 @@ function initDB() {
         // al entrar); auth.js cifra la contraseña al arrancar.
         db.run(`INSERT INTO users (username, password, role, must_change)
                 SELECT 'admin', 'admin', 4, 1 WHERE NOT EXISTS (SELECT 1 FROM users)`);
+        // Permisos por entrada: propietario de cada entrada y asignaciones a operadores.
+        // Las entradas existentes pasan al admin (primero 'admin', si no el primero por nombre).
+        db.run("ALTER TABLE inputs ADD COLUMN owner TEXT NOT NULL DEFAULT ''", () => {});
+        db.run(`CREATE TABLE IF NOT EXISTS input_access (
+            username TEXT NOT NULL,
+            channel INTEGER NOT NULL,
+            PRIMARY KEY (username, channel)
+        )`);
+        db.run(`UPDATE inputs SET owner = (SELECT username FROM users WHERE role = 4 ORDER BY (username = 'admin') DESC, username LIMIT 1) WHERE owner = ''`);
         db.run(`INSERT INTO ports (chanMin, chanMax, udpMin, udpMax)
                 SELECT 1, 20000, 1024, 49151 WHERE NOT EXISTS (SELECT 1 FROM ports)`);
 
