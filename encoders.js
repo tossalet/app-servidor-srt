@@ -279,8 +279,12 @@ function sessionOk(req) {
 function handleRequest(id, req, res) {
     const enc = encoders.get(id);
     if (!enc) return page(res, 404, 'Encoder no encontrado', 'Este encoder se ha borrado del panel.');
-    if (!sessionOk(req)) {
+    const user = sessionOk(req);
+    if (!user) {
         return page(res, 401, 'Inicia sesión en el panel', `Abre el panel TSST en el puerto ${PANEL_PORT}, inicia sesión y vuelve a abrir el encoder desde la sección Encoders.`);
+    }
+    if (!require('./access').canSeeEncoder(user, id)) { // require perezoso: evita ciclo de carga
+        return page(res, 404, 'Encoder no encontrado', 'Este encoder no está asignado a tu usuario.');
     }
     const { headers, origin } = forwardHeaders(req, enc);
     const lib = enc.https ? https : http;
@@ -307,7 +311,9 @@ function handleRequest(id, req, res) {
 // WebSocket (algunas webs de encoder lo usan para el estado en vivo)
 function handleUpgrade(id, req, socket, head) {
     const enc = encoders.get(id);
-    if (!enc || !sessionOk(req)) return socket.destroy();
+    const user = sessionOk(req);
+    if (!enc || !user) return socket.destroy();
+    if (!require('./access').canSeeEncoder(user, id)) return socket.destroy();
     const { headers } = forwardHeaders(req, enc);
     const opts = { host: enc.host, port: enc.web_port };
     const upstream = enc.https ? tls.connect({ ...opts, rejectUnauthorized: false, servername: isIPv4(enc.host) ? undefined : enc.host }) : net.connect(opts);
@@ -409,9 +415,13 @@ function statusList() {
 /* =======================================
  *  API
  * ======================================= */
-function publicEncoder(enc) {
+function publicEncoder(enc, user) {
     const { vpn_privkey, vpn_psk, ...rest } = enc;
-    return { ...rest, proxy_port: PROXY_BASE + enc.proxy_slot, vpn: !!enc.vpn_pubkey, status: status.get(enc.id) || null };
+    const out = { ...rest, proxy_port: PROXY_BASE + enc.proxy_slot, vpn: !!enc.vpn_pubkey, status: status.get(enc.id) || null };
+    if (user && user.role !== auth.ROLE_ADMIN) { // el operador no ve cómo llegar al encoder
+        for (const k of ['host', 'web_port', 'vpn_ip', 'vpn_lan', 'vpn_pubkey']) delete out[k];
+    }
+    return out;
 }
 
 async function reload() {
@@ -433,9 +443,14 @@ const notify = () => { if (io) io.emit('db_update', { event: 'encoders_changed' 
 const wrap = (fn) => (req, res) => fn(req, res).catch(err => res.status(400).json({ error: err.message }));
 
 function registerRoutes(app) {
-    app.get('/api/encoders', (req, res) => res.json([...encoders.values()].map(publicEncoder)));
+    app.get('/api/encoders', (req, res) => {
+        const access = require('./access'); // require perezoso: evita ciclo de carga
+        res.json([...encoders.values()]
+            .filter(e => access.canSeeEncoder(req.user, e.id))
+            .map(e => publicEncoder(e, req.user)));
+    });
 
-    app.get('/api/encoders/vpn', wrap(async (req, res) => {
+    app.get('/api/encoders/vpn', auth.requireAdmin, wrap(async (req, res) => {
         const info = await wgInfo(req.query.refresh === '1');
         const { publicKey, ...rest } = info;
         res.json({ ...rest, proxyBase: PROXY_BASE });
@@ -449,6 +464,7 @@ function registerRoutes(app) {
         const r = await dbRun(`INSERT INTO encoders (name, model, host, web_port, https, channel, notes, proxy_slot) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
             [value.name, value.model, value.host, value.web_port, value.https, value.channel, value.notes, slot]);
         await reload();
+        await require('./access').reload();
         notify();
         checkAll();
         res.status(201).json(publicEncoder(encoders.get(r.lastID)));
@@ -462,6 +478,7 @@ function registerRoutes(app) {
         await dbRun('UPDATE encoders SET name = ?, model = ?, host = ?, web_port = ?, https = ?, channel = ?, notes = ? WHERE id = ?',
             [value.name, value.model, value.host, value.web_port, value.https, value.channel, value.notes, id]);
         await reload();
+        await require('./access').reload();
         notify();
         checkAll();
         res.json(publicEncoder(encoders.get(id)));
@@ -474,6 +491,7 @@ function registerRoutes(app) {
         await removePeer(enc);
         await dbRun('DELETE FROM encoders WHERE id = ?', [id]);
         await reload();
+        await require('./access').reload();
         notify();
         res.json({ deleted: true });
     }));
