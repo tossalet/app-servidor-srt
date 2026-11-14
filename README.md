@@ -146,6 +146,7 @@ Botón **Control** en la tarjeta del encoder: el panel habla con la API del enco
 
 - **Codificación:** bitrate, modo (CBR/VBR), códec (H.264/H.265), FPS y GOP de cada stream, main y sub por separado. Después de aplicar, el servidor vuelve a leer el encoder y avisa si ignoró algún valor (estos firmwares a veces responden «OK» a un valor fuera de rango).
 - **Emisiones:** activa o para las salidas SRT/RTMP de cada stream. Un administrador también puede cambiar la URL de destino (p. ej. `srt://10.8.0.1:9000?latency=500` por el túnel).
+- **Grabación local** (Zowietek): graba, pausa, reanuda y para en el USB, la tarjeta SD o el NAS del propio encoder. Si no hay soporte montado o está lleno, se indica y no deja grabar. La tarjeta del encoder marca «grabando».
 - **Reiniciar** el encoder.
 - **Telemetría cada 10 s** en la tarjeta, una línea por entrada: si recibe vídeo y con qué resolución, bitrate de main y sub, y si está emitiendo. También la CPU del encoder. Si una entrada pierde el vídeo, el bot de Telegram avisa diciendo cuál. En `/metrics` (con etiquetas `input` y `stream=main|sub`): `tsst_encoder_api_up`, `tsst_encoder_input_signal`, `tsst_encoder_bitrate_kbps`, `tsst_encoder_cpu_percent`, `tsst_encoder_streaming`.
 - **Quién:** cualquier usuario que vea el encoder (de todas formas ya puede usar su web). Cambiar la URL de destino y las credenciales de la API es solo para administradores. Las órdenes quedan en el log (`journalctl -u tsst-srt | grep ENCODERS`) con el usuario.
@@ -158,7 +159,7 @@ Fabricantes, en **Editar → Control por API** (por defecto, *Detectar automáti
 |---|---|---|
 | URAY (CGI) | `get_status`, `get_output`, `set_output`, `reboot` con autenticación básica | Firmware HiSilicon común a muchos encoders HDMI. De fábrica, admin / admin |
 | HW Stream (CGI) | La misma que URAY | Se da por hecho que usa el mismo firmware. Si «Detectar» no lo reconoce, usa la web y avisa del modelo |
-| Zowietek (ZowieAPI) | POST JSON a `/video`, `/streamplay`, `/system` | ZowieBox y familia. La URL de una emisión se cambia desde su web |
+| Zowietek (ZowieAPI) | POST JSON a `/video`, `/streamplay`, `/record`, `/system` | ZowieBox y familia. La URL de una emisión se cambia desde su web |
 | Ninguno | — | Solo proxy web y vigilancia |
 
 La contraseña de la API se guarda en el servidor y no vuelve nunca al navegador. Si la API no responde o las credenciales son incorrectas, la tarjeta lo muestra y **Abrir web** sigue funcionando.

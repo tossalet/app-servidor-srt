@@ -721,6 +721,19 @@ function registerRoutes(app) {
         return `${req.params.oid}${p.enabled !== undefined ? (p.enabled ? ' activada' : ' parada') : ''}${p.url ? ` → ${p.url.replace(/passphrase=[^&]*/i, 'passphrase=***')}` : ''}${p.port ? ` → puerto ${p.port}` : ''}`;
     }));
 
+    // Grabación local en el propio encoder (USB, SD, NAS): start | stop | pause | resume
+    app.post('/api/encoders/:id/control/record/:rid', order('controla la grabación', async (req, api, enc) => {
+        if (typeof api.setRecord !== 'function') throw new drivers.ApiError('Este encoder no graba en local por API', 'EINVAL');
+        const found = drivers.locate(await api.state(enc), { recordId: req.params.rid });
+        if (!found || !require('./access').canSeeEncoderInput(req.user, enc.id, found.input.id)) {
+            throw new drivers.ApiError('Esa grabación no existe en el encoder', 'EINVAL');
+        }
+        const command = String((req.body && req.body.command) || '');
+        if (!['start', 'stop', 'pause', 'resume'].includes(command)) throw new drivers.ApiError('Orden de grabación no válida', 'EINVAL');
+        await api.setRecord(enc, found.record.id, command);
+        return `grabación ${found.record.label}: ${command}`;
+    }));
+
     app.post('/api/encoders/:id/control/reboot', order('reinicia el encoder', async (req, api, enc) => {
         await api.reboot(enc);
     }));
@@ -754,6 +767,7 @@ function addMetrics(r) {
                 const li = { encoder: enc.id, name: enc.name, input: inp.id + 1, channel: chans[inp.id] ?? '' };
                 if (typeof inp.signal === 'boolean') r.gauge('tsst_encoder_input_signal', '1 si la entrada del encoder recibe vídeo (HDMI/SDI)', li, inp.signal ? 1 : 0);
                 if (typeof inp.streaming === 'boolean') r.gauge('tsst_encoder_streaming', '1 si la entrada del encoder tiene alguna emisión (SRT/RTMP) activa', li, inp.streaming ? 1 : 0);
+                if (typeof inp.recording === 'boolean') r.gauge('tsst_encoder_recording', '1 si el encoder está grabando en local (USB, SD o NAS) esa entrada', li, inp.recording ? 1 : 0);
                 for (const s of inp.streams || []) {
                     if (s.bitrate) r.gauge('tsst_encoder_bitrate_kbps', 'Bitrate configurado en el stream del encoder (0 main, 1 sub)', { ...li, stream: s.index === 0 ? 'main' : s.index === 1 ? 'sub' : `sub${s.index}` }, s.bitrate);
                 }

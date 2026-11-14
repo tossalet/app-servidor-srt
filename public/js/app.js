@@ -2553,6 +2553,7 @@ function encoderApiHtml(enc) {
         if (rates.length) parts.push(`<span class="enc-muted">${escapeHtml(rates.join(' / '))}</span>`);
         if (inp.streaming === true) parts.push('<span class="enc-muted"><i class="fa-solid fa-tower-broadcast"></i> emitiendo</span>');
         else if (inp.streaming === false) parts.push('<span class="enc-muted">sin emisión</span>');
+        if (inp.recording === true) parts.push('<span class="enc-rec"><i class="fa-solid fa-circle"></i> grabando</span>');
         return `<div class="enc-line">${multi ? `<span class="enc-in-tag">E${inp.id + 1}</span>` : ''}${parts.join(' · ') || '<span class="sig-state good">Conectado</span>'}</div>`;
     });
     if (typeof a.cpu === 'number') lines.push(`<div class="enc-line enc-muted">CPU ${a.cpu}%</div>`);
@@ -2890,6 +2891,44 @@ function ctlStreamHtml(s, d) {
         </details>`;
 }
 
+// Grabación local en el encoder (USB, SD, NAS): misma fila que una emisión, con pausa
+const CTL_REC_TEXT = {
+    stopped: 'Parada', recording: 'Grabando', paused: 'En pausa',
+    full: 'Soporte lleno', nostorage: 'Sin soporte (no hay USB/SD/NAS montado)', nosignal: 'Sin señal de entrada'
+};
+function ctlRecordHtml(r) {
+    const id = escapeHtml(r.id);
+    const label = escapeHtml(r.label);
+    const ledCls = r.state === 'recording' ? 'on rec' : r.state === 'paused' ? 'paused' : '';
+    const text = CTL_REC_TEXT[r.state] || r.state;
+    const since = r.state === 'recording' && r.start ? ` <span class="enc-muted">· desde ${escapeHtml(r.start)}</span>` : '';
+    const pause = r.state === 'recording'
+        ? `<button type="button" class="ctl-icon-btn" onclick="encoderRecord('${id}', 'pause')" title="Pausar la grabación" aria-label="Pausar la grabación en ${label}"><i class="fa-solid fa-pause"></i></button>`
+        : '<span class="ctl-icon-spacer"></span>';
+    const toggle = r.recording
+        ? `<button type="button" class="ctl-icon-btn ctl-stop" onclick="encoderRecord('${id}', 'stop')" title="Parar la grabación" aria-label="Parar la grabación en ${label}"><i class="fa-solid fa-stop"></i></button>`
+        : (r.state === 'nostorage' || r.state === 'full')
+            ? `<button type="button" class="ctl-icon-btn ctl-rec" disabled title="${escapeHtml(text)}" aria-label="No se puede grabar en ${label}: ${escapeHtml(text)}"><i class="fa-solid fa-circle"></i></button>`
+            : `<button type="button" class="ctl-icon-btn ctl-rec" onclick="encoderRecord('${id}', 'start')" title="Grabar" aria-label="Grabar en ${label}"><i class="fa-solid fa-circle"></i></button>`;
+    // En pausa, el botón de grabar reanuda la misma grabación
+    const resume = r.state === 'paused'
+        ? `<button type="button" class="ctl-icon-btn ctl-rec" onclick="encoderRecord('${id}', 'resume')" title="Reanudar la grabación" aria-label="Reanudar la grabación en ${label}"><i class="fa-solid fa-circle"></i></button>`
+        : pause;
+    return `<div class="ctl-output">
+            <span class="ctl-out-badge rec">REC<small>${label}</small></span>
+            <span class="ctl-led ${ledCls}" title="${escapeHtml(text)}" role="img" aria-label="${escapeHtml(text)}"></span>
+            <div class="ctl-out-field"><span class="${r.recording ? '' : 'enc-muted '}ctl-url-text">${escapeHtml(text)}${since}</span></div>
+            <div class="ctl-out-btns">${resume}${toggle}</div>
+        </div>`;
+}
+
+const CTL_REC_ORDERS = { start: 'Grabando', stop: 'Grabación parada', pause: 'Grabación en pausa', resume: 'Grabación reanudada' };
+async function encoderRecord(rid, command) {
+    const r = (ctlState.inputs || []).flatMap(i => i.recordings || []).find(x => x.id === rid);
+    if (command === 'stop' && !confirm(`¿Parar la grabación en ${r ? r.label : 'el encoder'}? Se cerrará el archivo.`)) return;
+    await encoderOrder(`record/${encodeURIComponent(rid)}`, { command }, CTL_REC_ORDERS[command]);
+}
+
 function renderEncoderControl() {
     const d = ctlState;
     const body = document.getElementById('ctl_body');
@@ -2905,14 +2944,19 @@ function renderEncoderControl() {
             : `<span class="enc-muted">→ ${escapeHtml(srv ? srv.name : 'señal ' + inp.channel)}</span>`;
         const streams = (inp.streams || []).map(s => ctlStreamHtml(s, d)).join('') || '<p class="enc-muted">Esta entrada no informa de sus streams.</p>';
         const streamingNow = (inp.streams || []).some(s => (s.outputs || []).some(o => o.enabled));
+        const recs = inp.recordings || [];
+        const recordingNow = recs.some(r => r.recording);
+        const recHtml = recs.length ? `<div class="ctl-outputs ctl-records"><div class="ctl-sub">Grabación local</div>${recs.map(ctlRecordHtml).join('')}</div>` : '';
         const open = ctlOpenInputs.has(inp.id);
         return `
         <details class="ctl-input" data-input="${inp.id}" ${open ? 'open' : ''} ontoggle="ctlInputToggled(this)">
             <summary>
                 <strong>${escapeHtml(inp.name || `Entrada ${inp.id + 1}`)}</strong> ${video} ${link}
                 ${streamingNow ? '<span class="enc-muted"><i class="fa-solid fa-tower-broadcast"></i> emitiendo</span>' : ''}
+                ${recordingNow ? '<span class="enc-rec"><i class="fa-solid fa-circle"></i> grabando</span>' : ''}
             </summary>
             ${streams}
+            ${recHtml}
         </details>`;
     }).join('') || '<p class="enc-muted">El encoder no informa de sus entradas.</p>';
 

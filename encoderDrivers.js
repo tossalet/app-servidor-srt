@@ -9,8 +9,11 @@
  *     inputs: [{ id, name, signal, width, height, fps, interlaced,
  *                streams: [{ id: 'entrada:stream', input, index, name, codec, codecs, width, height,
  *                            fps, bitrate, rc, gop,
- *                            outputs: [{ id, kind, label, url, enabled, editable }] }] }],
+ *                            outputs: [{ id, kind, label, url, enabled, editable }] }],
+ *                recordings: [{ id: 'rec:soporte', label, state, recording }] }],
  *     caps }
+ *
+ * La grabación local (USB, SD, NAS) va por entrada, no por stream: hoy sólo la expone ZowieAPI.
  *
  * - uray / hwstream: firmware HiSilicon (Hi3520/Hi3516/Hi3519) común a muchos encoders HDMI chinos.
  *   API CGI por GET con autenticación básica (por defecto admin/admin):
@@ -18,7 +21,7 @@
  *     /set_output?input=N&output=M&clave=valor, /reboot. Respuestas en XML.
  *   Documentado públicamente por un fabricante con el mismo firmware (NTI HD-ENC-H264);
  *   URAY lo llama «CGI command» y entrega el documento bajo petición.
- * - zowietek: ZowieAPI (ZowieBox, ZowieCam...): una entrada. POST JSON a /video, /streamplay, /system
+ * - zowietek: ZowieAPI (ZowieBox, ZowieCam...): una entrada. POST JSON a /video, /streamplay, /record, /system
  *   con ?option=getinfo|setinfo&login_check_flag=1. Respuesta { status: "00000", data }.
  *   Referencia: módulo oficial de Bitfocus Companion (companion-module-zowietek-api).
  *
@@ -124,8 +127,10 @@ function parseStreamId(sid) {
 }
 
 // Busca un stream o una emisión en el estado normalizado y dice de qué entrada es
-function locate(state, { streamId, outputId }) {
+function locate(state, { streamId, outputId, recordId }) {
     for (const inp of state.inputs || []) {
+        const rec = recordId !== undefined && (inp.recordings || []).find(r => r.id === String(recordId));
+        if (rec) return { input: inp, record: rec };
         for (const s of inp.streams || []) {
             if (streamId !== undefined && s.id === String(streamId)) return { input: inp, stream: s };
             const o = outputId !== undefined && (s.outputs || []).find(x => x.id === String(outputId));
@@ -331,6 +336,8 @@ const ZOWIE_ERRORS = {
     '00009': 'operación demasiado rápida, espera un momento', '00010': 'el equipo se está reiniciando', '10001': 'sin señal de entrada',
     '60002': 'no se pudo iniciar la emisión', '60003': 'no se pudo parar la emisión', '60004': 'URL no válida',
     '60005': 'protocolo no admitido', '60007': 'hay que parar la emisión antes de cambiarla', '60013': 'índice de emisión no válido',
+    '110001': 'la grabación ya está en marcha', '110002': 'soporte de grabación no válido',
+    '110005': 'no se pudo iniciar la grabación (¿hay USB/SD/NAS montado y con espacio?)', '110007': 'hay una grabación en curso',
     '80003': 'la API pide iniciar sesión', '80004': 'la cuenta no es de administrador', '80005': 'contraseña incorrecta'
 };
 
@@ -407,18 +414,67 @@ function zowiePublishList(data) {
     });
 }
 
+// Grabación local (USB, tarjeta SD, NAS): una tarea por soporte. status: 0 parada, 1 grabando,
+// 2 en pausa, 3 soporte lleno, 4 soporte no montado, 5 sin señal
+const ZOWIE_REC_LABELS = { usb: 'USB', sdcard: 'SD', sd: 'SD', nas: 'NAS' };
+const ZOWIE_REC_STATES = ['stopped', 'recording', 'paused', 'full', 'nostorage', 'nosignal'];
+const ZOWIE_REC_COMMANDS = { stop: 0, start: 1, pause: 2, resume: 3 };
+
+function zowieRecordList(data) {
+    const found = [];
+    const seen = new Set();
+    const walk = (x, depth) => {
+        if (!x || typeof x !== 'object' || depth > 4) return;
+        if (Array.isArray(x)) return x.forEach(i => walk(i, depth + 1));
+        const key = x.id ?? x.index;
+        if (key !== undefined && 'status' in x && /^(usb|sdcard|sd|nas)\d*_\d+$/i.test(String(key)) && !seen.has(String(key))) {
+            seen.add(String(key));
+            found.push(x);
+            return;
+        }
+        Object.values(x).forEach(v => walk(v, depth + 1));
+    };
+    walk(data, 0);
+    return found.map(t => {
+        const storage = String(t.id ?? t.index);
+        const status = Number(t.status);
+        const state = ZOWIE_REC_STATES[status] || 'stopped';
+        return {
+            id: `rec:${storage}`,
+            storage,
+            label: ZOWIE_REC_LABELS[storage.replace(/\d*_\d+$/, '').toLowerCase()] || storage,
+            name: t.name || '',
+            status,
+            state,
+            recording: state === 'recording' || state === 'paused',
+            start: t.start_time || ''
+        };
+    });
+}
+
+async function zowieRecords(enc) {
+    try {
+        const r = await zowie(enc, '/record?option=getinfo', { group: 'record', opt: 'get_task_list' });
+        const list = zowieRecordList(r.data);
+        return list.length ? list : null;
+    } catch {
+        return null; // modelo sin grabación local o firmware que no la expone
+    }
+}
+
 async function zowieVenc(enc) {
     const r = await zowie(enc, '/video?option=getinfo', { group: 'all' });
     return Array.isArray(pick(r.data).venc) ? r.data.venc : [];
 }
 
 async function zowieRead(enc) {
-    const [inp, venc, pub] = await Promise.all([
+    const [inp, venc, pub, records] = await Promise.all([
         zowie(enc, '/video?option=getinfo', { group: 'hdmi', opt: 'get_input_info' }).catch(() => null),
         zowieVenc(enc),
-        zowie(enc, '/streamplay?option=getinfo', { group: 'streamplay', opt: 'streamplay_get_all' }).catch(() => null)
+        zowie(enc, '/streamplay?option=getinfo', { group: 'streamplay', opt: 'streamplay_get_all' }).catch(() => null),
+        zowieRecords(enc)
     ]);
-    return { inp, d: pick(inp && inp.data), venc, outputs: pub ? zowiePublishList(pub.data) : null };
+    return { inp, d: pick(inp && inp.data), venc, outputs: pub ? zowiePublishList(pub.data) : null, records };
 }
 
 const zowietek = {
@@ -428,7 +484,7 @@ const zowietek = {
     },
 
     async poll(enc) {
-        const { inp, d, venc, outputs } = await zowieRead(enc);
+        const { inp, d, venc, outputs, records } = await zowieRead(enc);
         const streams = venc.map(v => ({
             index: Number(v.venc_chnid) || 0,
             bitrate: Number(v.bitrate) || null,
@@ -442,23 +498,32 @@ const zowietek = {
                 signal: inp ? Number(d.hdmi_signal) === 1 : null,
                 width: Number(d.width) || null, height: Number(d.height) || null, fps: Number(d.framerate) || null,
                 streams,
-                streaming: outputs ? outputs.some(o => o.enabled) : null
+                streaming: outputs ? outputs.some(o => o.enabled) : null,
+                recording: records ? records.some(r => r.recording) : null
             }]
         };
     },
 
     async state(enc) {
-        const { inp, d, venc, outputs } = await zowieRead(enc);
+        const { inp, d, venc, outputs, records } = await zowieRead(enc);
         return {
             device: { model: 'Zowietek', version: '', cpu: null },
             inputs: [{
                 id: 0, name: inputName(0),
                 signal: inp ? Number(d.hdmi_signal) === 1 : null,
                 width: Number(d.width) || null, height: Number(d.height) || null, fps: Number(d.framerate) || null, desc: d.desc || '',
-                streams: venc.map(v => zowieStream(v, outputs || []))
+                streams: venc.map(v => zowieStream(v, outputs || [])),
+                recordings: records || []
             }],
-            caps: { codec: true, rc: true, gop: true, fps: true, bitrate: { min: 64, max: 51200 }, reboot: true }
+            caps: { codec: true, rc: true, gop: true, fps: true, bitrate: { min: 64, max: 51200 }, reboot: true, record: !!records }
         };
+    },
+
+    async setRecord(enc, recordId, command) {
+        const m = /^rec:((?:usb|sdcard|sd|nas)\d*_\d+)$/i.exec(String(recordId));
+        if (!m) throw new ApiError('Grabación no válida', 'EINVAL');
+        if (!(command in ZOWIE_REC_COMMANDS)) throw new ApiError('Orden de grabación no válida', 'EINVAL');
+        await zowie(enc, '/record?option=setinfo', { group: 'record', opt: 'set_task_enable', data: { index: m[1], enable: ZOWIE_REC_COMMANDS[command] } });
     },
 
     async setStream(enc, streamId, p) {
@@ -554,5 +619,5 @@ function validateStreamParams(body, caps) {
 
 module.exports = {
     DRIVERS, DRIVER_CHOICES, ApiError, detect, impl, validateStreamParams, locate, parseStreamId,
-    _test: { parseXml, flat, hisilicon, zowietek, zowiePublishList }
+    _test: { parseXml, flat, hisilicon, zowietek, zowiePublishList, zowieRecordList }
 };

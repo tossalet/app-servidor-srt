@@ -2,7 +2,7 @@ const { test, before, after } = require('node:test');
 const assert = require('node:assert');
 const http = require('http');
 const drivers = require('../encoderDrivers');
-const { parseXml, flat, zowiePublishList } = drivers._test;
+const { parseXml, flat, zowiePublishList, zowieRecordList } = drivers._test;
 
 /* ---------- Encoder HiSilicon simulado (URAY / HW Stream) con N entradas, main y sub en cada una ---------- */
 function hisiServer(nInputs) {
@@ -55,6 +55,7 @@ function zowieServer() {
     const state = {
         venc: [venc(0, 6000), venc(1, 2000)],
         publish: [{ index: 0, service: 'Custom', protocol: 'srt', url: 'srt://10.8.0.1:9001', key: '', switch: 0, name: 'TSST' }],
+        records: [{ id: 'usb1_0', name: 'USB', status: 0, start_time: '', end_time: '' }, { id: 'sdcard_0', name: 'SD', status: 4, start_time: '', end_time: '' }],
         rebooted: false
     };
     const server = http.createServer((req, res) => {
@@ -79,6 +80,14 @@ function zowieServer() {
                 const item = state.publish.find(x => x.index === b.data.index);
                 if (!item) return send({ status: '60013', rsp: 'invalid index' });
                 item.switch = b.data.switch;
+                return send({ status: '00000', rsp: 'succeed' });
+            }
+            if (p === '/record' && b.opt === 'get_task_list') return send({ status: '00000', rsp: 'succeed', data: state.records });
+            if (p === '/record' && b.opt === 'set_task_enable') {
+                const t = state.records.find(x => x.id === b.data.index);
+                if (!t) return send({ status: '110002', rsp: 'invalid task index' });
+                if (t.status === 4) return send({ status: '110005', rsp: 'task startup failed' });
+                t.status = [0, 1, 2, 1][b.data.enable];
                 return send({ status: '00000', rsp: 'succeed' });
             }
             send({ status: '00004', rsp: 'not supported' });
@@ -228,6 +237,37 @@ test('Zowietek: una entrada con main y sub; emisiones en el main', async () => {
 
     await api.reboot(zowieEnc);
     assert.strictEqual(zowie.state.rebooted, true);
+});
+
+test('Zowietek: grabación local en USB/SD con pausa', async () => {
+    const api = drivers.impl('zowietek');
+    let s = await api.state(zowieEnc);
+    assert.strictEqual(s.caps.record, true);
+    assert.deepStrictEqual(s.inputs[0].recordings.map(r => [r.id, r.label, r.state]), [['rec:usb1_0', 'USB', 'stopped'], ['rec:sdcard_0', 'SD', 'nostorage']]);
+    assert.strictEqual((await api.poll(zowieEnc)).inputs[0].recording, false);
+    assert.strictEqual(drivers.locate(s, { recordId: 'rec:usb1_0' }).input.id, 0);
+
+    await api.setRecord(zowieEnc, 'rec:usb1_0', 'start');
+    assert.strictEqual(zowie.state.records[0].status, 1);
+    assert.strictEqual((await api.poll(zowieEnc)).inputs[0].recording, true);
+    await api.setRecord(zowieEnc, 'rec:usb1_0', 'pause');
+    s = await api.state(zowieEnc);
+    assert.strictEqual(s.inputs[0].recordings[0].state, 'paused');
+    assert.strictEqual(s.inputs[0].recordings[0].recording, true);
+    await api.setRecord(zowieEnc, 'rec:usb1_0', 'resume');
+    assert.strictEqual(zowie.state.records[0].status, 1);
+    await api.setRecord(zowieEnc, 'rec:usb1_0', 'stop');
+    assert.strictEqual(zowie.state.records[0].status, 0);
+
+    await assert.rejects(api.setRecord(zowieEnc, 'rec:sdcard_0', 'start'), /110005/);
+    await assert.rejects(api.setRecord(zowieEnc, 'rec:usb1_0', 'borrar'), e => e.code === 'EINVAL');
+    await assert.rejects(api.setRecord(zowieEnc, 'pub:0', 'start'), e => e.code === 'EINVAL');
+});
+
+test('zowieRecordList tolera formatos distintos', () => {
+    assert.strictEqual(zowieRecordList({ task_list: [{ index: 'nas1_0', status: '1' }] })[0].label, 'NAS');
+    assert.strictEqual(zowieRecordList({ task_list: [{ index: 'nas1_0', status: '1' }] })[0].recording, true);
+    assert.deepStrictEqual(zowieRecordList({ nada: 1 }), []);
 });
 
 test('zowiePublishList tolera formatos distintos', () => {
