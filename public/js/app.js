@@ -2600,12 +2600,12 @@ function renderEncoders() {
                 ${st.proxyError ? `<dt>Proxy</dt><dd><span class="sig-state bad">${escapeHtml(st.proxyError)}</span></dd>` : ''}
             </dl>
             <div class="enc-actions">
-                <a class="btn-primary" href="${proxyUrl}" target="_blank" rel="noopener" title="Abre la web del encoder a través del servidor (puerto ${enc.proxy_port})"><i class="fa-solid fa-arrow-up-right-from-square"></i> Abrir web</a>
-                ${enc.driver !== 'none' ? `<button class="btn-secondary" onclick="openEncoderControl(${enc.id})" title="Bitrate, emisión y reinicio por la API del encoder"${st.online ? '' : ' disabled'}><i class="fa-solid fa-sliders"></i> Control</button>` : ''}
+                <a class="enc-btn primary" href="${proxyUrl}" target="_blank" rel="noopener" title="Abrir la web del encoder a través del servidor (puerto ${enc.proxy_port})" aria-label="Abrir web de ${escapeHtml(enc.name)}"><i class="fa-solid fa-arrow-up-right-from-square"></i></a>
+                ${enc.driver !== 'none' ? `<button class="enc-btn" onclick="openEncoderControl(${enc.id})" title="Control: bitrate, emisión y reinicio por la API del encoder" aria-label="Control de ${escapeHtml(enc.name)}"${st.online ? '' : ' disabled'}><i class="fa-solid fa-sliders"></i></button>` : ''}
                 ${isAdmin() ? `
-                <button class="btn-secondary" onclick="openEncoderVpn(${enc.id})" title="Acceso WireGuard del router"><i class="fa-solid fa-shield-halved"></i> VPN</button>
-                <button class="btn-secondary" onclick="openEditEncoderModal(${enc.id})" title="Editar"><i class="fa-solid fa-pen"></i></button>
-                <button class="btn-secondary" onclick="deleteEncoder(${enc.id})" title="Borrar"><i class="fa-solid fa-trash"></i></button>` : ''}
+                <button class="enc-btn" onclick="openEncoderVpn(${enc.id})" title="VPN: acceso WireGuard del router" aria-label="VPN de ${escapeHtml(enc.name)}"><i class="fa-solid fa-shield-halved"></i></button>
+                <button class="enc-btn enc-btn-push" onclick="openEditEncoderModal(${enc.id})" title="Editar" aria-label="Editar ${escapeHtml(enc.name)}"><i class="fa-solid fa-pen"></i></button>
+                <button class="enc-btn danger" onclick="deleteEncoder(${enc.id})" title="Borrar" aria-label="Borrar ${escapeHtml(enc.name)}"><i class="fa-solid fa-trash"></i></button>` : ''}
             </div>
         </div>`;
     }).join('');

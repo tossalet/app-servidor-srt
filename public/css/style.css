@@ -556,9 +556,23 @@ input:checked + .slider:before { transform: translateX(18px); }
 .enc-rows { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: 0.85rem; margin: 0; }
 .enc-rows dt { color: var(--text-muted); }
 .enc-rows dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
-.enc-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: auto; }
-.enc-actions .btn-primary, .enc-actions .btn-secondary { padding: 7px 12px; font-size: 0.8rem; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
-.enc-actions .btn-primary { flex: 1; justify-content: center; }
+/* Botones de la tarjeta: sólo icono, todos iguales y siempre en una fila (no se parten con el zoom).
+   Abrir web y Control a la izquierda; editar y borrar (admin) a la derecha */
+.enc-actions { display: flex; flex-wrap: nowrap; gap: 8px; margin-top: auto; }
+.enc-btn {
+    flex: 0 0 auto; width: 38px; height: 38px; padding: 0; border-radius: 9px;
+    display: inline-flex; align-items: center; justify-content: center; font-size: 0.95rem; text-decoration: none;
+    background: rgba(255,255,255,0.06); border: 1px solid var(--panel-border); color: var(--text-main); cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, transform 0.1s;
+}
+.enc-btn:hover { background: rgba(255,255,255,0.12); }
+.enc-btn:active { transform: scale(0.94); }
+.enc-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.enc-btn.primary { background: var(--accent-blue); border-color: var(--accent-blue); color: #fff; }
+.enc-btn.primary:hover { background: #2563eb; }
+.enc-btn.danger { color: var(--color-red); border-color: rgba(239, 68, 68, 0.35); }
+.enc-btn.danger:hover { background: rgba(239, 68, 68, 0.12); }
+.enc-btn-push { margin-left: auto; }
 .enc-banner { display: flex; gap: 12px; align-items: flex-start; padding: 1rem 1.25rem; margin-bottom: 1.25rem; border-radius: 12px; border: 1px solid rgba(59,130,246,0.3); background: rgba(59,130,246,0.08); font-size: 0.85rem; line-height: 1.5; }
 .enc-banner i { color: var(--accent-blue); margin-top: 3px; }
 .enc-banner code, .modal code { background: rgba(0,0,0,0.3); padding: 1px 6px; border-radius: 4px; font-size: 0.8rem; }
@@ -566,7 +580,6 @@ input:checked + .slider:before { transform: translateX(18px); }
 .enc-empty i { font-size: 2rem; color: var(--text-muted); margin-bottom: 0.75rem; }
 .enc-steps { font-size: 0.85rem; line-height: 1.6; padding-left: 1.25rem; margin-bottom: 1rem; }
 .enc-warn { color: var(--color-yellow); font-size: 0.85rem; line-height: 1.5; }
-.enc-actions .btn-secondary:disabled { opacity: 0.45; cursor: not-allowed; }
 /* Ventana de control por API del encoder */
 .ctl-h { font-family: var(--font-heading); font-size: 0.95rem; margin: 1.25rem 0 0.6rem; }
 .ctl-stream { border: 1px solid var(--panel-border); border-radius: 10px; padding: 0.85rem; margin-bottom: 0.6rem; background: rgba(0,0,0,0.15); }
