@@ -197,7 +197,7 @@ function registerFailure(ip) {
  * ======================================= */
 
 // Recursos accesibles sin sesión: la pantalla de login y lo que necesita para pintarse
-const PUBLIC_PATHS = new Set(['/login.html', '/js/login.js', '/css/style.css', '/api/auth/login', '/api/status']);
+const PUBLIC_PATHS = new Set(['/login.html', '/js/login.js', '/css/style.css', '/favicon.svg', '/api/auth/login', '/api/status']);
 const PUBLIC_PREFIXES = ['/images/'];
 // Lo único que puede hacer un usuario con cambio de contraseña pendiente
 const MUST_CHANGE_ALLOWED = new Set(['/api/auth/me', '/api/auth/password', '/api/auth/logout']);
