@@ -140,6 +140,29 @@ encoder ──cable──► router 4G del sitio ══ túnel WireGuard ══�
   Va al panel, a `/metrics` (`tsst_encoder_up`, `tsst_encoder_vpn_up`…) y al bot de Telegram, que avisa en cuanto deja de responder.
 - **Roles:** cualquier usuario ve el estado y abre la web. Dar de alta, editar, borrar y gestionar la VPN es solo para administradores.
 
+### Control por API (URAY, HW Stream, Zowietek)
+
+Botón **Control** en la tarjeta del encoder: el panel habla con la API del encoder y no hace falta abrir su web. La ventana se organiza como el propio encoder: **entradas** (HDMI/SDI) → **stream principal (main) y secundario (sub)** de cada entrada → **emisiones** de cada stream.
+
+- **Codificación:** bitrate, modo (CBR/VBR), códec (H.264/H.265), FPS y GOP de cada stream, main y sub por separado. Después de aplicar, el servidor vuelve a leer el encoder y avisa si ignoró algún valor (estos firmwares a veces responden «OK» a un valor fuera de rango).
+- **Emisiones:** activa o para las salidas SRT/RTMP de cada stream. Un administrador también puede cambiar la URL de destino (p. ej. `srt://10.8.0.1:9000?latency=500` por el túnel).
+- **Reiniciar** el encoder.
+- **Telemetría cada 10 s** en la tarjeta, una línea por entrada: si recibe vídeo y con qué resolución, bitrate de main y sub, y si está emitiendo. También la CPU del encoder. Si una entrada pierde el vídeo, el bot de Telegram avisa diciendo cuál. En `/metrics` (con etiquetas `input` y `stream=main|sub`): `tsst_encoder_api_up`, `tsst_encoder_input_signal`, `tsst_encoder_bitrate_kbps`, `tsst_encoder_cpu_percent`, `tsst_encoder_streaming`.
+- **Quién:** cualquier usuario que vea el encoder (de todas formas ya puede usar su web). Cambiar la URL de destino y las credenciales de la API es solo para administradores. Las órdenes quedan en el log (`journalctl -u tsst-srt | grep ENCODERS`) con el usuario.
+
+**Encoders de varias entradas** (p. ej. URAY de 4 HDMI): en **Editar**, elige el número de entradas y la señal SRT del servidor que recibe cada una (Entrada 1 → «Estadio HDMI 1»…). Cada entrada envía su propio SRT, así que dos entradas no pueden ir a la misma señal. Los permisos van por entrada: un operador ve el encoder si tiene asignada la señal de alguna de sus entradas, y en la tarjeta y en Control solo le aparecen esas entradas. Una entrada sin señal vinculada solo la ve un administrador.
+
+Fabricantes, en **Editar → Control por API** (por defecto, *Detectar automáticamente*):
+
+| Opción | API | Notas |
+|---|---|---|
+| URAY (CGI) | `get_status`, `get_output`, `set_output`, `reboot` con autenticación básica | Firmware HiSilicon común a muchos encoders HDMI. De fábrica, admin / admin |
+| HW Stream (CGI) | La misma que URAY | Se da por hecho que usa el mismo firmware. Si «Detectar» no lo reconoce, usa la web y avisa del modelo |
+| Zowietek (ZowieAPI) | POST JSON a `/video`, `/streamplay`, `/system` | ZowieBox y familia. La URL de una emisión se cambia desde su web |
+| Ninguno | — | Solo proxy web y vigilancia |
+
+La contraseña de la API se guarda en el servidor y no vuelve nunca al navegador. Si la API no responde o las credenciales son incorrectas, la tarjeta lo muestra y **Abrir web** sigue funcionando.
+
 ### Poner en marcha un encoder
 
 1. **Servidor:** en el instalador, responde **sí a WireGuard** e indica la IP pública o el DNS del servidor (si tu IP cambia, usa un DNS dinámico). En el router de la sede, abre **UDP 51820** hacia el mini PC. Se crea `/etc/wireguard/wg0.conf` con la red del túnel `10.8.0.0/24`; si reinstalas, se conserva con sus accesos.

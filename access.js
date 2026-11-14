@@ -21,7 +21,7 @@ async function reload() {
         dbAll('SELECT channel, owner FROM inputs'),
         dbAll('SELECT id, channel FROM outputs'),
         dbAll('SELECT username, channel FROM input_access'),
-        dbAll('SELECT id, channel FROM encoders'),
+        dbAll('SELECT id, channel, input_channels FROM encoders'),
     ]);
     state.reset({ inputs, outputs, grants, encoders });
 }
@@ -34,6 +34,8 @@ async function init() {
 const canSee = (user, channel) => state.canSee(user, channel);
 const canSeeOutput = (user, id) => state.canSeeOutput(user, id);
 const canSeeEncoder = (user, id) => state.canSeeEncoder(user, id);
+const visibleEncoderInputs = (user, id) => state.visibleEncoderInputs(user, id);
+const canSeeEncoderInput = (user, id, input) => state.canSeeEncoderInput(user, id, input);
 const visibleChannels = (user) => state.visibleChannels(user);
 const filterFor = (user, event, data) => state.filterFor(user, event, data);
 const ownedBy = (username) => state.ownedBy(username);
@@ -112,7 +114,7 @@ async function forgetChannel(channel) {
 
 module.exports = {
     init, reload, setIo, broadcast,
-    canSee, canSeeOutput, canSeeEncoder, visibleChannels, filterFor,
+    canSee, canSeeOutput, canSeeEncoder, visibleEncoderInputs, canSeeEncoderInput, visibleChannels, filterFor,
     requireChannel, requireOutput,
     setOwner, setGrants, dropUser, forgetChannel,
     ownedBy, grantsOf,

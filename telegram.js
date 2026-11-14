@@ -433,6 +433,11 @@ function encoder(name, host, online, error) {
     notify(online ? `✅ El encoder ${name} (${host}) vuelve a estar en línea.` : `🔴 El encoder ${name} (${host}) no responde: ${error || 'sin conexión'}.`);
 }
 
+// Señal de vídeo en la entrada del encoder (HDMI/SDI), leída por su API
+function encoderInput(name, signal) {
+    notify(signal ? `✅ El encoder ${name} vuelve a recibir vídeo en su entrada.` : `🟠 El encoder ${name} no recibe vídeo en su entrada (HDMI/SDI): revisa la cámara o el cable.`);
+}
+
 /* =======================================
  *  INFORMES (comandos)
  * ======================================= */
@@ -678,4 +683,4 @@ async function shutdown(reason) {
     await Promise.race([flush(), new Promise(r => setTimeout(r, 3000))]);
 }
 
-module.exports = { init, shutdown, notify, panelAction, login, encoder, ENABLED, _test: { step, newTrack, dur, chunks, statusText, systemText } };
+module.exports = { init, shutdown, notify, panelAction, login, encoder, encoderInput, ENABLED, _test: { step, newTrack, dur, chunks, statusText, systemText } };

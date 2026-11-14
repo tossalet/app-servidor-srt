@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { AccessState, operatorEncoderStatus } = require('../accessCore');
+const { AccessState, operatorEncoderStatus, encoderChannelsOf } = require('../accessCore');
 
 function crear() {
   const st = new AccessState();
@@ -113,6 +113,44 @@ test('filterFor encoders_status: el operador no recibe datos de la VPN', () => {
   assert.deepEqual(lista[0].vpn, vpn); // no muta el original (lo reciben también los admins)
   assert.equal(st.filterFor(admin, 'encoders_status', lista), lista);
   assert.deepEqual(st.filterFor(ana, 'encoders_status', [{ id: 2, vpn: null }]), [{ id: 2, vpn: null }]);
+});
+
+test('encoder de 4 entradas: el operador ve sólo las entradas de sus señales', () => {
+  const st = new AccessState();
+  st.reset({
+    inputs: [{ channel: 1, owner: 'ana' }, { channel: 2, owner: 'admin' }, { channel: 10, owner: 'admin' }, { channel: 11, owner: 'admin' }],
+    grants: [{ username: 'ana', channel: 10 }],
+    encoders: [
+      { id: 7, channel: 2, input_channels: '[2,1,null,10]' },        // entradas 2 (canal 1) y 4 (canal 10) son de ana
+      { id: 8, channel: 11, input_channels: '[11,null]' },           // nada de ana
+      { id: 9, channel: 1, input_channels: '' },                     // una entrada, formato antiguo
+      { id: 10, channel: 2, input_channels: 'roto' }                 // JSON corrupto: como una entrada
+    ]
+  });
+  assert.equal(st.canSeeEncoder(ana, 7), true);
+  assert.deepEqual(st.visibleEncoderInputs(ana, 7), new Set([1, 3]));
+  assert.equal(st.canSeeEncoderInput(ana, 7, 0), false);
+  assert.equal(st.canSeeEncoderInput(ana, 7, 3), true);
+  assert.equal(st.canSeeEncoderInput(ana, 7, 2), false); // sin señal vinculada: falla cerrado
+  assert.equal(st.canSeeEncoder(ana, 8), false);
+  assert.deepEqual(st.visibleEncoderInputs(ana, 9), new Set([0]));
+  assert.equal(st.canSeeEncoder(ana, 10), false);
+  assert.equal(st.visibleEncoderInputs(admin, 7), null);
+  assert.equal(st.canSeeEncoderInput(admin, 7, 2), true);
+
+  // La telemetría de la API llega al operador sólo con sus entradas
+  const status = { id: 7, online: true, api: { ok: true, inputs: [{ id: 0, signal: true }, { id: 1, signal: false }, { id: 2 }, { id: 3, signal: true }] } };
+  const [seen] = st.filterFor(ana, 'encoders_status', [status, { id: 8 }]);
+  assert.deepEqual(seen.api.inputs.map(i => i.id), [1, 3]);
+  assert.equal(status.api.inputs.length, 4); // no muta el original
+  assert.equal(st.filterFor(admin, 'encoders_status', [status])[0].api.inputs.length, 4);
+});
+
+test('encoderChannelsOf', () => {
+  assert.deepEqual(encoderChannelsOf({ channel: 3, input_channels: '' }), ['3']);
+  assert.deepEqual(encoderChannelsOf({ channel: null }), [null]);
+  assert.deepEqual(encoderChannelsOf({ channel: 3, input_channels: '[3,null,"5"]' }), ['3', null, '5']);
+  assert.deepEqual(encoderChannelsOf({ channels: [4, ''] }), ['4', null]);
 });
 
 test('operatorEncoderStatus', () => {

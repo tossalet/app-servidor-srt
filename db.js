@@ -108,6 +108,13 @@ function initDB() {
             vpn_privkey TEXT NOT NULL DEFAULT '',
             vpn_psk TEXT NOT NULL DEFAULT ''
         )`);
+        // Control por API del encoder (ver encoderDrivers.js): fabricante y credenciales de su API
+        db.run("ALTER TABLE encoders ADD COLUMN driver TEXT NOT NULL DEFAULT 'auto'", () => {});
+        db.run("ALTER TABLE encoders ADD COLUMN api_user TEXT NOT NULL DEFAULT ''", () => {});
+        db.run("ALTER TABLE encoders ADD COLUMN api_pass TEXT NOT NULL DEFAULT ''", () => {});
+        // Encoders de varias entradas: señal del servidor de cada entrada, JSON [canal|null, ...].
+        // Vacío = una entrada, la del campo channel
+        db.run("ALTER TABLE encoders ADD COLUMN input_channels TEXT NOT NULL DEFAULT ''", () => {});
 
         // Valores iniciales sólo si las tablas están vacías. Sólo se crea admin/admin (cambio obligatorio
         // al entrar); auth.js cifra la contraseña al arrancar.

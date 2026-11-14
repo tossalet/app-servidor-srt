@@ -490,14 +490,45 @@
                 </div>
                 <div class="form-group row">
                     <div class="half">
-                        <label>Señal SRT que envía</label>
-                        <select id="enc_channel" class="form-control"></select>
+                        <label>Entradas del encoder (HDMI/SDI)</label>
+                        <select id="enc_input_count" class="form-control" onchange="renderEncoderInputRows()">
+                            <option value="1">1 entrada</option>
+                            <option value="2">2 entradas</option>
+                            <option value="3">3 entradas</option>
+                            <option value="4">4 entradas</option>
+                            <option value="8">8 entradas</option>
+                        </select>
                     </div>
                     <div class="half" style="display:flex; align-items:flex-end;">
                         <label style="display:flex; align-items:center; gap:8px; font-size:0.85rem; color:var(--text-muted); margin-bottom:12px;">
                             <input type="checkbox" id="enc_https" style="width:auto;"> Su web va por HTTPS
                         </label>
                     </div>
+                </div>
+                <div class="form-group">
+                    <label>Señal SRT que envía cada entrada</label>
+                    <div id="enc_inputs" class="enc-input-rows"></div>
+                </div>
+                <div class="form-group row">
+                    <div class="half">
+                        <label>Control por API</label>
+                        <select id="enc_driver" class="form-control">
+                            <option value="auto">Detectar automáticamente</option>
+                            <option value="uray">URAY (CGI)</option>
+                            <option value="hwstream">HW Stream (CGI)</option>
+                            <option value="zowietek">Zowietek (ZowieAPI)</option>
+                            <option value="none">Ninguno (sólo su web)</option>
+                        </select>
+                    </div>
+                    <div class="half">
+                        <label>Usuario de la API</label>
+                        <input type="text" id="enc_api_user" maxlength="64" placeholder="admin" autocomplete="off">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Contraseña de la API</label>
+                    <input type="password" id="enc_api_pass" maxlength="128" placeholder="admin" autocomplete="new-password">
+                    <small class="enc-muted" id="enc_api_hint" style="display:block; margin-top:5px;">Vacío: URAY y HW Stream usan admin / admin de fábrica. La contraseña no se vuelve a mostrar.</small>
                 </div>
                 <div class="form-group">
                     <label>Notas</label>
@@ -520,6 +551,17 @@
                 <button class="close-btn" onclick="closeModal('encoderVpnModal')"><i class="fa-solid fa-xmark"></i></button>
             </div>
             <div id="vpn_body"></div>
+        </div>
+    </div>
+
+    <!-- Encoder Control Modal -->
+    <div class="modal-overlay" id="encoderControlModal">
+        <div class="modal" style="width: 640px;">
+            <div class="modal-header">
+                <h3 id="ctl_title">Control del encoder</h3>
+                <button class="close-btn" onclick="closeModal('encoderControlModal')"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div id="ctl_body"></div>
         </div>
     </div>
 

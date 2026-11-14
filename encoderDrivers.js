@@ -1,0 +1,542 @@
+/**
+ * CONTROL DE ENCODERS POR API (URAY, HW Stream, Zowietek)
+ *
+ * Cada fabricante tiene su API; aquí se traducen a un estado común para el panel.
+ * Un encoder tiene una o varias entradas (HDMI/SDI); cada entrada, su stream principal (main) y
+ * secundario (sub); y cada stream, sus emisiones (SRT caller/listener, RTMP push):
+ *
+ *   { device: { model, version, cpu, uptime },
+ *     inputs: [{ id, name, signal, width, height, fps, interlaced,
+ *                streams: [{ id: 'entrada:stream', input, index, name, codec, codecs, width, height,
+ *                            fps, bitrate, rc, gop,
+ *                            outputs: [{ id, kind, label, url, enabled, editable }] }] }],
+ *     caps }
+ *
+ * - uray / hwstream: firmware HiSilicon (Hi3520/Hi3516/Hi3519) común a muchos encoders HDMI chinos.
+ *   API CGI por GET con autenticación básica (por defecto admin/admin):
+ *     /get_status (un <vi id=N> por entrada, con sus <venc id=M>), /get_output?input=N&output=M,
+ *     /set_output?input=N&output=M&clave=valor, /reboot. Respuestas en XML.
+ *   Documentado públicamente por un fabricante con el mismo firmware (NTI HD-ENC-H264);
+ *   URAY lo llama «CGI command» y entrega el documento bajo petición.
+ * - zowietek: ZowieAPI (ZowieBox, ZowieCam...): una entrada. POST JSON a /video, /streamplay, /system
+ *   con ?option=getinfo|setinfo&login_check_flag=1. Respuesta { status: "00000", data }.
+ *   Referencia: módulo oficial de Bitfocus Companion (companion-module-zowietek-api).
+ *
+ * Ningún driver guarda estado: cada llamada lee del encoder. Tras escribir se vuelve a leer para
+ * confirmar que el cambio se aplicó (estos firmwares a veces responden OK e ignoran un valor).
+ */
+const http = require('http');
+const https = require('https');
+
+const TIMEOUT_MS = 6000;
+const MAX_BODY = 1024 * 1024;
+
+class ApiError extends Error {
+    constructor(message, code) { super(message); this.code = code; }
+}
+
+/* =======================================
+ *  HTTP
+ * ======================================= */
+function request(enc, { method = 'GET', path, body, headers = {}, timeout = TIMEOUT_MS }) {
+    return new Promise((resolve, reject) => {
+        const lib = enc.https ? https : http;
+        const data = body === undefined ? null : Buffer.from(typeof body === 'string' ? body : JSON.stringify(body));
+        const h = { Accept: '*/*', Connection: 'close', ...headers };
+        if (data) h['Content-Length'] = data.length;
+        const req = lib.request({
+            host: enc.host, port: enc.web_port, method, path, headers: h,
+            rejectUnauthorized: false, // certificados autofirmados
+            timeout
+        }, (res) => {
+            const chunks = [];
+            let size = 0;
+            res.on('data', (c) => {
+                size += c.length;
+                if (size > MAX_BODY) { req.destroy(new ApiError('Respuesta demasiado grande', 'EBIG')); return; }
+                chunks.push(c);
+            });
+            res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, text: Buffer.concat(chunks).toString('utf8') }));
+            res.on('error', reject);
+        });
+        req.on('timeout', () => req.destroy(new ApiError('El encoder no responde a la API', 'ETIMEDOUT')));
+        req.on('error', (e) => reject(e instanceof ApiError ? e : new ApiError(e.code === 'ECONNREFUSED' ? 'Puerto web cerrado' : (e.code || e.message), e.code)));
+        req.end(data);
+    });
+}
+
+/* =======================================
+ *  XML mínimo (las respuestas HiSilicon son XML plano, sin espacios de nombres)
+ * ======================================= */
+const decodeEntities = (s) => s.replace(/&(lt|gt|amp|quot|apos|#\d+|#x[0-9a-f]+);/gi, (m, e) => {
+    const map = { lt: '<', gt: '>', amp: '&', quot: '"', apos: "'" };
+    if (map[e.toLowerCase()]) return map[e.toLowerCase()];
+    const n = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+    return Number.isFinite(n) ? String.fromCodePoint(n) : m;
+});
+
+// Devuelve el elemento raíz: { name, attrs, children: [], text }
+function parseXml(text) {
+    const root = { name: '#root', attrs: {}, children: [], text: '' };
+    const stack = [root];
+    const re = /<!--[\s\S]*?-->|<\?[\s\S]*?\?>|<!\[CDATA\[([\s\S]*?)\]\]>|<(\/?)([A-Za-z_][\w.:-]*)((?:\s+[\w.:-]+\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*(\/?)>|([^<]+)/g;
+    let m;
+    while ((m = re.exec(String(text || '')))) {
+        const top = stack[stack.length - 1];
+        if (m[1] !== undefined) { top.text += m[1]; continue; }
+        if (m[6] !== undefined) { top.text += decodeEntities(m[6]); continue; }
+        if (!m[3]) continue; // comentario o <?xml ?>
+        if (m[2] === '/') {
+            // Cierra hasta la etiqueta del mismo nombre (tolera XML mal cerrado)
+            for (let i = stack.length - 1; i > 0; i--) {
+                if (stack[i].name === m[3]) { stack.length = i; break; }
+            }
+            continue;
+        }
+        const attrs = {};
+        (m[4] || '').replace(/([\w.:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g, (_, k, a, b) => { attrs[k] = decodeEntities(a ?? b ?? ''); });
+        const el = { name: m[3], attrs, children: [], text: '' };
+        top.children.push(el);
+        if (!m[5]) stack.push(el);
+    }
+    return root.children.find(c => c.name) || null;
+}
+
+const child = (el, name, id) => el && el.children.find(c => c.name === name && (id === undefined || c.attrs.id === String(id)));
+const children = (el, name) => (el ? el.children.filter(c => c.name === name) : []);
+const txt = (el, name) => { const c = child(el, name); return c ? c.text.trim() : undefined; };
+const num = (el, name) => { const v = txt(el, name); if (v === undefined || v === '') return undefined; const n = Number(v); return Number.isFinite(n) ? n : undefined; };
+// Valores planos de un elemento: { etiqueta: texto }
+const flat = (el) => Object.fromEntries((el ? el.children : []).filter(c => !c.children.length).map(c => [c.name, c.text.trim()]));
+
+/* =======================================
+ *  NOMBRES E IDENTIFICADORES COMUNES
+ * ======================================= */
+const inputName = (i) => `Entrada ${i + 1}`;
+const streamName = (o) => (o === 0 ? 'Principal (main)' : o === 1 ? 'Secundario (sub)' : `Secundario ${o}`);
+
+// 'entrada:stream' -> { input, index }. Un número suelto es la entrada 1 (compatibilidad).
+function parseStreamId(sid) {
+    const s = String(sid);
+    const m = /^(\d{1,2}):(\d{1,2})$/.exec(s) || (/^\d{1,2}$/.test(s) ? [s, '0', s] : null);
+    if (!m) throw new ApiError('Stream no válido', 'EINVAL');
+    return { input: Number(m[1]), index: Number(m[2]) };
+}
+
+// Busca un stream o una emisión en el estado normalizado y dice de qué entrada es
+function locate(state, { streamId, outputId }) {
+    for (const inp of state.inputs || []) {
+        for (const s of inp.streams || []) {
+            if (streamId !== undefined && s.id === String(streamId)) return { input: inp, stream: s };
+            const o = outputId !== undefined && (s.outputs || []).find(x => x.id === String(outputId));
+            if (o) return { input: inp, stream: s, output: o };
+        }
+    }
+    return null;
+}
+
+/* =======================================
+ *  DRIVER HiSilicon (URAY, HW Stream y compatibles)
+ * ======================================= */
+const HISI_CODECS = { 96: 'H.264', 265: 'H.265', 26: 'MJPEG', 1002: 'MJPEG' };
+const HISI_CODEC_IDS = { 'H.264': 96, 'H.265': 265 };
+
+function hisiAuth(enc) {
+    const user = enc.api_user || 'admin';
+    const pass = enc.api_user ? (enc.api_pass || '') : (enc.api_pass || 'admin');
+    return 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64');
+}
+
+async function hisiGet(enc, path, params) {
+    const qs = params ? '?' + Object.entries(params).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&') : '';
+    const r = await request(enc, { path: path + qs, headers: { Authorization: hisiAuth(enc) } });
+    if (r.status === 401 || r.status === 403) throw new ApiError('Usuario o contraseña de la API incorrectos', 'EAUTH');
+    if (r.status === 404) throw new ApiError(`El encoder no tiene ${path}`, 'ENOTFOUND_API');
+    if (r.status >= 400) throw new ApiError(`El encoder respondió HTTP ${r.status}`, 'EHTTP');
+    return r.text;
+}
+
+async function hisiXml(enc, path, params, rootName) {
+    const doc = parseXml(await hisiGet(enc, path, params));
+    if (!doc || (rootName && doc.name !== rootName)) throw new ApiError(`Respuesta no reconocida en ${path}`, 'EFORMAT');
+    return doc;
+}
+
+const hisiOutputXml = (enc, input, index) => hisiXml(enc, '/get_output', { input, output: index }, 'output').then(flat);
+
+// Entradas y streams que declara /get_status: un <vi id=N> por entrada con sus <venc id=M>.
+// Los firmwares antiguos de una entrada no ponen id: se numeran por orden.
+function hisiLayout(doc) {
+    const vis = children(doc, 'vi');
+    return vis.map((vi, pos) => {
+        const id = Number.isInteger(Number(vi.attrs.id)) && vi.attrs.id !== undefined ? Number(vi.attrs.id) : pos;
+        const vencs = children(vi, 'venc').map((v, p) => ({ el: v, index: v.attrs.id !== undefined && Number.isInteger(Number(v.attrs.id)) ? Number(v.attrs.id) : p }));
+        if (!vencs.length) vencs.push({ el: null, index: 0 });
+        const fps = num(vi, 'framerate');
+        return {
+            id, vi, vencs,
+            signal: (fps || 0) > 0,
+            width: num(vi, 'width') ?? null,
+            height: num(vi, 'height') ?? null,
+            fps: fps ?? null,
+            interlaced: num(vi, 'interlaced') === 1
+        };
+    });
+}
+
+function hisiStream(input, index, o) {
+    const codec = HISI_CODECS[Number(o.venc_codec)] || (o.venc_codec ? `códec ${o.venc_codec}` : '');
+    const supported = String(o.venc_codec_supported || '').split(',').map(s => s.trim()).filter(c => HISI_CODEC_IDS[c]);
+    return {
+        id: `${input}:${index}`,
+        input,
+        index,
+        name: streamName(index),
+        enabled: o.venc_enable === undefined ? true : o.venc_enable === '1',
+        codec,
+        codecs: supported.length ? supported : ['H.264', 'H.265'].filter(c => c === codec || c === 'H.264'),
+        width: Number(o.venc_width) || null,
+        height: Number(o.venc_height) || null,
+        sameAsInput: o.venc_width_height_same_as_input === '1',
+        fps: Number(o.venc_framerate) || null,
+        bitrate: Number(o.venc_bitrate) || null,
+        rc: o.venc_rc_mode === '0' ? 'CBR' : o.venc_rc_mode === '1' ? 'VBR' : null,
+        gop: Number(o.venc_gop) || null,
+        outputs: hisiOutputs(input, index, o)
+    };
+}
+
+function hisiOutputs(input, index, o) {
+    const out = [];
+    const id = (key) => `${input}:${index}:${key}`;
+    if ('srt_publish_enable' in o) out.push({ id: id('srt_publish'), kind: 'srt', label: 'SRT caller', url: o.srt_publish_uri || '', enabled: o.srt_publish_enable === '1', editable: true });
+    if ('srt_enable' in o) out.push({ id: id('srt'), kind: 'srt', label: 'SRT listener', url: o.srt_port ? `puerto ${o.srt_port}` : '', enabled: o.srt_enable === '1', editable: false });
+    if ('rtmp_publish_enable' in o) out.push({ id: id('rtmp_publish'), kind: 'rtmp', label: 'RTMP push', url: o.rtmp_publish_uri || '', enabled: o.rtmp_publish_enable === '1', editable: true });
+    return out;
+}
+
+const HISI_OUTPUT_KEYS = {
+    srt_publish: { enable: 'srt_publish_enable', url: 'srt_publish_uri', scheme: /^srt:\/\//i },
+    srt: { enable: 'srt_enable' },
+    rtmp_publish: { enable: 'rtmp_publish_enable', url: 'rtmp_publish_uri', scheme: /^rtmps?:\/\//i }
+};
+
+const hisilicon = {
+    async detect(enc) {
+        const doc = await hisiXml(enc, '/get_status', null, 'status');
+        return { model: txt(doc, 'cpuinfo') || '', version: txt(doc, 'version') || '', inputs: Math.max(1, children(doc, 'vi').length) };
+    },
+
+    // Telemetría (cada 10 s): /get_status y el /get_output de cada stream para saber qué emite
+    async poll(enc) {
+        const doc = await hisiXml(enc, '/get_status', null, 'status');
+        const layout = hisiLayout(doc);
+        const inputs = await Promise.all(layout.map(async (L) => {
+            const streams = await Promise.all(L.vencs.map(async ({ el, index }) => {
+                const o = await hisiOutputXml(enc, L.id, index).catch(() => null);
+                const outs = o ? hisiOutputs(L.id, index, o) : [];
+                return {
+                    index,
+                    bitrate: (o && Number(o.venc_bitrate)) || (el ? num(el, 'bitrate') : null) || null,
+                    codec: HISI_CODECS[Number((o && o.venc_codec) || (el && txt(el, 'codec')))] || null,
+                    streaming: o ? outs.some(x => x.enabled) : null
+                };
+            }));
+            const known = streams.filter(s => s.streaming !== null);
+            return {
+                id: L.id, signal: L.signal, width: L.width, height: L.height, fps: L.fps,
+                streams,
+                streaming: known.length ? known.some(s => s.streaming) : null
+            };
+        }));
+        return { cpu: num(doc, 'cpuusage') ?? null, inputs };
+    },
+
+    async state(enc) {
+        const doc = await hisiXml(enc, '/get_status', null, 'status');
+        const layout = hisiLayout(doc);
+        const inputs = await Promise.all(layout.map(async (L) => {
+            const outs = await Promise.all(L.vencs.map(({ index }) => hisiOutputXml(enc, L.id, index).catch(() => null)));
+            return {
+                id: L.id, name: inputName(L.id), signal: L.signal, width: L.width, height: L.height, fps: L.fps, interlaced: L.interlaced,
+                streams: L.vencs.map(({ index }, k) => (outs[k] ? hisiStream(L.id, index, outs[k]) : null)).filter(Boolean)
+            };
+        }));
+        return {
+            device: { model: txt(doc, 'cpuinfo') || '', version: txt(doc, 'version') || '', cpu: num(doc, 'cpuusage') ?? null, uptime: txt(doc, 'runtime') || '' },
+            inputs,
+            caps: { codec: true, rc: true, gop: true, fps: true, bitrate: { min: 32, max: 32000 }, reboot: true }
+        };
+    },
+
+    async setStream(enc, streamId, p) {
+        const { input, index } = parseStreamId(streamId);
+        const q = { input, output: index };
+        if (p.bitrate !== undefined) q.venc_bitrate = p.bitrate;
+        if (p.fps !== undefined) q.venc_framerate = p.fps;
+        if (p.gop !== undefined) q.venc_gop = p.gop;
+        if (p.rc !== undefined) q.venc_rc_mode = p.rc === 'CBR' ? 0 : 1;
+        if (p.codec !== undefined) q.venc_codec = HISI_CODEC_IDS[p.codec];
+        await hisiGet(enc, '/set_output', q);
+        const after = await hisiOutputXml(enc, input, index);
+        const checks = { venc_bitrate: q.venc_bitrate, venc_framerate: q.venc_framerate, venc_gop: q.venc_gop, venc_rc_mode: q.venc_rc_mode, venc_codec: q.venc_codec };
+        const ignored = Object.entries(checks).filter(([k, v]) => v !== undefined && after[k] !== undefined && String(after[k]) !== String(v)).map(([k]) => k);
+        if (ignored.length) throw new ApiError(`El encoder no aplicó: ${ignored.join(', ')} (fuera de rango para este modelo)`, 'ENOTAPPLIED');
+    },
+
+    async setOutput(enc, outputId, p) {
+        const m = /^(\d{1,2}):(\d{1,2}):([a-z_]+)$/.exec(String(outputId));
+        const def = m && HISI_OUTPUT_KEYS[m[3]];
+        if (!def) throw new ApiError('Salida no válida', 'EINVAL');
+        const input = Number(m[1]);
+        const index = Number(m[2]);
+        const q = { input, output: index };
+        if (p.url !== undefined) {
+            if (!def.url) throw new ApiError('Esta salida no tiene URL', 'EINVAL');
+            if (!def.scheme.test(p.url)) throw new ApiError('La URL no corresponde al protocolo de la salida', 'EINVAL');
+            q[def.url] = p.url;
+        }
+        if (p.enabled !== undefined) q[def.enable] = p.enabled ? 1 : 0;
+        await hisiGet(enc, '/set_output', q);
+        const after = await hisiOutputXml(enc, input, index);
+        if (p.enabled !== undefined && after[def.enable] !== undefined && after[def.enable] !== (p.enabled ? '1' : '0')) {
+            throw new ApiError('El encoder no cambió el estado de la salida', 'ENOTAPPLIED');
+        }
+    },
+
+    async reboot(enc) {
+        const text = await hisiGet(enc, '/reboot');
+        if (/fail/i.test(text)) throw new ApiError('El encoder rechazó el reinicio', 'EREFUSED');
+    }
+};
+
+/* =======================================
+ *  DRIVER Zowietek (ZowieAPI): una entrada, streams main (0) y sub (1)
+ * ======================================= */
+const ZOWIE_OK = new Set(['00000', '000000']);
+const ZOWIE_ERRORS = {
+    '00002': 'el programa del equipo aún no está listo', '00003': 'faltan parámetros', '00004': 'el modelo no lo admite',
+    '00009': 'operación demasiado rápida, espera un momento', '00010': 'el equipo se está reiniciando', '10001': 'sin señal de entrada',
+    '60002': 'no se pudo iniciar la emisión', '60003': 'no se pudo parar la emisión', '60004': 'URL no válida',
+    '60005': 'protocolo no admitido', '60007': 'hay que parar la emisión antes de cambiarla', '60013': 'índice de emisión no válido',
+    '80003': 'la API pide iniciar sesión', '80004': 'la cuenta no es de administrador', '80005': 'contraseña incorrecta'
+};
+
+async function zowie(enc, path, body) {
+    const headers = { 'Content-Type': 'application/json' };
+    if (enc.api_user) headers.Authorization = 'Basic ' + Buffer.from(`${enc.api_user}:${enc.api_pass || ''}`).toString('base64');
+    const r = await request(enc, { method: 'POST', path: `${path}&login_check_flag=1`, body, headers });
+    if (r.status === 401 || r.status === 403) throw new ApiError('Usuario o contraseña de la API incorrectos', 'EAUTH');
+    if (r.status >= 400) throw new ApiError(`El encoder respondió HTTP ${r.status}`, r.status === 404 ? 'ENOTFOUND_API' : 'EHTTP');
+    let json;
+    try { json = JSON.parse(r.text); } catch { throw new ApiError('Respuesta no reconocida (no es ZowieAPI)', 'EFORMAT'); }
+    if (!json || typeof json.status !== 'string') throw new ApiError('Respuesta no reconocida (no es ZowieAPI)', 'EFORMAT');
+    if (!ZOWIE_OK.has(json.status)) {
+        const code = ['80003', '80004', '80005'].includes(json.status) ? 'EAUTH' : 'EDEVICE';
+        throw new ApiError(`ZowieAPI ${json.status}: ${ZOWIE_ERRORS[json.status] || json.rsp || 'error del equipo'}`, code);
+    }
+    return json;
+}
+
+const pick = (obj) => (obj && typeof obj === 'object' ? obj : {});
+const listSel = (o, listKey) => { const x = pick(o); const l = Array.isArray(x[listKey]) ? x[listKey] : []; return l[Number(x.selected_id)] ?? null; };
+
+function zowieStream(v, outputs) {
+    const index = Number(v.venc_chnid) || 0;
+    return {
+        id: `0:${index}`,
+        input: 0,
+        index,
+        name: streamName(index),
+        enabled: true,
+        codec: listSel(v.codec, 'codec_list'),
+        codecs: (pick(v.codec).codec_list || []).filter(c => c === 'H.264' || c === 'H.265'),
+        width: Number(v.width) || null,
+        height: Number(v.height) || null,
+        fps: Number(v.framerate) || null,
+        bitrate: Number(v.bitrate) || null,
+        rc: listSel(v.ratecontrol, 'mode_list'),
+        gop: Number(v.gop) || Number(v.keyinterval) || null,
+        // Las emisiones de ZowieBox salen del stream principal
+        outputs: index === 0 ? outputs : []
+    };
+}
+
+// La lista de emisiones (publish) cambia de forma según el firmware: se buscan objetos con index + switch
+function zowiePublishList(data) {
+    const found = [];
+    const seen = new Set();
+    const walk = (x, depth) => {
+        if (!x || typeof x !== 'object' || depth > 4) return;
+        if (Array.isArray(x)) return x.forEach(i => walk(i, depth + 1));
+        if ('index' in x && 'switch' in x && ('url' in x || 'protocol' in x || 'service' in x) && !seen.has(String(x.index))) {
+            seen.add(String(x.index));
+            found.push(x);
+            return;
+        }
+        Object.values(x).forEach(v => walk(v, depth + 1));
+    };
+    walk(data, 0);
+    return found.map(p => {
+        const proto = String(p.protocol || p.service || '').toLowerCase();
+        const url = String(p.url || '');
+        return {
+            id: `pub:${p.index}`,
+            kind: proto.includes('srt') || /^srt:/i.test(url) ? 'srt' : proto.includes('rtmp') || /^rtmps?:/i.test(url) ? 'rtmp' : (proto || 'stream'),
+            label: p.name || p.desc || p.service || `Emisión ${p.index}`,
+            url,
+            enabled: Number(p.switch) === 1,
+            editable: false // cambiar la URL exige borrar y volver a crear la emisión: se hace en su web
+        };
+    });
+}
+
+async function zowieVenc(enc) {
+    const r = await zowie(enc, '/video?option=getinfo', { group: 'all' });
+    return Array.isArray(pick(r.data).venc) ? r.data.venc : [];
+}
+
+async function zowieRead(enc) {
+    const [inp, venc, pub] = await Promise.all([
+        zowie(enc, '/video?option=getinfo', { group: 'hdmi', opt: 'get_input_info' }).catch(() => null),
+        zowieVenc(enc),
+        zowie(enc, '/streamplay?option=getinfo', { group: 'streamplay', opt: 'streamplay_get_all' }).catch(() => null)
+    ]);
+    return { inp, d: pick(inp && inp.data), venc, outputs: pub ? zowiePublishList(pub.data) : null };
+}
+
+const zowietek = {
+    async detect(enc) {
+        await zowie(enc, '/system?option=getinfo', { group: 'systime', opt: 'get_systime_info' });
+        return { model: 'Zowietek', version: '', inputs: 1 };
+    },
+
+    async poll(enc) {
+        const { inp, d, venc, outputs } = await zowieRead(enc);
+        const streams = venc.map(v => ({
+            index: Number(v.venc_chnid) || 0,
+            bitrate: Number(v.bitrate) || null,
+            codec: listSel(v.codec, 'codec_list'),
+            streaming: Number(v.venc_chnid) === 0 && outputs ? outputs.some(o => o.enabled) : null
+        }));
+        return {
+            cpu: null,
+            inputs: [{
+                id: 0,
+                signal: inp ? Number(d.hdmi_signal) === 1 : null,
+                width: Number(d.width) || null, height: Number(d.height) || null, fps: Number(d.framerate) || null,
+                streams,
+                streaming: outputs ? outputs.some(o => o.enabled) : null
+            }]
+        };
+    },
+
+    async state(enc) {
+        const { inp, d, venc, outputs } = await zowieRead(enc);
+        return {
+            device: { model: 'Zowietek', version: '', cpu: null },
+            inputs: [{
+                id: 0, name: inputName(0),
+                signal: inp ? Number(d.hdmi_signal) === 1 : null,
+                width: Number(d.width) || null, height: Number(d.height) || null, fps: Number(d.framerate) || null, desc: d.desc || '',
+                streams: venc.map(v => zowieStream(v, outputs || []))
+            }],
+            caps: { codec: true, rc: true, gop: true, fps: true, bitrate: { min: 64, max: 51200 }, reboot: true }
+        };
+    },
+
+    async setStream(enc, streamId, p) {
+        const { input, index } = parseStreamId(streamId);
+        if (input !== 0) throw new ApiError('Este encoder sólo tiene una entrada', 'EINVAL');
+        const venc = await zowieVenc(enc);
+        const cur = venc.find(v => Number(v.venc_chnid) === index);
+        if (!cur) throw new ApiError('Ese stream no existe en el encoder', 'EINVAL');
+        const next = JSON.parse(JSON.stringify(cur));
+        if (p.bitrate !== undefined) next.bitrate = p.bitrate;
+        if (p.fps !== undefined) next.framerate = p.fps;
+        if (p.gop !== undefined) next.gop = p.gop;
+        const setSel = (o, listKey, value) => {
+            const i = (pick(o)[listKey] || []).indexOf(value);
+            if (i < 0) throw new ApiError(`El encoder no admite ${value}`, 'EINVAL');
+            o.selected_id = i;
+        };
+        if (p.codec !== undefined) setSel(next.codec, 'codec_list', p.codec);
+        if (p.rc !== undefined) setSel(next.ratecontrol, 'mode_list', p.rc);
+        await zowie(enc, '/video?option=setinfo', { group: 'venc', venc: [next] });
+    },
+
+    async setOutput(enc, outputId, p) {
+        const m = /^pub:(\d+)$/.exec(String(outputId));
+        if (!m) throw new ApiError('Salida no válida', 'EINVAL');
+        if (p.url !== undefined) throw new ApiError('En Zowietek la URL de una emisión se cambia desde su web', 'EINVAL');
+        if (p.enabled === undefined) return;
+        await zowie(enc, '/streamplay?option=setinfo', { group: 'publish', opt: 'update_publish_switch', data: { index: Number(m[1]), switch: p.enabled ? 1 : 0 } });
+    },
+
+    async reboot(enc) {
+        await zowie(enc, '/system?option=setinfo', { group: 'syscontrol', opt: 'set_reboot_info', data: { command: 'reboot' } });
+    }
+};
+
+/* =======================================
+ *  REGISTRO Y DETECCIÓN
+ * ======================================= */
+const DRIVERS = {
+    uray: { label: 'URAY (CGI)', impl: hisilicon },
+    hwstream: { label: 'HW Stream (CGI)', impl: hisilicon },
+    zowietek: { label: 'Zowietek (ZowieAPI)', impl: zowietek }
+};
+const DRIVER_CHOICES = ['auto', 'none', ...Object.keys(DRIVERS)];
+
+// Prueba las APIs en orden. Un error de credenciales cuenta como detectado (la API existe).
+// HiSilicon va primero: su 401 de autenticación básica identifica el firmware; ZowieAPI no la usa.
+async function detect(enc) {
+    for (const [name, impl] of [['uray', hisilicon], ['zowietek', zowietek]]) {
+        try {
+            const info = await impl.detect(enc);
+            return { driver: name, info };
+        } catch (e) {
+            if (e.code === 'EAUTH') return { driver: name, info: null, error: e };
+            if (e.code === 'ETIMEDOUT' || e.code === 'ECONNREFUSED' || e.code === 'EHOSTUNREACH') throw e; // no responde: no seguir probando
+        }
+    }
+    throw new ApiError('API no reconocida: elige el fabricante en el encoder o usa su web', 'EUNKNOWN');
+}
+
+function impl(driver) {
+    const d = DRIVERS[driver];
+    if (!d) throw new ApiError('Este encoder no tiene control por API', 'ENODRIVER');
+    return d.impl;
+}
+
+/* =======================================
+ *  VALIDACIÓN DE ÓRDENES
+ * ======================================= */
+function validateStreamParams(body, caps) {
+    const out = {};
+    const intIn = (k, min, max, label) => {
+        if (body[k] === undefined || body[k] === '' || body[k] === null) return;
+        const n = Number(body[k]);
+        if (!Number.isInteger(n) || n < min || n > max) throw new ApiError(`${label}: entre ${min} y ${max}`, 'EINVAL');
+        out[k] = n;
+    };
+    const br = (caps && caps.bitrate) || { min: 32, max: 51200 };
+    intIn('bitrate', br.min, br.max, 'Bitrate (kbps)');
+    intIn('fps', 1, 60, 'Fotogramas por segundo');
+    intIn('gop', 1, 600, 'GOP (fotogramas entre claves)');
+    if (body.codec !== undefined && body.codec !== '') {
+        if (!['H.264', 'H.265'].includes(body.codec)) throw new ApiError('Códec no válido', 'EINVAL');
+        out.codec = body.codec;
+    }
+    if (body.rc !== undefined && body.rc !== '') {
+        if (!['CBR', 'VBR'].includes(body.rc)) throw new ApiError('Modo de bitrate no válido', 'EINVAL');
+        out.rc = body.rc;
+    }
+    if (!Object.keys(out).length) throw new ApiError('No hay cambios que aplicar', 'EINVAL');
+    return out;
+}
+
+module.exports = {
+    DRIVERS, DRIVER_CHOICES, ApiError, detect, impl, validateStreamParams, locate, parseStreamId,
+    _test: { parseXml, flat, hisilicon, zowietek, zowiePublishList }
+};

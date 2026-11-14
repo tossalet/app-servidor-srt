@@ -7,10 +7,30 @@ const ROLE_ADMIN = 4;
 
 // Estado de un encoder tal como lo ve un operador: de la VPN sólo si está arriba
 // y la antigüedad del handshake; ni el endpoint WireGuard ni los contadores.
-function operatorEncoderStatus(status) {
-  if (!status || !status.vpn) return status;
-  const { up, handshakeAge } = status.vpn;
-  return { ...status, vpn: { up, handshakeAge } };
+// Con `inputs` (Set de entradas del encoder visibles), la telemetría de la API se limita a ellas.
+function operatorEncoderStatus(status, inputs) {
+  if (!status) return status;
+  let out = status;
+  if (status.vpn) {
+    const { up, handshakeAge } = status.vpn;
+    out = { ...out, vpn: { up, handshakeAge } };
+  }
+  if (inputs && out.api && Array.isArray(out.api.inputs)) {
+    out = { ...out, api: { ...out.api, inputs: out.api.inputs.filter(i => i && inputs.has(Number(i.id))) } };
+  }
+  return out;
+}
+
+// Canal del servidor vinculado a cada entrada de un encoder: [entrada 1, entrada 2...].
+// input_channels (JSON) manda; si no hay, el campo channel es la entrada 1 (encoders de una entrada).
+function encoderChannelsOf(row) {
+  let list = null;
+  if (Array.isArray(row.channels)) list = row.channels;
+  else if (row.input_channels) {
+    try { const v = JSON.parse(row.input_channels); if (Array.isArray(v)) list = v; } catch { /* columna corrupta: como si no hubiera */ }
+  }
+  if (!list || !list.length) list = [row.channel];
+  return list.map(c => (c === null || c === undefined || c === '' ? null : String(c)));
 }
 
 class AccessState {
@@ -23,7 +43,7 @@ class AccessState {
     this.owners = new Map();    // canal -> username propietario
     this.grants = new Map();    // username -> Set<canal>
     this.outputs = new Map();   // id salida -> canal
-    this.encoders = new Map();  // id encoder -> canal | null
+    this.encoders = new Map();  // id encoder -> [canal | null por entrada]
     for (const i of inputs) this.owners.set(String(i.channel), i.owner);
     for (const o of outputs) this.outputs.set(String(o.id), String(o.channel));
     for (const g of grants) {
@@ -31,7 +51,7 @@ class AccessState {
       this.grants.get(g.username).add(String(g.channel));
     }
     for (const e of encoders) {
-      this.encoders.set(String(e.id), e.channel == null ? null : String(e.channel));
+      this.encoders.set(String(e.id), encoderChannelsOf(e));
     }
   }
 
@@ -55,10 +75,26 @@ class AccessState {
     return ch !== undefined && this.canSee(user, ch);
   }
 
+  // Un operador ve el encoder si ve la señal de alguna de sus entradas
   canSeeEncoder(user, encoderId) {
     if (this._isAdmin(user)) return true;
-    const ch = this.encoders.get(String(encoderId));
-    return ch != null && this.canSee(user, ch);
+    const v = this.visibleEncoderInputs(user, encoderId);
+    return !!v && v.size > 0;
+  }
+
+  // Entradas del encoder (0, 1...) cuya señal ve el usuario. null = todas (admin).
+  // Una entrada sin señal vinculada no la ve ningún operador (falla cerrado).
+  visibleEncoderInputs(user, encoderId) {
+    if (this._isAdmin(user)) return null;
+    const chans = this.encoders.get(String(encoderId)) || [];
+    const res = new Set();
+    chans.forEach((ch, i) => { if (ch != null && this.canSee(user, ch)) res.add(i); });
+    return res;
+  }
+
+  canSeeEncoderInput(user, encoderId, input) {
+    const v = this.visibleEncoderInputs(user, encoderId);
+    return v === null || v.has(Number(input));
   }
 
   // null = todos (admin)
@@ -112,11 +148,12 @@ class AccessState {
         return this._filterKeys(user, data, true);
       case 'encoders_status':
         if (!Array.isArray(data)) return undefined;
-        return data.filter(e => e && this.canSeeEncoder(user, e.id)).map(operatorEncoderStatus);
+        return data.filter(e => e && this.canSeeEncoder(user, e.id))
+          .map(e => operatorEncoderStatus(e, this.visibleEncoderInputs(user, e.id)));
       default:
         return undefined;
     }
   }
 }
 
-module.exports = { AccessState, ROLE_ADMIN, operatorEncoderStatus };
+module.exports = { AccessState, ROLE_ADMIN, operatorEncoderStatus, encoderChannelsOf };

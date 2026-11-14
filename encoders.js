@@ -20,12 +20,14 @@ const fs = require('fs');
 const { spawn } = require('child_process');
 const db = require('./db');
 const auth = require('./auth');
-const { operatorEncoderStatus } = require('./accessCore');
+const { operatorEncoderStatus, encoderChannelsOf } = require('./accessCore');
+const drivers = require('./encoderDrivers');
 
 const PANEL_PORT = parseInt(process.env.PORT, 10) || 4000;
 // Puertos del proxy: panel + 10 en adelante (panel 2000 -> encoders 2010, 2011...). Grafana usa panel + 1.
 const PROXY_BASE = parseInt(process.env.ENCODER_PROXY_PORT, 10) || PANEL_PORT + 10;
 const MAX_SLOTS = 50;
+const MAX_INPUTS = 8; // encoders de hasta 8 entradas (los habituales: 1, 2 o 4)
 const CHECK_MS = 10000;
 const PROBE_TIMEOUT_MS = 3000;
 // Sin handshake en 3 min el router se da por desconectado (con keepalive de 25 s hay uno cada 2 min)
@@ -76,8 +78,29 @@ function validateEncoder(body) {
     }
     const webPort = parseInt(body.web_port, 10) || (body.https ? 443 : 80);
     if (webPort < 1 || webPort > 65535) return { error: 'Puerto web no válido' };
-    const channel = body.channel === '' || body.channel === null || body.channel === undefined ? null : parseInt(body.channel, 10);
-    if (channel !== null && Number.isNaN(channel)) return { error: 'Entrada vinculada no válida' };
+    // Señal del servidor que envía cada entrada del encoder (channels[0] = entrada 1).
+    // Compatibilidad: sin channels, el campo channel es la única entrada.
+    const rawChannels = Array.isArray(body.channels) ? body.channels : [body.channel];
+    if (!rawChannels.length || rawChannels.length > MAX_INPUTS) return { error: `El encoder puede tener de 1 a ${MAX_INPUTS} entradas` };
+    const channels = [];
+    for (const c of rawChannels) {
+        const ch = c === '' || c === null || c === undefined ? null : parseInt(c, 10);
+        if (ch !== null && Number.isNaN(ch)) return { error: 'Señal vinculada no válida' };
+        if (ch !== null && channels.includes(ch)) return { error: 'Dos entradas del encoder no pueden enviar la misma señal' };
+        channels.push(ch);
+    }
+    const channel = channels[0];
+    const driver = body.driver === undefined || body.driver === '' ? 'auto' : String(body.driver);
+    if (!drivers.DRIVER_CHOICES.includes(driver)) return { error: 'Fabricante (API) no válido' };
+    const apiUser = String(body.api_user || '').trim();
+    if (apiUser.length > 64 || /[:\r\n]/.test(apiUser)) return { error: 'Usuario de la API no válido' };
+    // api_pass: undefined o '' = conservar la guardada; null = borrarla
+    let apiPass;
+    if (body.api_pass === null) apiPass = '';
+    else if (body.api_pass !== undefined && body.api_pass !== '') {
+        apiPass = String(body.api_pass);
+        if (apiPass.length > 128 || /[\r\n]/.test(apiPass)) return { error: 'Contraseña de la API no válida' };
+    }
     return {
         value: {
             name,
@@ -86,7 +109,12 @@ function validateEncoder(body) {
             web_port: webPort,
             https: body.https ? 1 : 0,
             channel,
-            notes: String(body.notes || '').slice(0, 500)
+            channels,
+            input_channels: channels.length > 1 ? JSON.stringify(channels) : '',
+            notes: String(body.notes || '').slice(0, 500),
+            driver,
+            api_user: apiUser,
+            api_pass: apiPass
         }
     };
 }
@@ -372,6 +400,68 @@ function probe(host, port) {
     });
 }
 
+/* =======================================
+ *  API DEL ENCODER (control y telemetría, ver encoderDrivers.js)
+ * ======================================= */
+const detected = new Map();   // id -> driver detectado con 'auto'
+const detectFailAt = new Map(); // id -> último intento fallido de detección (no reintentar cada 10 s)
+const REDETECT_MS = 60000;
+
+async function resolveDriver(enc) {
+    if (enc.driver === 'none') return null;
+    if (enc.driver && enc.driver !== 'auto') return enc.driver;
+    if (detected.has(enc.id)) return detected.get(enc.id);
+    const last = detectFailAt.get(enc.id);
+    if (last && Date.now() - last < REDETECT_MS) throw new drivers.ApiError('API no reconocida: elige el fabricante en el encoder o usa su web', 'EUNKNOWN');
+    try {
+        const r = await drivers.detect(enc);
+        detected.set(enc.id, r.driver);
+        detectFailAt.delete(enc.id);
+        console.log(`[ENCODERS] ${enc.name}: API detectada ${drivers.DRIVERS[r.driver].label}`);
+        if (r.error) throw r.error;
+        return r.driver;
+    } catch (e) {
+        if (e.code === 'EUNKNOWN') detectFailAt.set(enc.id, Date.now());
+        throw e;
+    }
+}
+
+function forgetDriver(id) {
+    detected.delete(id);
+    detectFailAt.delete(id);
+}
+
+const driverLabel = (d) => (d && drivers.DRIVERS[d] ? drivers.DRIVERS[d].label : '');
+
+async function pollApi(enc) {
+    if (enc.driver === 'none') return null;
+    let driver = null;
+    try {
+        driver = await resolveDriver(enc);
+        const t = await drivers.impl(driver).poll(enc);
+        return { ok: true, driver, label: driverLabel(driver), ...t, at: Date.now() };
+    } catch (e) {
+        // Si el equipo deja de hablar esa API (lo han cambiado por otro), se vuelve a detectar
+        if (enc.driver === 'auto' && (e.code === 'EFORMAT' || e.code === 'ENOTFOUND_API')) forgetDriver(enc.id);
+        driver = driver || detected.get(enc.id) || (enc.driver !== 'auto' ? enc.driver : null);
+        return { ok: false, driver, label: driverLabel(driver), error: e.message, auth: e.code === 'EAUTH', at: Date.now() };
+    }
+}
+
+async function withDriver(enc) {
+    const driver = await resolveDriver(enc);
+    if (!driver) throw new drivers.ApiError('Este encoder no tiene control por API (fabricante: ninguno)', 'ENODRIVER');
+    return { driver, api: drivers.impl(driver) };
+}
+
+// Tras una orden se refresca su telemetría sin esperar a la siguiente vuelta
+async function refreshOne(enc) {
+    const st = status.get(enc.id);
+    if (!st || !st.online) return;
+    st.api = await pollApi(enc);
+    if (io) require('./access').broadcast('encoders_status', statusList());
+}
+
 let checking = false;
 async function checkAll() {
     if (checking || !encoders.size) return;
@@ -393,7 +483,21 @@ async function checkAll() {
                 console.log(`[ENCODERS] ${enc.name} (${enc.host}) ${r.ok ? 'en línea' : `sin conexión: ${r.error}`}`);
                 require('./telegram').encoder(enc.name, enc.host, r.ok, r.error);
             }
+            // La API sólo se consulta si la web responde (si no, cada vuelta esperaría el timeout)
+            const api = r.ok ? await pollApi(enc) : (prev.api ? { ...prev.api, ok: false, error: 'Sin conexión' } : null);
+            // Aviso por entrada cuando cambia su señal de vídeo
+            if (api && api.ok && prev.api && prev.api.ok) {
+                const multi = (api.inputs || []).length > 1;
+                for (const inp of api.inputs || []) {
+                    const before = (prev.api.inputs || []).find(x => x.id === inp.id);
+                    if (!before || typeof before.signal !== 'boolean' || typeof inp.signal !== 'boolean' || before.signal === inp.signal) continue;
+                    const which = multi ? ` (entrada ${inp.id + 1})` : '';
+                    console.log(`[ENCODERS] ${enc.name}${which}: ${inp.signal ? 'vuelve la señal de entrada' : 'sin señal de entrada'}`);
+                    require('./telegram').encoderInput(enc.name + which, inp.signal);
+                }
+            }
             status.set(enc.id, {
+                api,
                 online: r.ok,
                 responseMs: r.ms,
                 error: r.ok ? '' : r.error,
@@ -417,11 +521,17 @@ function statusList() {
  *  API
  * ======================================= */
 function publicEncoder(enc, user) {
-    const { vpn_privkey, vpn_psk, ...rest } = enc;
-    const out = { ...rest, proxy_port: PROXY_BASE + enc.proxy_slot, vpn: !!enc.vpn_pubkey, status: status.get(enc.id) || null };
+    const { vpn_privkey, vpn_psk, api_pass, input_channels, ...rest } = enc;
+    const channels = encoderChannelsOf(enc).map(c => (c === null ? null : Number(c)));
+    const out = { ...rest, channels, api_has_pass: !!api_pass, proxy_port: PROXY_BASE + enc.proxy_slot, vpn: !!enc.vpn_pubkey, status: status.get(enc.id) || null };
     if (user && user.role !== auth.ROLE_ADMIN) { // el operador no ve cómo llegar al encoder
-        for (const k of ['host', 'web_port', 'vpn_ip', 'vpn_lan', 'vpn_pubkey']) delete out[k];
-        out.status = operatorEncoderStatus(out.status); // ni endpoint WireGuard ni contadores
+        for (const k of ['host', 'web_port', 'vpn_ip', 'vpn_lan', 'vpn_pubkey', 'api_user', 'api_has_pass']) delete out[k];
+        // Sólo las entradas del encoder cuya señal ve; ni endpoint WireGuard ni contadores
+        const visible = require('./access').visibleEncoderInputs(user, enc.id);
+        out.channels = channels.map((c, i) => (visible.has(i) ? c : null));
+        out.channel = out.channels[0];
+        out.visible_inputs = [...visible];
+        out.status = operatorEncoderStatus(out.status, visible);
     }
     return out;
 }
@@ -430,7 +540,7 @@ async function reload() {
     const rows = await dbAll('SELECT * FROM encoders ORDER BY id');
     const ids = new Set(rows.map(r => r.id));
     for (const id of [...encoders.keys()]) {
-        if (!ids.has(id)) { encoders.delete(id); status.delete(id); stopProxy(id); }
+        if (!ids.has(id)) { encoders.delete(id); status.delete(id); stopProxy(id); forgetDriver(id); }
     }
     rows.forEach(r => { encoders.set(r.id, r); startProxy(r); });
 }
@@ -463,8 +573,8 @@ function registerRoutes(app) {
         if (error) return res.status(400).json({ error });
         const slot = freeSlot();
         if (slot < 0) return res.status(400).json({ error: `Máximo ${MAX_SLOTS} encoders` });
-        const r = await dbRun(`INSERT INTO encoders (name, model, host, web_port, https, channel, notes, proxy_slot) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            [value.name, value.model, value.host, value.web_port, value.https, value.channel, value.notes, slot]);
+        const r = await dbRun(`INSERT INTO encoders (name, model, host, web_port, https, channel, input_channels, notes, proxy_slot, driver, api_user, api_pass) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [value.name, value.model, value.host, value.web_port, value.https, value.channel, value.input_channels, value.notes, slot, value.driver, value.api_user, value.api_pass || '']);
         await reload();
         await require('./access').reload();
         notify();
@@ -477,8 +587,11 @@ function registerRoutes(app) {
         if (!encoders.has(id)) return res.status(404).json({ error: 'No encontrado' });
         const { error, value } = validateEncoder(req.body || {});
         if (error) return res.status(400).json({ error });
-        await dbRun('UPDATE encoders SET name = ?, model = ?, host = ?, web_port = ?, https = ?, channel = ?, notes = ? WHERE id = ?',
-            [value.name, value.model, value.host, value.web_port, value.https, value.channel, value.notes, id]);
+        // Sin usuario de API no se guarda contraseña; si no se envía una nueva, se conserva la anterior
+        const pass = !value.api_user ? '' : (value.api_pass !== undefined ? value.api_pass : encoders.get(id).api_pass);
+        await dbRun('UPDATE encoders SET name = ?, model = ?, host = ?, web_port = ?, https = ?, channel = ?, input_channels = ?, notes = ?, driver = ?, api_user = ?, api_pass = ? WHERE id = ?',
+            [value.name, value.model, value.host, value.web_port, value.https, value.channel, value.input_channels, value.notes, value.driver, value.api_user, pass, id]);
+        forgetDriver(id); // la IP o el fabricante pueden haber cambiado
         await reload();
         await require('./access').reload();
         notify();
@@ -518,6 +631,93 @@ function registerRoutes(app) {
         res.json(publicEncoder(encoders.get(id)));
     }));
 
+    /* ---- Control por API: cualquier usuario que vea el encoder (ya maneja su web por el proxy).
+     *      Cambiar a dónde emite (URL) es sólo para administradores. ---- */
+    const busy = new Set(); // una orden a la vez por encoder: estos firmwares no toleran escrituras simultáneas
+    const control = (fn) => async (req, res) => {
+        const id = parseInt(req.params.id, 10);
+        const enc = encoders.get(id);
+        if (!enc || !require('./access').canSeeEncoder(req.user, id)) return res.status(404).json({ error: 'No encontrado' });
+        const st = status.get(id);
+        if (st && st.online === false) return res.status(409).json({ error: `${enc.name} no responde: ${st.error || 'sin conexión'}` });
+        try {
+            await fn(req, res, enc);
+        } catch (e) {
+            // Nunca 401: el panel lo interpreta como sesión caducada y vuelve al login. Un fallo de
+            // credenciales del encoder es un fallo del equipo remoto (502, con code EAUTH).
+            const code = e.code === 'EINVAL' || e.code === 'ENODRIVER' ? 400 : 502;
+            res.status(code).json({ error: e.message, code: e.code });
+        }
+    };
+    const order = (label, fn) => control(async (req, res, enc) => {
+        if (busy.has(enc.id)) return res.status(409).json({ error: 'Hay otra orden en curso para este encoder' });
+        busy.add(enc.id);
+        try {
+            const { driver, api } = await withDriver(enc);
+            const what = await fn(req, api, enc, driver);
+            console.log(`[ENCODERS] ${req.user.username} → ${enc.name}: ${label}${what ? ` (${what})` : ''}`);
+            refreshOne(enc).catch(() => {});
+            res.json({ ok: true });
+        } finally {
+            busy.delete(enc.id);
+        }
+    });
+
+    // Cada entrada del encoder lleva la señal del servidor a la que va vinculada; un operador
+    // sólo ve y maneja las entradas cuya señal tiene asignada
+    const withLinks = (enc, state, user) => {
+        const chans = encoderChannelsOf(enc);
+        const visible = require('./access').visibleEncoderInputs(user, enc.id);
+        const inputs = (state.inputs || [])
+            .filter(i => visible === null || visible.has(Number(i.id)))
+            .map(i => ({ ...i, channel: chans[i.id] != null ? Number(chans[i.id]) : null }));
+        return { ...state, inputs };
+    };
+    // Localiza el stream/emisión de la orden y comprueba que el usuario ve su entrada
+    const target = (req, enc, state, what) => {
+        const found = drivers.locate(state, what);
+        if (!found || !require('./access').canSeeEncoderInput(req.user, enc.id, found.input.id)) {
+            throw new drivers.ApiError(what.streamId !== undefined ? 'Ese stream no existe en el encoder' : 'Esa emisión no existe en el encoder', 'EINVAL');
+        }
+        return found;
+    };
+
+    app.get('/api/encoders/:id/control', control(async (req, res, enc) => {
+        const { driver, api } = await withDriver(enc);
+        const state = withLinks(enc, await api.state(enc), req.user);
+        res.set('Cache-Control', 'no-store');
+        res.json({ driver, label: driverLabel(driver), canEditUrls: req.user.role === auth.ROLE_ADMIN, ...state });
+    }));
+
+    app.post('/api/encoders/:id/control/stream/:sid', order('cambia la codificación', async (req, api, enc) => {
+        const ref = drivers.parseStreamId(req.params.sid); // 'entrada:stream' (un número suelto = entrada 1)
+        const state = await api.state(enc);
+        const { input, stream } = target(req, enc, state, { streamId: `${ref.input}:${ref.index}` });
+        const p = drivers.validateStreamParams(req.body || {}, state.caps);
+        await api.setStream(enc, stream.id, p);
+        return `entrada ${input.id + 1} · ${stream.name}: ${Object.entries(p).map(([k, v]) => `${k}=${v}`).join(' ')}`;
+    }));
+
+    app.post('/api/encoders/:id/control/output/:oid', order('cambia una salida', async (req, api, enc) => {
+        target(req, enc, await api.state(enc), { outputId: req.params.oid });
+        const body = req.body || {};
+        const p = {};
+        if (body.enabled !== undefined) p.enabled = !!body.enabled;
+        if (body.url !== undefined) {
+            if (req.user.role !== auth.ROLE_ADMIN) throw new drivers.ApiError('Sólo un administrador puede cambiar a dónde emite el encoder', 'EINVAL');
+            const url = String(body.url).trim();
+            if (!url || url.length > 512 || /[\s"'<>]/.test(url)) throw new drivers.ApiError('URL no válida', 'EINVAL');
+            p.url = url;
+        }
+        if (!Object.keys(p).length) throw new drivers.ApiError('No hay cambios que aplicar', 'EINVAL');
+        await api.setOutput(enc, req.params.oid, p);
+        return `${req.params.oid}${p.enabled !== undefined ? (p.enabled ? ' activada' : ' parada') : ''}${p.url ? ` → ${p.url.replace(/passphrase=[^&]*/i, 'passphrase=***')}` : ''}`;
+    }));
+
+    app.post('/api/encoders/:id/control/reboot', order('reinicia el encoder', async (req, api, enc) => {
+        await api.reboot(enc);
+    }));
+
     // Archivo para importar en el router (lleva su clave privada: sólo administradores)
     app.get('/api/encoders/:id/wireguard.conf', auth.requireAdmin, wrap(async (req, res) => {
         const enc = encoders.get(parseInt(req.params.id, 10));
@@ -538,6 +738,20 @@ function addMetrics(r) {
         if (!st || st.online === undefined) continue;
         r.gauge('tsst_encoder_up', '1 si la web del encoder responde', l, st.online ? 1 : 0);
         if (st.responseMs !== null) r.gauge('tsst_encoder_response_seconds', 'Tiempo de conexión TCP a la web del encoder', l, st.responseMs / 1000);
+        if (st.api) {
+            r.gauge('tsst_encoder_api_up', '1 si la API de control del encoder responde', l, st.api.ok ? 1 : 0);
+            if (st.api.ok && typeof st.api.cpu === 'number') r.gauge('tsst_encoder_cpu_percent', 'Uso de CPU del encoder', l, st.api.cpu);
+            const chans = encoderChannelsOf(enc);
+            for (const inp of (st.api.ok && st.api.inputs) || []) {
+                // Cada entrada lleva la señal del servidor a la que está vinculada
+                const li = { encoder: enc.id, name: enc.name, input: inp.id + 1, channel: chans[inp.id] ?? '' };
+                if (typeof inp.signal === 'boolean') r.gauge('tsst_encoder_input_signal', '1 si la entrada del encoder recibe vídeo (HDMI/SDI)', li, inp.signal ? 1 : 0);
+                if (typeof inp.streaming === 'boolean') r.gauge('tsst_encoder_streaming', '1 si la entrada del encoder tiene alguna emisión (SRT/RTMP) activa', li, inp.streaming ? 1 : 0);
+                for (const s of inp.streams || []) {
+                    if (s.bitrate) r.gauge('tsst_encoder_bitrate_kbps', 'Bitrate configurado en el stream del encoder (0 main, 1 sub)', { ...li, stream: s.index === 0 ? 'main' : s.index === 1 ? 'sub' : `sub${s.index}` }, s.bitrate);
+                }
+            }
+        }
         if (st.vpn) {
             r.gauge('tsst_encoder_vpn_up', '1 si el router del encoder tiene el túnel WireGuard activo', l, st.vpn.up ? 1 : 0);
             if (st.vpn.handshakeAge !== null) r.gauge('tsst_encoder_vpn_handshake_age_seconds', 'Segundos desde el último handshake WireGuard', l, st.vpn.handshakeAge);
