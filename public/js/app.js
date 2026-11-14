@@ -222,6 +222,7 @@ function switchTab(tabId) {
     // El botón de la cabecera cambia de función en la pestaña Encoders
     const addBtn = document.getElementById('btn-add-input');
     document.getElementById('view-toggle').hidden = tabId !== 'streams';
+    document.getElementById('expand-toggle').hidden = tabId !== 'streams';
     addBtn.onclick = tabId === 'encoders' ? openAddEncoderModal : openAddInputModal;
     addBtn.innerHTML = tabId === 'encoders' ? '<i class="fa-solid fa-plus"></i> Añadir encoder' : '<i class="fa-solid fa-plus"></i> Añadir entrada';
 
@@ -1001,6 +1002,12 @@ function toggleExpand(channel) {
     const card = document.getElementById(`input-card-${channel}`);
     card.classList.toggle('expand-mode'); // la flecha gira y el contenido se despliega por CSS
     syncThumbPlayers(); // Plegada no se ve: su vídeo en vivo se para
+}
+
+// Botones de la cabecera de Señales: todas las tarjetas desplegadas o plegadas de golpe
+function setAllStreamCards(open) {
+    document.querySelectorAll('#streamsContainer .stream-card[id^="input-card-"]').forEach(c => c.classList.toggle('expand-mode', open));
+    syncThumbPlayers();
 }
 
 // Modal Logic
@@ -2768,10 +2775,14 @@ let ctlState = null;
 async function openEncoderControl(id) {
     const enc = encoderList.find(e => e.id === id);
     if (!enc) return;
-    if (ctlEncoderId !== id) ctlOpenInputs = new Set([0]); // otro encoder: sólo la entrada 1 desplegada
+    // Siempre arranca todo contraído; mientras está abierta se recuerda lo desplegado (al releer)
+    ctlOpenInputs = new Set();
+    ctlOpenStreams = new Set();
     ctlEncoderId = id;
     ctlState = null;
     document.getElementById('ctl_title').innerText = `Control · ${enc.name}`;
+    document.getElementById('ctl_top').innerHTML = '';
+    document.getElementById('ctl_body').scrollTop = 0;
     document.getElementById('ctl_body').innerHTML = '<p class="enc-muted"><i class="fa-solid fa-spinner fa-spin"></i> Leyendo la configuración del encoder…</p>';
     openModal('encoderControlModal');
     await loadEncoderControl();
@@ -2787,6 +2798,7 @@ async function loadEncoderControl() {
         if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
     } catch (e) {
         if (id !== ctlEncoderId) return;
+        document.getElementById('ctl_top').innerHTML = '';
         body.innerHTML = `<p class="enc-warn"><i class="fa-solid fa-triangle-exclamation"></i> ${escapeHtml(e.message)}</p>
             <p class="enc-muted">Puedes manejarlo igualmente con <strong>Abrir web</strong>.${isAdmin() ? ' Si el fabricante o las credenciales no son los correctos, cámbialos en <strong>Editar</strong>.' : ''}</p>
             <div class="modal-actions"><button type="button" class="btn-secondary" onclick="loadEncoderControl()"><i class="fa-solid fa-rotate"></i> Reintentar</button></div>`;
@@ -2797,25 +2809,57 @@ async function loadEncoderControl() {
     renderEncoderControl();
 }
 
-// Entradas desplegadas en la ventana de control (se conservan al releer tras una orden)
-let ctlOpenInputs = new Set([0]);
+// Entradas y streams desplegados en la ventana de control (se conservan al releer tras una orden)
+let ctlOpenInputs = new Set();
+let ctlOpenStreams = new Set();
 
 const ctlStreams = () => (ctlState.inputs || []).flatMap(i => i.streams || []);
 const ctlOutputs = () => ctlStreams().flatMap(s => s.outputs || []);
 
+// La latencia SRT va en la URL (?latency=ms); en el panel se edita aparte, en milisegundos
+function srtSplitLatency(url) {
+    const [head, query = ''] = String(url || '').split('?');
+    let latency = '';
+    const rest = query.split('&').filter(p => {
+        if (!p) return false;
+        if (/^latency=/i.test(p)) { latency = decodeURIComponent(p.slice(8)); return false; }
+        return true;
+    });
+    return { base: head + (rest.length ? '?' + rest.join('&') : ''), latency };
+}
+const srtJoinLatency = (base, ms) => (ms === '' || ms === null || ms === undefined ? base : `${base}${base.includes('?') ? '&' : '?'}latency=${ms}`);
+
+// Una fila por emisión: [protocolo + modo] [piloto] [ruta | puerto] [ms] [guardar] [play/stop]
 function ctlOutputHtml(o, canEdit) {
-    return `
-        <div class="ctl-output">
-            <span class="badge-protocol ${escapeHtml(o.kind)}">${escapeHtml(String(o.kind).toUpperCase())}</span>
-            <div class="ctl-output-main">
-                <div>${escapeHtml(o.label)} · <span class="sig-state ${o.enabled ? 'good' : 'off'}">${o.enabled ? 'Activa' : 'Parada'}</span></div>
-                ${o.editable && canEdit
-                    ? `<form class="ctl-url" onsubmit="applyEncoderOutputUrl(event, '${escapeHtml(o.id)}')"><input type="text" name="url" value="${escapeHtml(o.url)}" placeholder="srt://IP_DEL_SERVIDOR:PUERTO?latency=500"><button type="submit" class="btn-secondary" title="Guardar destino"><i class="fa-solid fa-floppy-disk"></i></button></form>`
-                    : `<div class="enc-muted ctl-url-text">${escapeHtml(o.url || '')}</div>`}
-            </div>
-            <button type="button" class="${o.enabled ? 'btn-secondary' : 'btn-primary'}" onclick="toggleEncoderOutput('${escapeHtml(o.id)}', ${!o.enabled})">
-                <i class="fa-solid ${o.enabled ? 'fa-stop' : 'fa-play'}"></i> ${o.enabled ? 'Parar' : 'Emitir'}</button>
-        </div>`;
+    const id = escapeHtml(o.id);
+    const mode = o.mode ? `<small>${escapeHtml(String(o.mode).toUpperCase())}</small>` : '';
+    const badge = `<span class="ctl-out-badge ${escapeHtml(o.kind)}">${escapeHtml(String(o.kind).toUpperCase())}${mode}</span>`;
+    const led = `<span class="ctl-led ${o.enabled ? 'on' : ''}" title="${o.enabled ? 'Activa' : 'Parada'}" role="img" aria-label="${o.enabled ? 'Activa' : 'Parada'}"></span>`;
+    const edit = o.editable && canEdit;
+    const srtCaller = o.kind === 'srt' && o.editKind === 'url';
+    let field;
+    if (edit && o.editKind === 'port') {
+        field = `<label class="ctl-field"><span class="ctl-addon">Puerto</span><input type="number" name="port" min="1" max="65535" step="1" value="${o.port || ''}" placeholder="9000" aria-label="Puerto de escucha"></label>`;
+    } else if (edit && srtCaller) {
+        const { base, latency } = srtSplitLatency(o.url);
+        field = `<input type="text" name="url" class="ctl-field-url" value="${escapeHtml(base)}" placeholder="srt://IP_DEL_SERVIDOR:PUERTO" aria-label="Destino SRT">
+            <label class="ctl-field ctl-field-ms" title="Latencia SRT (3–4 × RTT; LAN 40, Internet 500)"><input type="number" name="latency" min="0" max="10000" step="1" value="${escapeHtml(latency)}" placeholder="500" aria-label="Latencia en milisegundos"><span class="ctl-addon">ms</span></label>`;
+    } else if (edit) {
+        field = `<input type="text" name="url" class="ctl-field-url" value="${escapeHtml(o.url)}" placeholder="rtmp://servidor/app/clave" aria-label="Destino">`;
+    } else {
+        field = `<span class="enc-muted ctl-url-text">${escapeHtml(o.url || '')}</span>`;
+    }
+    const save = edit
+        ? `<button type="submit" class="ctl-icon-btn" title="Guardar" aria-label="Guardar ${escapeHtml(o.label)}"><i class="fa-solid fa-floppy-disk"></i></button>`
+        : '<span class="ctl-icon-spacer"></span>'; // mantiene play/stop en la misma columna
+    const toggle = `<button type="button" class="ctl-icon-btn ${o.enabled ? 'ctl-stop' : 'ctl-play'}" onclick="toggleEncoderOutput('${id}', ${!o.enabled})"
+        title="${o.enabled ? 'Parar la emisión' : 'Emitir'}" aria-label="${o.enabled ? 'Parar' : 'Emitir'} ${escapeHtml(o.label)}"><i class="fa-solid ${o.enabled ? 'fa-stop' : 'fa-play'}"></i></button>`;
+    const tag = edit ? 'form' : 'div';
+    return `<${tag} class="ctl-output"${edit ? ` onsubmit="applyEncoderOutput(event, '${id}')"` : ''}>
+            ${badge}${led}
+            <div class="ctl-out-field">${field}</div>
+            <div class="ctl-out-btns">${save}${toggle}</div>
+        </${tag}>`;
 }
 
 // Un stream (main o sub): su codificación y, debajo, sus emisiones
@@ -2823,13 +2867,16 @@ function ctlStreamHtml(s, d) {
     const br = (d.caps && d.caps.bitrate) || { min: 32, max: 32000 };
     const sel = (name, opts, cur) => `<select name="${name}" class="form-control">${opts.map(o => `<option value="${escapeHtml(o)}"${o === cur ? ' selected' : ''}>${escapeHtml(o)}</option>`).join('')}</select>`;
     const outs = (s.outputs || []).map(o => ctlOutputHtml(o, d.canEditUrls)).join('');
+    const live = (s.outputs || []).some(o => o.enabled);
+    // Plegable por su cuenta: los botones de la cabecera sólo pliegan/despliegan las entradas
     return `
-        <div class="ctl-stream">
+        <details class="ctl-stream" data-stream="${escapeHtml(s.id)}" ${ctlOpenStreams.has(s.id) ? 'open' : ''} ontoggle="ctlStreamToggled(this)">
+            <summary class="ctl-stream-head">
+                <strong>${escapeHtml(s.name)}</strong>
+                <span class="enc-muted">${escapeHtml([s.codec, s.width && s.height ? `${s.width}×${s.height}` : '', s.fps ? `${s.fps} fps` : '', s.bitrate ? fmtKbps(s.bitrate) : '', s.rc].filter(Boolean).join(' · '))}</span>
+                ${live ? '<span class="enc-muted"><i class="fa-solid fa-tower-broadcast"></i> emitiendo</span>' : ''}
+            </summary>
             <form onsubmit="applyEncoderStream(event, '${escapeHtml(s.id)}')">
-                <div class="ctl-stream-head">
-                    <strong>${escapeHtml(s.name)}</strong>
-                    <span class="enc-muted">${escapeHtml([s.codec, s.width && s.height ? `${s.width}×${s.height}` : '', s.fps ? `${s.fps} fps` : '', s.bitrate ? fmtKbps(s.bitrate) : '', s.rc].filter(Boolean).join(' · '))}</span>
-                </div>
                 <div class="ctl-grid">
                     <label>Bitrate (kbps)<input type="number" name="bitrate" min="${br.min}" max="${br.max}" step="1" value="${s.bitrate || ''}"></label>
                     <label>Modo${sel('rc', ['CBR', 'VBR'], s.rc)}</label>
@@ -2840,7 +2887,7 @@ function ctlStreamHtml(s, d) {
                 </div>
             </form>
             ${outs ? `<div class="ctl-outputs"><div class="ctl-sub">Emisiones de este stream</div>${outs}</div>` : ''}
-        </div>`;
+        </details>`;
 }
 
 function renderEncoderControl() {
@@ -2848,7 +2895,6 @@ function renderEncoderControl() {
     const body = document.getElementById('ctl_body');
     const dev = d.device || {};
     const ins = d.inputs || [];
-    const multi = ins.length > 1;
 
     const inputsHtml = ins.map(inp => {
         const video = inp.signal === null || inp.signal === undefined ? '<span class="sig-state off">Sin datos</span>' : inp.signal
@@ -2859,7 +2905,7 @@ function renderEncoderControl() {
             : `<span class="enc-muted">→ ${escapeHtml(srv ? srv.name : 'señal ' + inp.channel)}</span>`;
         const streams = (inp.streams || []).map(s => ctlStreamHtml(s, d)).join('') || '<p class="enc-muted">Esta entrada no informa de sus streams.</p>';
         const streamingNow = (inp.streams || []).some(s => (s.outputs || []).some(o => o.enabled));
-        const open = !multi || ctlOpenInputs.has(inp.id);
+        const open = ctlOpenInputs.has(inp.id);
         return `
         <details class="ctl-input" data-input="${inp.id}" ${open ? 'open' : ''} ontoggle="ctlInputToggled(this)">
             <summary>
@@ -2870,18 +2916,25 @@ function renderEncoderControl() {
         </details>`;
     }).join('') || '<p class="enc-muted">El encoder no informa de sus entradas.</p>';
 
-    body.innerHTML = `
+    // Cabecera fija: qué encoder es, CPU, entradas y los botones generales
+    document.getElementById('ctl_top').innerHTML = `
         <dl class="enc-rows">
-            <dt>API</dt><dd>${escapeHtml(d.label || d.driver)}${dev.model ? ` · <span class="enc-muted">${escapeHtml(dev.model)}${dev.version ? ' v' + escapeHtml(dev.version) : ''}</span>` : ''}</dd>
+            <dt>Encoder</dt><dd>${escapeHtml(d.label || d.driver)}${dev.model ? ` · <span class="enc-muted">${escapeHtml(dev.model)}${dev.version ? ' v' + escapeHtml(dev.version) : ''}</span>` : ''}</dd>
             ${typeof dev.cpu === 'number' ? `<dt>CPU</dt><dd>${dev.cpu}%${dev.uptime ? ` <span class="enc-muted">· encendido ${escapeHtml(dev.uptime.replace(/^0000-00-00 /, ''))}</span>` : ''}</dd>` : ''}
-            ${multi ? `<dt>Entradas</dt><dd>${ins.filter(i => i.signal).length} de ${ins.length} con vídeo</dd>` : ''}
+            <dt>Entradas</dt><dd>${ins.filter(i => i.signal).length} de ${ins.length} con vídeo</dd>
         </dl>
+        <div class="ctl-toolbar">
+            <button type="button" class="ctl-icon-btn" onclick="ctlSetAllInputs(true)" title="Expandir todas las entradas" aria-label="Expandir todas las entradas"><i class="fa-solid fa-up-right-and-down-left-from-center"></i></button>
+            <button type="button" class="ctl-icon-btn" onclick="ctlSetAllInputs(false)" title="Contraer todas las entradas" aria-label="Contraer todas las entradas"><i class="fa-solid fa-down-left-and-up-right-to-center"></i></button>
+            <button type="button" class="ctl-icon-btn" onclick="loadEncoderControl()" title="Volver a leer la configuración del encoder" aria-label="Releer"><i class="fa-solid fa-rotate"></i></button>
+        </div>`;
+
+    const scroll = body.scrollTop; // tras una orden se relee: que no salte arriba
+    body.innerHTML = `
         <div class="ctl-inputs">${inputsHtml}</div>
         <p class="enc-muted" style="margin-top:10px;">Cambiar el bitrate o el códec puede cortar la señal de ese stream unos segundos mientras el encoder reinicia la codificación.</p>
-        <div class="modal-actions">
-            ${d.caps && d.caps.reboot ? '<button type="button" class="btn-secondary ctl-danger" onclick="rebootEncoder()"><i class="fa-solid fa-power-off"></i> Reiniciar encoder</button>' : ''}
-            <button type="button" class="btn-secondary" onclick="loadEncoderControl()"><i class="fa-solid fa-rotate"></i> Releer</button>
-        </div>`;
+        ${d.caps && d.caps.reboot ? `<div class="modal-actions"><button type="button" class="btn-secondary ctl-danger" onclick="rebootEncoder()"><i class="fa-solid fa-power-off"></i> Reiniciar encoder</button></div>` : ''}`;
+    body.scrollTop = scroll;
 }
 
 function ctlInputToggled(el) {
@@ -2889,9 +2942,20 @@ function ctlInputToggled(el) {
     if (el.open) ctlOpenInputs.add(id); else ctlOpenInputs.delete(id);
 }
 
+function ctlStreamToggled(el) {
+    const id = el.dataset.stream;
+    if (el.open) ctlOpenStreams.add(id); else ctlOpenStreams.delete(id);
+}
+
+// Sólo entradas: los streams de dentro conservan como estaban
+function ctlSetAllInputs(open) {
+    document.querySelectorAll('#ctl_body details.ctl-input').forEach(d => { d.open = open; });
+    ctlOpenInputs = new Set(open ? (ctlState.inputs || []).map(i => i.id) : []);
+}
+
 async function encoderOrder(path, payload, okMsg) {
     const id = ctlEncoderId;
-    const buttons = document.querySelectorAll('#ctl_body button');
+    const buttons = document.querySelectorAll('#ctl_body button, #ctl_top button');
     buttons.forEach(b => { b.disabled = true; });
     try {
         const res = await fetch(`/api/encoders/${id}/control/${path}`, {
@@ -2929,11 +2993,35 @@ async function toggleEncoderOutput(oid, enabled) {
     await encoderOrder(`output/${encodeURIComponent(oid)}`, { enabled }, enabled ? 'Emisión activada' : 'Emisión parada');
 }
 
-async function applyEncoderOutputUrl(e, oid) {
+// Guardar de una emisión: destino (con su latencia en ms si es SRT caller) o puerto de escucha
+function applyEncoderOutput(e, oid) {
     e.preventDefault();
-    const url = new FormData(e.target).get('url').trim();
+    const f = new FormData(e.target);
+    return f.has('port') ? applyEncoderOutputPort(oid, f) : applyEncoderOutputUrl(oid, f);
+}
+
+async function applyEncoderOutputUrl(oid, f) {
+    const o = ctlOutputs().find(x => x.id === oid);
+    let url = String(f.get('url') || '').trim();
     if (!url) return toast('Escribe la URL de destino');
+    if (f.has('latency')) {
+        // Manda la casilla; si está vacía y la URL ya trae latency=, se respeta esa
+        const typed = srtSplitLatency(url);
+        const ms = String(f.get('latency') || '').trim() || typed.latency;
+        if (ms !== '' && (!/^\d+$/.test(ms) || Number(ms) > 10000)) return toast('Latencia: entre 0 y 10000 ms');
+        url = srtJoinLatency(typed.base, ms);
+    }
+    if (o && url === o.url) return toast('No has cambiado nada', 'info');
     await encoderOrder(`output/${encodeURIComponent(oid)}`, { url }, 'Destino guardado');
+}
+
+async function applyEncoderOutputPort(oid, f) {
+    const port = Number(f.get('port'));
+    const o = ctlOutputs().find(x => x.id === oid);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) return toast('Puerto: entre 1 y 65535');
+    if (o && o.port === port) return toast('No has cambiado nada', 'info');
+    if (o && o.enabled && !confirm(`¿Cambiar el puerto de escucha a ${port}? Quien esté conectado al ${o.port} se desconectará y tendrá que apuntar al nuevo.`)) return;
+    await encoderOrder(`output/${encodeURIComponent(oid)}`, { port }, `Puerto de escucha: ${port}`);
 }
 
 async function rebootEncoder() {

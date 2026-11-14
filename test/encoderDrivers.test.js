@@ -175,6 +175,20 @@ test('HiSilicon: emisiones por entrada y stream', async () => {
     await assert.rejects(api.setOutput(hisiEnc, '0:srt_publish', { enabled: true }), e => e.code === 'EINVAL');
 });
 
+test('HiSilicon: el SRT listener permite cambiar su puerto; el caller no', async () => {
+    const api = drivers.impl('uray');
+    const s = await api.state(hisiEnc);
+    const listener = s.inputs[2].streams[0].outputs.find(o => o.id === '2:0:srt');
+    assert.deepStrictEqual([listener.editable, listener.editKind, listener.port, listener.mode], [true, 'port', 9002, 'listener']);
+    assert.deepStrictEqual(s.inputs[2].streams[0].outputs.map(o => `${o.kind}:${o.mode}`), ['srt:caller', 'srt:listener', 'rtmp:push']);
+    assert.strictEqual(s.inputs[2].streams[0].outputs.find(o => o.id === '2:0:srt_publish').editKind, 'url');
+    await api.setOutput(hisiEnc, '2:0:srt', { port: 9500, enabled: true });
+    assert.deepStrictEqual([hisi.state.out['2:0'].srt_port, hisi.state.out['2:0'].srt_enable], ['9500', '1']);
+    assert.strictEqual(hisi.state.out['1:0'].srt_port, '9001');
+    await assert.rejects(api.setOutput(hisiEnc, '2:0:srt_publish', { port: 9600 }), e => e.code === 'EINVAL');
+    await assert.rejects(drivers.impl('zowietek').setOutput(zowieEnc, 'pub:0', { port: 9600 }), e => e.code === 'EINVAL');
+});
+
 test('HiSilicon de una entrada: mismo formato, entrada 0', async () => {
     const s = await drivers.impl('uray').state(hisi1Enc);
     assert.strictEqual(s.inputs.length, 1);
@@ -198,6 +212,7 @@ test('Zowietek: una entrada con main y sub; emisiones en el main', async () => {
     const [main, sub] = s.inputs[0].streams;
     assert.deepStrictEqual([main.id, main.name, sub.id, sub.name], ['0:0', 'Principal (main)', '0:1', 'Secundario (sub)']);
     assert.strictEqual(main.outputs[0].id, 'pub:0');
+    assert.strictEqual(main.outputs[0].mode, 'caller');
     assert.deepStrictEqual(sub.outputs, []);
 
     await api.setStream(zowieEnc, '0:1', { bitrate: 1500, codec: 'H.265', rc: 'VBR' });

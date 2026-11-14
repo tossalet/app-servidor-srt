@@ -372,6 +372,7 @@ button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible
 .modal {
     background: #1e293b; border: 1px solid var(--panel-border); border-radius: 12px;
     width: 450px; padding: 2rem; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    --mpy: 2rem; --mpx: 2rem; /* relleno de la ventana: lo usa la cabecera fija para cubrirlo */
     animation: modalIn 0.24s var(--ease-out);
     /* !important: varias ventanas traen max-width en el propio HTML (800px...) que si no anula
        este límite y en el móvil se salían de la pantalla con la X fuera */
@@ -391,6 +392,16 @@ button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible
 .modal-header h3 { text-transform: none !important; }
 
 .modal-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 1.5rem; }
+/* Cabecera fija en todas las ventanas: al desplazar un formulario largo, el título y la X siguen
+   arriba. Se estira sobre el relleno de la ventana para tapar lo que pasa por debajo.
+   (La de control de encoders tiene su propia cabecera fija con resumen: ver .ctl-modal) */
+.modal:not(.ctl-modal) > .modal-header {
+    position: sticky; top: calc(-1 * var(--mpy)); z-index: 6;
+    margin: calc(-1 * var(--mpy)) calc(-1 * var(--mpx)) 1.25rem;
+    padding: var(--mpy) var(--mpx) 0.85rem;
+    background: inherit; border-bottom: 1px solid var(--panel-border);
+    border-top-left-radius: inherit; border-top-right-radius: inherit;
+}
 /* min-width 0 + anywhere: un nombre de archivo largo sin espacios se parte en vez de empujar la X fuera */
 .modal-header h3 { font-size: 1.25rem; font-weight: 600; text-transform: uppercase; min-width: 0; overflow-wrap: anywhere; }
 .close-btn {
@@ -407,7 +418,11 @@ button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible
     border-radius: 6px; color: var(--text-main); font-family: var(--font-body);
 }
 .form-group input:focus, .form-group select:focus { outline: none; border-color: var(--accent-blue); }
-.form-group select option { background: #1e293b; color: #fff; }
+/* La lista que se despliega la pinta el sistema: sin esto sale clara (con el tema del SO) fuera de
+   .form-group, p. ej. en la ventana de control de encoders. Vale para todos los select de la app. */
+select option { background: #1e293b; color: #fff; }
+select option:checked { background: var(--accent-blue); color: #fff; }
+select option:disabled { color: var(--text-muted); }
 
 .form-group.row { display: flex; gap: 15px; }
 .form-group.row .half { flex: 1; }
@@ -484,7 +499,7 @@ input:checked + .slider:before { transform: translateX(18px); }
     .page-title h1 { font-size: 1.2rem; margin-bottom: 0; }
     .page-title p { display: none; } /* en el móvil la cabecera fija debe ocupar poco */
     .topbar .btn-primary { padding: 8px 14px; font-size: 0.85rem; }
-    .modal { padding: 1.25rem; }
+    .modal { padding: 1.25rem; --mpy: 1.25rem; --mpx: 1.25rem; }
     .form-group.row { flex-direction: column; }
 }
 
@@ -555,21 +570,63 @@ input:checked + .slider:before { transform: translateX(18px); }
 /* Ventana de control por API del encoder */
 .ctl-h { font-family: var(--font-heading); font-size: 0.95rem; margin: 1.25rem 0 0.6rem; }
 .ctl-stream { border: 1px solid var(--panel-border); border-radius: 10px; padding: 0.85rem; margin-bottom: 0.6rem; background: rgba(0,0,0,0.15); }
-.ctl-stream-head { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; margin-bottom: 0.6rem; font-size: 0.9rem; }
+.ctl-stream-head { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; font-size: 0.9rem; cursor: pointer; list-style: none; }
+.ctl-stream-head::-webkit-details-marker { display: none; }
+.ctl-stream-head::before { content: '\25B8'; color: var(--text-muted); transition: transform 0.15s; }
+.ctl-stream[open] > .ctl-stream-head { margin-bottom: 0.6rem; }
+.ctl-stream[open] > .ctl-stream-head::before { transform: rotate(90deg); }
+.ctl-stream:last-child { margin-bottom: 0; }
+/* Botones de icono de la ventana de control: todos del mismo tamaño (play, stop, guardar, cabecera) */
+.ctl-icon-btn {
+    flex-shrink: 0; width: 32px; height: 32px; padding: 0; border-radius: 8px;
+    display: inline-flex; align-items: center; justify-content: center; font-size: 0.85rem;
+    background: rgba(255,255,255,0.06); border: 1px solid var(--panel-border); color: var(--text-main); cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, transform 0.1s;
+}
+.ctl-icon-btn:hover { background: rgba(255,255,255,0.12); }
+.ctl-icon-btn:active { transform: scale(0.94); }
+.ctl-icon-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.ctl-icon-btn.ctl-play { background: var(--accent-blue); border-color: var(--accent-blue); color: #fff; }
+.ctl-icon-btn.ctl-play:hover { background: #2563eb; }
+.ctl-icon-btn.ctl-stop { color: var(--color-red); border-color: rgba(239, 68, 68, 0.4); }
+.ctl-icon-btn.ctl-stop:hover { background: rgba(239, 68, 68, 0.12); }
 .ctl-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 10px; }
 .ctl-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 0.75rem; color: var(--text-muted); min-width: 0; }
 .ctl-grid input, .ctl-grid select { width: 100%; }
 .ctl-apply { display: flex; align-items: flex-end; }
 .ctl-apply .btn-primary { width: 100%; justify-content: center; }
 .ctl-outputs { display: flex; flex-direction: column; gap: 8px; }
-.ctl-output { display: flex; align-items: center; gap: 10px; padding: 0.6rem 0.75rem; border: 1px solid var(--panel-border); border-radius: 10px; font-size: 0.85rem; }
-.ctl-output-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
-.ctl-output > button { flex-shrink: 0; white-space: nowrap; }
-.ctl-url { display: flex; gap: 6px; }
-.ctl-url input { flex: 1; min-width: 0; font-size: 0.8rem; padding: 5px 8px; }
-.ctl-url button { padding: 5px 9px; }
-.ctl-url-text { overflow-wrap: anywhere; }
-.ctl-inputs { display: flex; flex-direction: column; gap: 10px; margin-top: 1rem; }
+/* Fila de emisión: [protocolo/modo] [piloto] [ruta | puerto] [ms] [guardar][play/stop] */
+.ctl-output { display: grid; grid-template-columns: 64px 10px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 0.5rem 0.6rem; border: 1px solid var(--panel-border); border-radius: 10px; font-size: 0.85rem; }
+.ctl-out-badge { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; padding: 4px 0; border-radius: 6px; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.03em; line-height: 1.1; }
+.ctl-out-badge small { font-size: 0.58rem; font-weight: 600; opacity: 0.85; letter-spacing: 0.05em; }
+.ctl-out-badge.srt { background: rgba(139, 92, 246, 0.2); color: #c4b5fd; border: 1px solid rgba(139, 92, 246, 0.3); }
+.ctl-out-badge.rtmp { background: rgba(239, 68, 68, 0.2); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.3); }
+.ctl-out-badge:not(.srt):not(.rtmp) { background: rgba(255,255,255,0.06); color: var(--text-muted); border: 1px solid var(--panel-border); }
+.ctl-led { width: 10px; height: 10px; border-radius: 50%; background: var(--text-muted); opacity: 0.55; }
+.ctl-led.on { background: var(--color-green); opacity: 1; box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.18); }
+.ctl-out-field { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.ctl-out-field input { font-size: 0.8rem; padding: 6px 8px; height: 32px; }
+.ctl-out-field .ctl-field-url { flex: 1; min-width: 0; }
+.ctl-url-text { overflow-wrap: anywhere; font-size: 0.8rem; }
+/* Campo con etiqueta pegada (Puerto | 9000, 500 | ms) */
+.ctl-field { display: inline-flex; align-items: stretch; flex-shrink: 0; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; overflow: hidden; background: rgba(0,0,0,0.2); }
+.ctl-field input { border: none !important; border-radius: 0 !important; background: transparent !important; width: 86px !important; }
+.ctl-field-ms input { width: 64px !important; text-align: right; }
+.ctl-field:focus-within { border-color: var(--accent-blue); }
+.ctl-addon { display: flex; align-items: center; padding: 0 8px; font-size: 0.72rem; color: var(--text-muted); background: rgba(255,255,255,0.04); }
+.ctl-out-btns { display: flex; gap: 6px; }
+.ctl-icon-spacer { width: 32px; height: 32px; }
+/* Ventana de control: cabecera fija y contenido con su propio scroll (la X nunca se va) */
+.modal.ctl-modal { display: flex; flex-direction: column; overflow: hidden; }
+.ctl-head { flex-shrink: 0; padding-bottom: 0.85rem; margin-bottom: 0.25rem; border-bottom: 1px solid var(--panel-border); }
+.ctl-head .modal-header { margin-bottom: 1rem; }
+.ctl-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; margin-right: -0.5rem; padding-right: 0.5rem; }
+/* Resumen a la izquierda y los botones de icono a la derecha, en la misma franja */
+#ctl_top { display: flex; align-items: flex-end; gap: 12px; }
+#ctl_top .enc-rows { flex: 1; min-width: 0; }
+.ctl-toolbar { display: flex; gap: 6px; flex-shrink: 0; }
+.ctl-inputs { display: flex; flex-direction: column; gap: 10px; margin-top: 0.75rem; }
 .ctl-input { border: 1px solid var(--panel-border); border-radius: 12px; padding: 0.75rem 0.85rem; }
 .ctl-input > summary { cursor: pointer; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; font-size: 0.9rem; list-style: none; }
 .ctl-input > summary::-webkit-details-marker { display: none; }
@@ -586,7 +643,10 @@ input:checked + .slider:before { transform: translateX(18px); }
 .ctl-danger { color: var(--color-red); border-color: rgba(239, 68, 68, 0.35); margin-right: auto; }
 @media (max-width: 560px) {
     .ctl-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .ctl-output { flex-wrap: wrap; }
+    /* Protocolo, piloto y botones arriba; la ruta (y los ms) debajo a todo el ancho */
+    .ctl-output { grid-template-columns: 64px 10px 1fr auto; row-gap: 8px; }
+    .ctl-out-btns { grid-column: 4; grid-row: 1; }
+    .ctl-out-field { grid-column: 1 / -1; grid-row: 2; }
 }
 .modal-actions a.btn-primary { text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
 @media (max-width: 768px) {
@@ -826,8 +886,12 @@ body { font-size: var(--fs-body); -webkit-font-smoothing: antialiased; -moz-osx-
         max-height: 92vh; max-height: 92dvh; padding: 0.5rem 1.25rem calc(1.25rem + env(safe-area-inset-bottom));
         border-bottom: none; animation: sheetIn 420ms cubic-bezier(0.32, 0.72, 0, 1);
         will-change: transform;
+        --mpy: 0.5rem; --mpx: 1.25rem;
     }
-    .sheet-grabber { display: block; width: 36px; height: 5px; border-radius: 3px; background: rgba(255,255,255,0.25); margin: 0 auto 0.75rem; touch-action: none; cursor: grab; }
+    .sheet-grabber { display: block; width: 36px; height: 5px; border-radius: 3px; background: rgba(255,255,255,0.25); margin: 0 auto 0.25rem; touch-action: none; cursor: grab; }
+    /* En la hoja el tirador va encima: la cabecera queda debajo de él y se fija arriba al desplazar */
+    .modal:not(.ctl-modal) > .modal-header { margin-top: 0; padding-top: 0.5rem; border-radius: 0; }
+    .ctl-head { padding-top: 0.5rem; }
     .modal-header { touch-action: none; }
     .modal-overlay.closing .modal { animation: sheetOut 260ms cubic-bezier(0.32, 0.72, 0, 1) forwards; }
     .quality-bar { min-width: 120px; }
@@ -874,7 +938,7 @@ body { font-size: var(--fs-body); -webkit-font-smoothing: antialiased; -moz-osx-
 .view-grid .thumb-container > div:last-child { flex: 1 1 100%; }
 .view-grid .thumb-container > div:last-child > p:nth-of-type(2) { display: none; } /* la ayuda larga no cabe en la tesela */
 .view-grid .output-row { border-top: 1px solid var(--surface-border); }
-@media (max-width: 768px) { .view-toggle { display: none; } }
+@media (max-width: 768px) { .view-toggle { display: none; } .view-toggle.expand-toggle:not([hidden]) { display: inline-flex; } }
 
 /* ---------- Grabaciones: discos con capacidad y lista agrupada por día ---------- */
 .rec-section { background: var(--surface-1); border: 1px solid var(--surface-border); border-radius: var(--radius); box-shadow: var(--surface-highlight), var(--shadow-sm); padding: 1.25rem 1.35rem; margin-bottom: 1.25rem; }

@@ -54,6 +54,10 @@
                     <p id="topbar-subtitle">Entradas y salidas en directo</p>
                 </div>
                 <div class="topbar-actions">
+                    <div class="view-toggle expand-toggle" id="expand-toggle" role="group" aria-label="Desplegar las señales">
+                        <button type="button" title="Expandir todas las señales" aria-label="Expandir todas las señales" onclick="setAllStreamCards(true)"><i class="fa-solid fa-up-right-and-down-left-from-center"></i></button>
+                        <button type="button" title="Contraer todas las señales" aria-label="Contraer todas las señales" onclick="setAllStreamCards(false)"><i class="fa-solid fa-down-left-and-up-right-to-center"></i></button>
+                    </div>
                     <div class="view-toggle" id="view-toggle" role="group" aria-label="Vista de las señales">
                         <button type="button" data-view="list" aria-pressed="true" title="Lista" onclick="setStreamsView('list')"><i class="fa-solid fa-list"></i></button>
                         <button type="button" data-view="grid" aria-pressed="false" title="Mosaico" onclick="setStreamsView('grid')"><i class="fa-solid fa-table-cells-large"></i></button>
@@ -556,12 +560,17 @@
 
     <!-- Encoder Control Modal -->
     <div class="modal-overlay" id="encoderControlModal">
-        <div class="modal" style="width: 640px;">
-            <div class="modal-header">
-                <h3 id="ctl_title">Control del encoder</h3>
-                <button class="close-btn" onclick="closeModal('encoderControlModal')"><i class="fa-solid fa-xmark"></i></button>
+        <!-- Cabecera fija (título, resumen y botones) y debajo el contenido con su propio scroll:
+             con muchas entradas la X y los controles generales siguen siempre a la vista -->
+        <div class="modal ctl-modal" style="width: 640px;">
+            <div class="ctl-head">
+                <div class="modal-header">
+                    <h3 id="ctl_title">Control del encoder</h3>
+                    <button class="close-btn" onclick="closeModal('encoderControlModal')" aria-label="Cerrar"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+                <div id="ctl_top"></div>
             </div>
-            <div id="ctl_body"></div>
+            <div id="ctl_body" class="ctl-scroll"></div>
         </div>
     </div>
 

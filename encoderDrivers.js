@@ -209,15 +209,20 @@ function hisiStream(input, index, o) {
 function hisiOutputs(input, index, o) {
     const out = [];
     const id = (key) => `${input}:${index}:${key}`;
-    if ('srt_publish_enable' in o) out.push({ id: id('srt_publish'), kind: 'srt', label: 'SRT caller', url: o.srt_publish_uri || '', enabled: o.srt_publish_enable === '1', editable: true });
-    if ('srt_enable' in o) out.push({ id: id('srt'), kind: 'srt', label: 'SRT listener', url: o.srt_port ? `puerto ${o.srt_port}` : '', enabled: o.srt_enable === '1', editable: false });
-    if ('rtmp_publish_enable' in o) out.push({ id: id('rtmp_publish'), kind: 'rtmp', label: 'RTMP push', url: o.rtmp_publish_uri || '', enabled: o.rtmp_publish_enable === '1', editable: true });
+    // mode: caller/listener (SRT), push/pull (RTMP). editKind: qué se puede cambiar
+    // ('url' destino del caller/push, 'port' puerto de escucha del listener)
+    if ('srt_publish_enable' in o) out.push({ id: id('srt_publish'), kind: 'srt', mode: 'caller', label: 'SRT caller', url: o.srt_publish_uri || '', enabled: o.srt_publish_enable === '1', editable: true, editKind: 'url' });
+    if ('srt_enable' in o) {
+        const port = Number(o.srt_port) || null;
+        out.push({ id: id('srt'), kind: 'srt', mode: 'listener', label: 'SRT listener', url: port ? `puerto ${port}` : '', port, enabled: o.srt_enable === '1', editable: 'srt_port' in o, editKind: 'port' });
+    }
+    if ('rtmp_publish_enable' in o) out.push({ id: id('rtmp_publish'), kind: 'rtmp', mode: 'push', label: 'RTMP push', url: o.rtmp_publish_uri || '', enabled: o.rtmp_publish_enable === '1', editable: true, editKind: 'url' });
     return out;
 }
 
 const HISI_OUTPUT_KEYS = {
     srt_publish: { enable: 'srt_publish_enable', url: 'srt_publish_uri', scheme: /^srt:\/\//i },
-    srt: { enable: 'srt_enable' },
+    srt: { enable: 'srt_enable', port: 'srt_port' },
     rtmp_publish: { enable: 'rtmp_publish_enable', url: 'rtmp_publish_uri', scheme: /^rtmps?:\/\//i }
 };
 
@@ -296,11 +301,18 @@ const hisilicon = {
             if (!def.scheme.test(p.url)) throw new ApiError('La URL no corresponde al protocolo de la salida', 'EINVAL');
             q[def.url] = p.url;
         }
+        if (p.port !== undefined) {
+            if (!def.port) throw new ApiError('Esta salida no tiene puerto de escucha', 'EINVAL');
+            q[def.port] = p.port;
+        }
         if (p.enabled !== undefined) q[def.enable] = p.enabled ? 1 : 0;
         await hisiGet(enc, '/set_output', q);
         const after = await hisiOutputXml(enc, input, index);
         if (p.enabled !== undefined && after[def.enable] !== undefined && after[def.enable] !== (p.enabled ? '1' : '0')) {
             throw new ApiError('El encoder no cambió el estado de la salida', 'ENOTAPPLIED');
+        }
+        if (p.port !== undefined && after[def.port] !== undefined && after[def.port] !== String(p.port)) {
+            throw new ApiError(`El encoder no aceptó el puerto ${p.port}`, 'ENOTAPPLIED');
         }
     },
 
@@ -380,9 +392,13 @@ function zowiePublishList(data) {
     return found.map(p => {
         const proto = String(p.protocol || p.service || '').toLowerCase();
         const url = String(p.url || '');
+        const kind = proto.includes('srt') || /^srt:/i.test(url) ? 'srt' : proto.includes('rtmp') || /^rtmps?:/i.test(url) ? 'rtmp' : (proto || 'stream');
+        // Las emisiones (publish) de ZowieBox salen del equipo: SRT en caller, RTMP en push
+        const mode = /mode=listener/i.test(url) ? 'listener' : kind === 'srt' ? 'caller' : kind === 'rtmp' ? 'push' : '';
         return {
             id: `pub:${p.index}`,
-            kind: proto.includes('srt') || /^srt:/i.test(url) ? 'srt' : proto.includes('rtmp') || /^rtmps?:/i.test(url) ? 'rtmp' : (proto || 'stream'),
+            kind,
+            mode,
             label: p.name || p.desc || p.service || `Emisión ${p.index}`,
             url,
             enabled: Number(p.switch) === 1,
@@ -468,7 +484,7 @@ const zowietek = {
     async setOutput(enc, outputId, p) {
         const m = /^pub:(\d+)$/.exec(String(outputId));
         if (!m) throw new ApiError('Salida no válida', 'EINVAL');
-        if (p.url !== undefined) throw new ApiError('En Zowietek la URL de una emisión se cambia desde su web', 'EINVAL');
+        if (p.url !== undefined || p.port !== undefined) throw new ApiError('En Zowietek el destino de una emisión se cambia desde su web', 'EINVAL');
         if (p.enabled === undefined) return;
         await zowie(enc, '/streamplay?option=setinfo', { group: 'publish', opt: 'update_publish_switch', data: { index: Number(m[1]), switch: p.enabled ? 1 : 0 } });
     },

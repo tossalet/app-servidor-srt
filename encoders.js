@@ -709,9 +709,16 @@ function registerRoutes(app) {
             if (!url || url.length > 512 || /[\s"'<>]/.test(url)) throw new drivers.ApiError('URL no válida', 'EINVAL');
             p.url = url;
         }
+        if (body.port !== undefined) {
+            // El puerto de escucha también decide a dónde hay que conectarse: como la URL, sólo admin
+            if (req.user.role !== auth.ROLE_ADMIN) throw new drivers.ApiError('Sólo un administrador puede cambiar el puerto de escucha del encoder', 'EINVAL');
+            const port = Number(body.port);
+            if (!Number.isInteger(port) || port < 1 || port > 65535) throw new drivers.ApiError('Puerto: entre 1 y 65535', 'EINVAL');
+            p.port = port;
+        }
         if (!Object.keys(p).length) throw new drivers.ApiError('No hay cambios que aplicar', 'EINVAL');
         await api.setOutput(enc, req.params.oid, p);
-        return `${req.params.oid}${p.enabled !== undefined ? (p.enabled ? ' activada' : ' parada') : ''}${p.url ? ` → ${p.url.replace(/passphrase=[^&]*/i, 'passphrase=***')}` : ''}`;
+        return `${req.params.oid}${p.enabled !== undefined ? (p.enabled ? ' activada' : ' parada') : ''}${p.url ? ` → ${p.url.replace(/passphrase=[^&]*/i, 'passphrase=***')}` : ''}${p.port ? ` → puerto ${p.port}` : ''}`;
     }));
 
     app.post('/api/encoders/:id/control/reboot', order('reinicia el encoder', async (req, api, enc) => {
