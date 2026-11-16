@@ -153,7 +153,7 @@ Botón **Control** en la tarjeta del encoder: el panel habla con la API del enco
 
 **Encoders de varias entradas** (p. ej. URAY de 4 HDMI): en **Editar**, elige el número de entradas y la señal SRT del servidor que recibe cada una (Entrada 1 → «Estadio HDMI 1»…). Cada entrada envía su propio SRT, así que dos entradas no pueden ir a la misma señal.
 
-**Encoders de los operadores:** en **Ajustes → Usuarios → Editar**, el administrador marca en «Encoders asignados» qué encoders controla cada operador. El operador ve esos encoders enteros (todas sus entradas), pero solo con el botón **Control**: no abre su web por el proxy, ni ve la IP, la VPN o las credenciales, ni puede editarlos o borrarlos. Tener asignada la señal a la que llega un encoder ya no basta para verlo.
+**Encoders de los operadores:** en **Ajustes → Usuarios → Editar**, el administrador marca en «Encoders asignados» qué encoders controla cada operador. En los encoders de varias entradas se marcan las entradas concretas (E1, E2…): el operador controla el main y el sub de esas entradas y solo ve esas (marcar el encoder entero incluye también las entradas que se añadan después). Lo ve solo con el botón **Control**: no abre su web por el proxy, ni ve la IP, la VPN o las credenciales, ni puede editarlos o borrarlos. Tener asignada la señal a la que llega un encoder ya no basta para verlo.
 
 Fabricantes, en **Editar → Control por API** (por defecto, *Detectar automáticamente*):
 

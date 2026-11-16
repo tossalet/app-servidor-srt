@@ -134,6 +134,8 @@ function initDB() {
             encoder_id INTEGER NOT NULL,
             PRIMARY KEY (username, encoder_id)
         )`);
+        // Entradas del encoder que controla (JSON [0, 2...]); '' = todas, también las que se añadan
+        db.run("ALTER TABLE encoder_access ADD COLUMN inputs TEXT NOT NULL DEFAULT ''", () => {});
         db.run(`UPDATE inputs SET owner = (SELECT username FROM users WHERE role = 4 ORDER BY (username = 'admin') DESC, username LIMIT 1) WHERE owner = ''`);
         db.run(`INSERT INTO ports (chanMin, chanMax, udpMin, udpMax)
                 SELECT 1, 20000, 1024, 49151 WHERE NOT EXISTS (SELECT 1 FROM ports)`);

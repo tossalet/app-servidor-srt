@@ -22,7 +22,7 @@ async function reload() {
         dbAll('SELECT id, channel FROM outputs'),
         dbAll('SELECT username, channel FROM input_access'),
         dbAll('SELECT id, channel, input_channels FROM encoders'),
-        dbAll('SELECT username, encoder_id FROM encoder_access'),
+        dbAll('SELECT username, encoder_id, inputs FROM encoder_access'),
     ]);
     state.reset({ inputs, outputs, grants, encoders, encoderGrants });
 }
@@ -97,12 +97,15 @@ async function setGrants(username, channels) {
     }
 }
 
-// Sustituye los encoders asignados al operador (mismo criterio que setGrants)
-async function setEncoderGrants(username, ids) {
+// Sustituye los encoders asignados al operador (mismo criterio que setGrants).
+// list: [{ id, inputs: null (todas) | [0, 2...] }]
+async function setEncoderGrants(username, list) {
+    const rows = list.map(g => ({ id: g.id, inputs: g.inputs === null ? '' : JSON.stringify(g.inputs) }));
     try {
         await dbRun('DELETE FROM encoder_access WHERE username = ?', [username]);
-        await dbRun('INSERT OR IGNORE INTO encoder_access (username, encoder_id) SELECT ?, value FROM json_each(?)',
-            [username, JSON.stringify([...new Set(ids)])]);
+        await dbRun(`INSERT OR IGNORE INTO encoder_access (username, encoder_id, inputs)
+                     SELECT ?, json_extract(value, '$.id'), json_extract(value, '$.inputs') FROM json_each(?)`,
+            [username, JSON.stringify(rows)]);
     } finally {
         await reload();
     }

@@ -527,9 +527,15 @@ function publicEncoder(enc, user) {
     const out = { ...rest, channels, api_has_pass: !!api_pass, proxy_port: PROXY_BASE + enc.proxy_slot, vpn: !!enc.vpn_pubkey, status: status.get(enc.id) || null };
     if (user && user.role !== auth.ROLE_ADMIN) { // el operador no ve cómo llegar al encoder
         for (const k of ['host', 'web_port', 'vpn_ip', 'vpn_lan', 'vpn_pubkey', 'api_user', 'api_has_pass']) delete out[k];
-        // Ve el encoder entero (se lo ha asignado el admin); de la VPN sólo si está arriba
+        // Sólo las entradas que le ha asignado el admin (o todas); de la VPN sólo si está arriba
         delete out.proxy_port;
-        out.status = operatorEncoderStatus(out.status, null);
+        const visible = require('./access').visibleEncoderInputs(user, enc.id);
+        if (visible) {
+            out.channels = channels.map((c, i) => (visible.has(i) ? c : null));
+            out.channel = out.channels[0];
+            out.visible_inputs = [...visible].sort((a, b) => a - b);
+        }
+        out.status = operatorEncoderStatus(out.status, visible);
     }
     return out;
 }

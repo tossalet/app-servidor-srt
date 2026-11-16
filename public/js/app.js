@@ -1971,11 +1971,55 @@ async function loadUserAccess(username) {
     }).join('') : '<div style="color:var(--text-muted); font-size:0.85rem;">No hay entradas.</div>';
     group.style.display = '';
 
-    document.getElementById('usr_enc_list').innerHTML = encoderList.length ? encoderList.map(e => `<label style="display:flex; align-items:center; gap:8px; font-size:0.85rem; color:var(--text-main); padding:3px 0;">
-            <input type="checkbox" value="${e.id}" ${encAssigned.includes(e.id) ? 'checked' : ''} style="width:auto;">
-            ${escapeHtml(e.name)} <span style="color:var(--text-muted); font-size:0.75rem;">${escapeHtml(e.model || '')}</span>
-        </label>`).join('') : '<div style="color:var(--text-muted); font-size:0.85rem;">No hay encoders.</div>';
+    // Cada encoder entero, o en los de varias entradas sólo algunas (cada una con su main y su sub)
+    document.getElementById('usr_enc_list').innerHTML = encoderList.length ? encoderList.map(e => {
+        const g = encAssigned.find(x => x.id === e.id);
+        const n = encoderChannels(e).length;
+        const has = (k) => !!g && (g.inputs === null || g.inputs.includes(k));
+        const ins = n > 1 ? `<div class="usr-enc-inputs">${Array.from({ length: n }, (_, k) => {
+            const ch = encoderChannels(e)[k];
+            const srv = ch !== null ? inputs.find(i => i.channel == ch) : null;
+            return `<label title="Main y sub de la entrada ${k + 1}"><input type="checkbox" data-input="${k}" ${has(k) ? 'checked' : ''} onchange="usrEncInputChanged(this)"> E${k + 1}${srv ? ` <span class="enc-muted">${escapeHtml(srv.name)}</span>` : ''}</label>`;
+        }).join('')}</div>` : '';
+        return `<div class="usr-enc" data-enc="${e.id}" data-inputs="${n}">
+            <label class="usr-enc-main">
+                <input type="checkbox" class="usr-enc-all" ${g ? 'checked' : ''} onchange="usrEncAllChanged(this)">
+                ${escapeHtml(e.name)} <span class="enc-muted" style="font-size:0.75rem;">${escapeHtml(e.model || '')}${n > 1 ? ` · ${n} entradas` : ''}</span>
+            </label>${ins}
+        </div>`;
+    }).join('') : '<div style="color:var(--text-muted); font-size:0.85rem;">No hay encoders.</div>';
+    document.querySelectorAll('#usr_enc_list .usr-enc').forEach(usrEncSync);
     document.getElementById('usr_enc_group').style.display = '';
+}
+
+// Casilla del encoder: marcada si tiene alguna entrada; a medias si no son todas
+function usrEncSync(box) {
+    const ins = [...box.querySelectorAll('input[data-input]')];
+    if (!ins.length) return;
+    const on = ins.filter(c => c.checked).length;
+    const all = box.querySelector('.usr-enc-all');
+    all.checked = on > 0;
+    all.indeterminate = on > 0 && on < ins.length;
+}
+function usrEncAllChanged(cb) {
+    const box = cb.closest('.usr-enc');
+    box.querySelectorAll('input[data-input]').forEach(c => { c.checked = cb.checked; });
+    usrEncSync(box);
+}
+function usrEncInputChanged(cb) {
+    usrEncSync(cb.closest('.usr-enc'));
+}
+
+// [{ id, inputs: null (todas, también las que se añadan) | [0, 2...] }]
+function usrEncGrants() {
+    return [...document.querySelectorAll('#usr_enc_list .usr-enc')].map(box => {
+        const id = Number(box.dataset.enc);
+        const ins = [...box.querySelectorAll('input[data-input]')];
+        if (!ins.length) return box.querySelector('.usr-enc-all').checked ? { id, inputs: null } : null;
+        const on = ins.filter(c => c.checked).map(c => Number(c.dataset.input));
+        if (!on.length) return null;
+        return { id, inputs: on.length === ins.length ? null : on };
+    }).filter(Boolean);
 }
 
 function openEditUser(username) {
@@ -2044,7 +2088,7 @@ async function submitUser(e) {
                 const resAcc = await fetch(`/api/users/${encodeURIComponent(username)}/access`, {
                     method: 'PUT',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ channels, encoders: [...document.querySelectorAll('#usr_enc_list input[type=checkbox]:checked')].map(c => parseInt(c.value, 10)) })
+                    body: JSON.stringify({ channels, encoders: usrEncGrants() })
                 });
                 if (!resAcc.ok) {
                     const err = await resAcc.json().catch(() => ({}));

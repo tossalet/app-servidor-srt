@@ -135,7 +135,7 @@ test('encoders asignados: el operador ve el encoder entero sólo si se lo asigna
   assert.equal(st.canSeeEncoder(ana, 99), false);
   assert.equal(st.canSeeEncoder(bob, 7), false);
   assert.equal(st.canSeeEncoder(null, 7), false);
-  assert.deepEqual(st.encodersOf('ana'), ['7']);
+  assert.deepEqual(st.encodersOf('ana'), [{ id: 7, inputs: null }]);
   assert.equal(st.visibleEncoderInputs(admin, 8), null);
 
   // La telemetría llega entera, pero sin datos de la VPN
@@ -144,6 +144,29 @@ test('encoders asignados: el operador ve el encoder entero sólo si se lo asigna
   assert.equal(seen.length, 1);
   assert.equal(seen[0].api.inputs.length, 4);
   assert.deepEqual(seen[0].vpn, { up: true, handshakeAge: 3 });
+});
+
+test('encoders asignados por entrada: main y sub de las entradas elegidas', () => {
+  const st = new AccessState();
+  st.reset({
+    inputs: [], grants: [],
+    encoders: [{ id: 7, channel: 2, input_channels: '[2,1,null,10]' }, { id: 8, channel: 1 }],
+    encoderGrants: [
+      { username: 'ana', encoder_id: 7, inputs: '[1,3]' },   // entradas 2 y 4
+      { username: 'bob', encoder_id: 7, inputs: '[]' },      // ninguna: no lo ve
+      { username: 'bob', encoder_id: 8, inputs: 'roto' }     // corrupto: falla cerrado
+    ]
+  });
+  assert.equal(st.canSeeEncoder(ana, 7), true);
+  assert.deepEqual(st.visibleEncoderInputs(ana, 7), new Set([1, 3]));
+  assert.equal(st.canSeeEncoderInput(ana, 7, 1), true);
+  assert.equal(st.canSeeEncoderInput(ana, 7, 0), false);
+  assert.deepEqual(st.encodersOf('ana'), [{ id: 7, inputs: [1, 3] }]);
+  assert.equal(st.canSeeEncoder(bob, 7), false);
+  assert.equal(st.canSeeEncoder(bob, 8), false);
+
+  const status = { id: 7, api: { ok: true, inputs: [{ id: 0 }, { id: 1 }, { id: 2 }, { id: 3 }] } };
+  assert.deepEqual(st.filterFor(ana, 'encoders_status', [status])[0].api.inputs.map(i => i.id), [1, 3]);
 });
 
 test('encoderChannelsOf', () => {

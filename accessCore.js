@@ -34,6 +34,17 @@ function encoderChannelsOf(row) {
   return list.map(c => (c === null || c === undefined || c === '' ? null : String(c)));
 }
 
+// Columna inputs de encoder_access: '' = todas las entradas; JSON [0, 2...] = esas.
+// Un valor corrupto no da ninguna (falla cerrado).
+function encoderGrantInputs(raw) {
+  if (raw === undefined || raw === null || raw === '') return null;
+  try {
+    const v = JSON.parse(raw);
+    if (Array.isArray(v)) return new Set(v.map(Number).filter(n => Number.isInteger(n) && n >= 0 && n < 64));
+  } catch { /* corrupta: ninguna entrada */ }
+  return new Set();
+}
+
 class AccessState {
   constructor() {
     this.reset({});
@@ -45,7 +56,7 @@ class AccessState {
     this.grants = new Map();    // username -> Set<canal>
     this.outputs = new Map();   // id salida -> canal
     this.encoders = new Map();  // id encoder -> [canal | null por entrada]
-    this.encGrants = new Map(); // username -> Set<id encoder>
+    this.encGrants = new Map(); // username -> Map<id encoder, Set<entrada> | null (todas)>
     for (const i of inputs) this.owners.set(String(i.channel), i.owner);
     for (const o of outputs) this.outputs.set(String(o.id), String(o.channel));
     for (const g of grants) {
@@ -57,8 +68,8 @@ class AccessState {
     }
     for (const g of encoderGrants) {
       if (!this.encoders.has(String(g.encoder_id))) continue; // encoder borrado
-      if (!this.encGrants.has(g.username)) this.encGrants.set(g.username, new Set());
-      this.encGrants.get(g.username).add(String(g.encoder_id));
+      if (!this.encGrants.has(g.username)) this.encGrants.set(g.username, new Map());
+      this.encGrants.get(g.username).set(String(g.encoder_id), encoderGrantInputs(g.inputs));
     }
   }
 
@@ -82,18 +93,21 @@ class AccessState {
     return ch !== undefined && this.canSee(user, ch);
   }
 
-  // Un operador ve un encoder sólo si el admin se lo ha asignado (falla cerrado)
+  // Un operador ve un encoder sólo si el admin le ha asignado alguna de sus entradas (falla cerrado)
   canSeeEncoder(user, encoderId) {
     if (this._isAdmin(user)) return true;
-    if (!user) return false;
-    const g = this.encGrants.get(user.username);
-    return !!g && g.has(String(encoderId));
+    const v = this.visibleEncoderInputs(user, encoderId);
+    return v === null || v.size > 0;
   }
 
-  // Entradas visibles del encoder: null = todas (admin u operador con el encoder asignado),
-  // Set vacío = ninguna
+  // Entradas del encoder (0, 1...) que controla el usuario, cada una con su main y su sub:
+  // null = todas (admin, o el encoder asignado entero); Set vacío = ninguna
   visibleEncoderInputs(user, encoderId) {
-    return this.canSeeEncoder(user, encoderId) ? null : new Set();
+    if (this._isAdmin(user)) return null;
+    const g = user && this.encGrants.get(user.username);
+    if (!g || !g.has(String(encoderId))) return new Set();
+    const inputs = g.get(String(encoderId));
+    return inputs === null ? null : new Set(inputs);
   }
 
   canSeeEncoderInput(user, encoderId, input) {
@@ -101,9 +115,10 @@ class AccessState {
     return v === null || v.has(Number(input));
   }
 
+  // [{ id, inputs: null (todas) | [0, 2...] }]
   encodersOf(username) {
     const g = this.encGrants.get(username);
-    return g ? [...g] : [];
+    return g ? [...g].map(([id, inputs]) => ({ id: Number(id), inputs: inputs === null ? null : [...inputs].sort((a, b) => a - b) })) : [];
   }
 
   // null = todos (admin)

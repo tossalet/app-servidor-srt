@@ -1061,3 +1061,11 @@ body { font-size: var(--fs-body); -webkit-font-smoothing: antialiased; -moz-osx-
 .port-hint { display: block; margin-top: 5px; font-size: 0.75rem; line-height: 1.35; }
 .port-hint.is-error { color: var(--color-red); }
 .port-hint.is-warning { color: var(--color-yellow); }
+
+/* Ficha de usuario: encoders asignados, enteros o por entradas (main + sub de cada una) */
+.usr-enc { padding: 3px 0; }
+.usr-enc label { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: var(--text-main); }
+.usr-enc input[type=checkbox] { width: auto; }
+.usr-enc-inputs { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 3px 0 2px 26px; }
+.usr-enc-inputs label { font-size: 0.8rem; }
+.usr-enc-inputs .enc-muted { font-size: 0.72rem; }

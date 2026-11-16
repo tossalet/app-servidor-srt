@@ -379,7 +379,7 @@ function registerRoutes(app, io) {
         res.json({
             owned: access.ownedBy(u.username).map(Number),
             assigned: access.grantsOf(u.username).map(Number),
-            encoders: access.encodersOf(u.username).map(Number),
+            encoders: access.encodersOf(u.username),
         });
     });
 
@@ -399,15 +399,27 @@ function registerRoutes(app, io) {
         await access.setGrants(u.username, channels);
         console.log(`[AUTH] ${req.user.username} asignó a ${u.username} las entradas [${channels.join(', ')}]`);
         if (encList !== undefined) {
-            // Encoders: los ve enteros y sólo con la ventana Control (sin su web, VPN ni edición)
+            // Encoders: sólo con la ventana Control (sin su web, VPN ni edición). Cada uno entero
+            // (inputs null) o sólo algunas entradas, cada una con su main y su sub.
+            // Formato: [id] o [{ id, inputs: null | [0, 2...] }]
             const encIds = new Set((await all('SELECT id FROM encoders')).map(r => Number(r.id)));
-            const ids = encList.map(Number).filter(id => Number.isInteger(id) && encIds.has(id));
-            await access.setEncoderGrants(u.username, ids);
-            console.log(`[AUTH] ${req.user.username} asignó a ${u.username} los encoders [${ids.join(', ')}]`);
+            const grants = [];
+            for (const item of encList) {
+                const id = Number(item && typeof item === 'object' ? item.id : item);
+                if (!Number.isInteger(id) || !encIds.has(id) || grants.some(g => g.id === id)) continue;
+                let inputs = item && typeof item === 'object' && Array.isArray(item.inputs) ? item.inputs.map(Number) : null;
+                if (inputs) {
+                    inputs = [...new Set(inputs.filter(n => Number.isInteger(n) && n >= 0 && n < 64))].sort((a, b) => a - b);
+                    if (!inputs.length) continue; // ninguna entrada = no asignado
+                }
+                grants.push({ id, inputs });
+            }
+            await access.setEncoderGrants(u.username, grants);
+            console.log(`[AUTH] ${req.user.username} asignó a ${u.username} los encoders [${grants.map(g => g.inputs ? `${g.id} (entradas ${g.inputs.map(n => n + 1).join(',')})` : g.id).join(', ')}]`);
             require('./encoders').notify();
         }
         io.emit('db_update', { event: 'inputs_changed' });
-        res.json({ assigned: access.grantsOf(u.username).map(Number), encoders: access.encodersOf(u.username).map(Number) });
+        res.json({ assigned: access.grantsOf(u.username).map(Number), encoders: access.encodersOf(u.username) });
     });
 }
 
