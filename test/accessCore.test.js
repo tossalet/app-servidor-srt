@@ -8,7 +8,8 @@ function crear() {
     inputs: [{ channel: 1, owner: 'ana' }, { channel: 2, owner: 'admin' }, { channel: 10, owner: 'admin' }],
     outputs: [{ id: 5, channel: 1 }, { id: 6, channel: 2 }],
     grants: [{ username: 'ana', channel: 10 }],
-    encoders: [{ id: 1, channel: 2 }, { id: 2, channel: 10 }, { id: 3, channel: null }]
+    encoders: [{ id: 1, channel: 2 }, { id: 2, channel: 10 }, { id: 3, channel: null }],
+    encoderGrants: [{ username: 'ana', encoder_id: 2 }]
   });
   return st;
 }
@@ -115,35 +116,34 @@ test('filterFor encoders_status: el operador no recibe datos de la VPN', () => {
   assert.deepEqual(st.filterFor(ana, 'encoders_status', [{ id: 2, vpn: null }]), [{ id: 2, vpn: null }]);
 });
 
-test('encoder de 4 entradas: el operador ve sólo las entradas de sus señales', () => {
+test('encoders asignados: el operador ve el encoder entero sólo si se lo asignan', () => {
   const st = new AccessState();
   st.reset({
-    inputs: [{ channel: 1, owner: 'ana' }, { channel: 2, owner: 'admin' }, { channel: 10, owner: 'admin' }, { channel: 11, owner: 'admin' }],
-    grants: [{ username: 'ana', channel: 10 }],
+    inputs: [{ channel: 1, owner: 'ana' }, { channel: 2, owner: 'admin' }],
+    grants: [],
     encoders: [
-      { id: 7, channel: 2, input_channels: '[2,1,null,10]' },        // entradas 2 (canal 1) y 4 (canal 10) son de ana
-      { id: 8, channel: 11, input_channels: '[11,null]' },           // nada de ana
-      { id: 9, channel: 1, input_channels: '' },                     // una entrada, formato antiguo
-      { id: 10, channel: 2, input_channels: 'roto' }                 // JSON corrupto: como una entrada
-    ]
+      { id: 7, channel: 2, input_channels: '[2,1,null,10]' },   // 4 entradas
+      { id: 8, channel: 1, input_channels: '' }                 // lleva la señal de ana, pero no está asignado
+    ],
+    encoderGrants: [{ username: 'ana', encoder_id: 7 }, { username: 'ana', encoder_id: 99 }] // 99: encoder borrado
   });
   assert.equal(st.canSeeEncoder(ana, 7), true);
-  assert.deepEqual(st.visibleEncoderInputs(ana, 7), new Set([1, 3]));
-  assert.equal(st.canSeeEncoderInput(ana, 7, 0), false);
-  assert.equal(st.canSeeEncoderInput(ana, 7, 3), true);
-  assert.equal(st.canSeeEncoderInput(ana, 7, 2), false); // sin señal vinculada: falla cerrado
-  assert.equal(st.canSeeEncoder(ana, 8), false);
-  assert.deepEqual(st.visibleEncoderInputs(ana, 9), new Set([0]));
-  assert.equal(st.canSeeEncoder(ana, 10), false);
-  assert.equal(st.visibleEncoderInputs(admin, 7), null);
-  assert.equal(st.canSeeEncoderInput(admin, 7, 2), true);
+  assert.equal(st.visibleEncoderInputs(ana, 7), null);             // todas sus entradas
+  assert.equal(st.canSeeEncoderInput(ana, 7, 2), true);
+  assert.equal(st.canSeeEncoder(ana, 8), false);                   // tener la señal ya no basta
+  assert.equal(st.canSeeEncoderInput(ana, 8, 0), false);
+  assert.equal(st.canSeeEncoder(ana, 99), false);
+  assert.equal(st.canSeeEncoder(bob, 7), false);
+  assert.equal(st.canSeeEncoder(null, 7), false);
+  assert.deepEqual(st.encodersOf('ana'), ['7']);
+  assert.equal(st.visibleEncoderInputs(admin, 8), null);
 
-  // La telemetría de la API llega al operador sólo con sus entradas
-  const status = { id: 7, online: true, api: { ok: true, inputs: [{ id: 0, signal: true }, { id: 1, signal: false }, { id: 2 }, { id: 3, signal: true }] } };
-  const [seen] = st.filterFor(ana, 'encoders_status', [status, { id: 8 }]);
-  assert.deepEqual(seen.api.inputs.map(i => i.id), [1, 3]);
-  assert.equal(status.api.inputs.length, 4); // no muta el original
-  assert.equal(st.filterFor(admin, 'encoders_status', [status])[0].api.inputs.length, 4);
+  // La telemetría llega entera, pero sin datos de la VPN
+  const status = { id: 7, online: true, vpn: { up: true, handshakeAge: 3, endpoint: '198.51.100.7:51820' }, api: { ok: true, inputs: [{ id: 0 }, { id: 1 }, { id: 2 }, { id: 3 }] } };
+  const seen = st.filterFor(ana, 'encoders_status', [status, { id: 8 }]);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].api.inputs.length, 4);
+  assert.deepEqual(seen[0].vpn, { up: true, handshakeAge: 3 });
 });
 
 test('encoderChannelsOf', () => {

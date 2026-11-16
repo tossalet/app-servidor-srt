@@ -17,13 +17,14 @@ const dbAll = (sql, p = []) => new Promise((ok, ko) => db.all(sql, p, (e, r) => 
 const dbRun = (sql, p = []) => new Promise((ok, ko) => db.run(sql, p, function (e) { e ? ko(e) : ok(this); }));
 
 async function reload() {
-    const [inputs, outputs, grants, encoders] = await Promise.all([
+    const [inputs, outputs, grants, encoders, encoderGrants] = await Promise.all([
         dbAll('SELECT channel, owner FROM inputs'),
         dbAll('SELECT id, channel FROM outputs'),
         dbAll('SELECT username, channel FROM input_access'),
         dbAll('SELECT id, channel, input_channels FROM encoders'),
+        dbAll('SELECT username, encoder_id FROM encoder_access'),
     ]);
-    state.reset({ inputs, outputs, grants, encoders });
+    state.reset({ inputs, outputs, grants, encoders, encoderGrants });
 }
 
 async function init() {
@@ -40,6 +41,7 @@ const visibleChannels = (user) => state.visibleChannels(user);
 const filterFor = (user, event, data) => state.filterFor(user, event, data);
 const ownedBy = (username) => state.ownedBy(username);
 const grantsOf = (username) => state.grantsOf(username);
+const encodersOf = (username) => state.encodersOf(username);
 
 /* =======================================
  *  MIDDLEWARES
@@ -95,11 +97,23 @@ async function setGrants(username, channels) {
     }
 }
 
+// Sustituye los encoders asignados al operador (mismo criterio que setGrants)
+async function setEncoderGrants(username, ids) {
+    try {
+        await dbRun('DELETE FROM encoder_access WHERE username = ?', [username]);
+        await dbRun('INSERT OR IGNORE INTO encoder_access (username, encoder_id) SELECT ?, value FROM json_each(?)',
+            [username, JSON.stringify([...new Set(ids)])]);
+    } finally {
+        await reload();
+    }
+}
+
 // Al borrar un usuario: sus asignaciones se eliminan y sus entradas pasan a heir.
 // Se llama antes de borrar la fila del usuario: si falla, no se borra y se puede repetir
 async function dropUser(username, heir) {
     try {
         await dbRun('DELETE FROM input_access WHERE username = ?', [username]);
+        await dbRun('DELETE FROM encoder_access WHERE username = ?', [username]);
         await dbRun('UPDATE inputs SET owner = ? WHERE owner = ?', [heir, username]);
     } finally {
         await reload();
@@ -116,6 +130,6 @@ module.exports = {
     init, reload, setIo, broadcast,
     canSee, canSeeOutput, canSeeEncoder, visibleEncoderInputs, canSeeEncoderInput, visibleChannels, filterFor,
     requireChannel, requireOutput,
-    setOwner, setGrants, dropUser, forgetChannel,
-    ownedBy, grantsOf,
+    setOwner, setGrants, setEncoderGrants, dropUser, forgetChannel,
+    ownedBy, grantsOf, encodersOf,
 };

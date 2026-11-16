@@ -312,8 +312,9 @@ function handleRequest(id, req, res) {
     if (!user) {
         return page(res, 401, 'Inicia sesión en el panel', `Abre el panel TSST en el puerto ${PANEL_PORT}, inicia sesión y vuelve a abrir el encoder desde la sección Encoders.`);
     }
-    if (!require('./access').canSeeEncoder(user, id)) { // require perezoso: evita ciclo de carga
-        return page(res, 404, 'Encoder no encontrado', 'Este encoder no está asignado a tu usuario.');
+    // La web del encoder es sólo para administradores: un operador usa la ventana Control del panel
+    if (user.role !== auth.ROLE_ADMIN) {
+        return page(res, 403, 'Sólo administradores', 'La web del encoder la abre un administrador. Desde el panel, en Encoders, usa el botón Control para ajustar la codificación y las emisiones.');
     }
     const { headers, origin } = forwardHeaders(req, enc);
     const lib = enc.https ? https : http;
@@ -342,7 +343,7 @@ function handleUpgrade(id, req, socket, head) {
     const enc = encoders.get(id);
     const user = sessionOk(req);
     if (!enc || !user) return socket.destroy();
-    if (!require('./access').canSeeEncoder(user, id)) return socket.destroy();
+    if (user.role !== auth.ROLE_ADMIN) return socket.destroy();
     const { headers } = forwardHeaders(req, enc);
     const opts = { host: enc.host, port: enc.web_port };
     const upstream = enc.https ? tls.connect({ ...opts, rejectUnauthorized: false, servername: isIPv4(enc.host) ? undefined : enc.host }) : net.connect(opts);
@@ -526,12 +527,9 @@ function publicEncoder(enc, user) {
     const out = { ...rest, channels, api_has_pass: !!api_pass, proxy_port: PROXY_BASE + enc.proxy_slot, vpn: !!enc.vpn_pubkey, status: status.get(enc.id) || null };
     if (user && user.role !== auth.ROLE_ADMIN) { // el operador no ve cómo llegar al encoder
         for (const k of ['host', 'web_port', 'vpn_ip', 'vpn_lan', 'vpn_pubkey', 'api_user', 'api_has_pass']) delete out[k];
-        // Sólo las entradas del encoder cuya señal ve; ni endpoint WireGuard ni contadores
-        const visible = require('./access').visibleEncoderInputs(user, enc.id);
-        out.channels = channels.map((c, i) => (visible.has(i) ? c : null));
-        out.channel = out.channels[0];
-        out.visible_inputs = [...visible];
-        out.status = operatorEncoderStatus(out.status, visible);
+        // Ve el encoder entero (se lo ha asignado el admin); de la VPN sólo si está arriba
+        delete out.proxy_port;
+        out.status = operatorEncoderStatus(out.status, null);
     }
     return out;
 }
@@ -605,6 +603,7 @@ function registerRoutes(app) {
         if (!enc) return res.status(404).json({ error: 'No encontrado' });
         await removePeer(enc);
         await dbRun('DELETE FROM encoders WHERE id = ?', [id]);
+        await dbRun('DELETE FROM encoder_access WHERE encoder_id = ?', [id]);
         await reload();
         await require('./access').reload();
         notify();
@@ -631,8 +630,9 @@ function registerRoutes(app) {
         res.json(publicEncoder(encoders.get(id)));
     }));
 
-    /* ---- Control por API: cualquier usuario que vea el encoder (ya maneja su web por el proxy).
-     *      Cambiar a dónde emite (URL) es sólo para administradores. ---- */
+    /* ---- Control por API: el admin y los operadores con el encoder asignado.
+     *      El operador ajusta la codificación, arranca/para emisiones y graba; cambiar a dónde
+     *      emite (URL, puerto) y reiniciar el equipo es sólo para administradores. ---- */
     const busy = new Set(); // una orden a la vez por encoder: estos firmwares no toleran escrituras simultáneas
     const control = (fn) => async (req, res) => {
         const id = parseInt(req.params.id, 10);
@@ -694,6 +694,13 @@ function registerRoutes(app) {
         const state = await api.state(enc);
         const { input, stream } = target(req, enc, state, { streamId: `${ref.input}:${ref.index}` });
         const p = drivers.validateStreamParams(req.body || {}, state.caps);
+        if (p.rc !== undefined && Array.isArray(stream.rcs) && stream.rcs.length && !stream.rcs.includes(p.rc)) {
+            throw new drivers.ApiError(`Este stream no admite el modo ${p.rc}`, 'EINVAL');
+        }
+        if (p.profile !== undefined) {
+            if (!(stream.profiles || []).includes(p.profile)) throw new drivers.ApiError('Este encoder no permite elegir el profile H.264', 'EINVAL');
+            if ((p.codec || stream.codec) !== 'H.264') throw new drivers.ApiError('El profile sólo se aplica en H.264', 'EINVAL');
+        }
         await api.setStream(enc, stream.id, p);
         return `entrada ${input.id + 1} · ${stream.name}: ${Object.entries(p).map(([k, v]) => `${k}=${v}`).join(' ')}`;
     }));
@@ -734,7 +741,7 @@ function registerRoutes(app) {
         return `grabación ${found.record.label}: ${command}`;
     }));
 
-    app.post('/api/encoders/:id/control/reboot', order('reinicia el encoder', async (req, api, enc) => {
+    app.post('/api/encoders/:id/control/reboot', auth.requireAdmin, order('reinicia el encoder', async (req, api, enc) => {
         await api.reboot(enc);
     }));
 
@@ -794,4 +801,4 @@ function shutdown() {
     for (const id of [...proxies.keys()]) stopProxy(id);
 }
 
-module.exports = { init, registerRoutes, addMetrics, shutdown, statusList, _test: { parseCidr, validateEncoder, stripPanelCookie } };
+module.exports = { init, registerRoutes, addMetrics, shutdown, statusList, notify, _test: { parseCidr, validateEncoder, stripPanelCookie } };

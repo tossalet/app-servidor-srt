@@ -1,6 +1,7 @@
 // Núcleo de visibilidad por entrada (puro: sin db, auth ni express).
 // Un admin ve todo; un operador ve las entradas que posee o que le han
-// asignado, y las salidas/encoders/telemetría ligados a ellas.
+// asignado, y las salidas/telemetría ligadas a ellas. Los encoders se asignan aparte:
+// un operador ve los encoders que el admin le asigna, enteros (todas sus entradas).
 // Todas las claves se normalizan a String.
 
 const ROLE_ADMIN = 4;
@@ -39,11 +40,12 @@ class AccessState {
   }
 
   // Sustituye todo el estado (se llama tras cada cambio en BD).
-  reset({ inputs = [], outputs = [], grants = [], encoders = [] } = {}) {
+  reset({ inputs = [], outputs = [], grants = [], encoders = [], encoderGrants = [] } = {}) {
     this.owners = new Map();    // canal -> username propietario
     this.grants = new Map();    // username -> Set<canal>
     this.outputs = new Map();   // id salida -> canal
     this.encoders = new Map();  // id encoder -> [canal | null por entrada]
+    this.encGrants = new Map(); // username -> Set<id encoder>
     for (const i of inputs) this.owners.set(String(i.channel), i.owner);
     for (const o of outputs) this.outputs.set(String(o.id), String(o.channel));
     for (const g of grants) {
@@ -52,6 +54,11 @@ class AccessState {
     }
     for (const e of encoders) {
       this.encoders.set(String(e.id), encoderChannelsOf(e));
+    }
+    for (const g of encoderGrants) {
+      if (!this.encoders.has(String(g.encoder_id))) continue; // encoder borrado
+      if (!this.encGrants.has(g.username)) this.encGrants.set(g.username, new Set());
+      this.encGrants.get(g.username).add(String(g.encoder_id));
     }
   }
 
@@ -75,26 +82,28 @@ class AccessState {
     return ch !== undefined && this.canSee(user, ch);
   }
 
-  // Un operador ve el encoder si ve la señal de alguna de sus entradas
+  // Un operador ve un encoder sólo si el admin se lo ha asignado (falla cerrado)
   canSeeEncoder(user, encoderId) {
     if (this._isAdmin(user)) return true;
-    const v = this.visibleEncoderInputs(user, encoderId);
-    return !!v && v.size > 0;
+    if (!user) return false;
+    const g = this.encGrants.get(user.username);
+    return !!g && g.has(String(encoderId));
   }
 
-  // Entradas del encoder (0, 1...) cuya señal ve el usuario. null = todas (admin).
-  // Una entrada sin señal vinculada no la ve ningún operador (falla cerrado).
+  // Entradas visibles del encoder: null = todas (admin u operador con el encoder asignado),
+  // Set vacío = ninguna
   visibleEncoderInputs(user, encoderId) {
-    if (this._isAdmin(user)) return null;
-    const chans = this.encoders.get(String(encoderId)) || [];
-    const res = new Set();
-    chans.forEach((ch, i) => { if (ch != null && this.canSee(user, ch)) res.add(i); });
-    return res;
+    return this.canSeeEncoder(user, encoderId) ? null : new Set();
   }
 
   canSeeEncoderInput(user, encoderId, input) {
     const v = this.visibleEncoderInputs(user, encoderId);
     return v === null || v.has(Number(input));
+  }
+
+  encodersOf(username) {
+    const g = this.encGrants.get(username);
+    return g ? [...g] : [];
   }
 
   // null = todos (admin)

@@ -613,6 +613,11 @@
                     <label>Entradas asignadas</label>
                     <div id="usr_access_list" style="max-height:200px; overflow-y:auto; padding:4px 8px; border:1px solid rgba(255,255,255,0.08); border-radius:6px;"></div>
                 </div>
+                <!-- Encoders que el operador puede controlar (sólo la ventana Control: codificación, emisiones y grabación) -->
+                <div class="form-group" id="usr_enc_group" style="display:none; margin-top:10px;">
+                    <label>Encoders asignados <span class="enc-muted" style="font-weight:400;">· sólo la ventana Control</span></label>
+                    <div id="usr_enc_list" style="max-height:200px; overflow-y:auto; padding:4px 8px; border:1px solid rgba(255,255,255,0.08); border-radius:6px;"></div>
+                </div>
                 <div class="modal-actions">
                     <button type="button" class="btn-secondary" onclick="closeModal('userModal')">Cancelar</button>
                     <button type="submit" class="btn-primary" id="usr_submit">Crear Cuenta</button>

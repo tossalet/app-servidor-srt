@@ -128,6 +128,12 @@ function initDB() {
             channel INTEGER NOT NULL,
             PRIMARY KEY (username, channel)
         )`);
+        // Encoders que el admin asigna a cada operador (sólo los ve y controla esos)
+        db.run(`CREATE TABLE IF NOT EXISTS encoder_access (
+            username TEXT NOT NULL,
+            encoder_id INTEGER NOT NULL,
+            PRIMARY KEY (username, encoder_id)
+        )`);
         db.run(`UPDATE inputs SET owner = (SELECT username FROM users WHERE role = 4 ORDER BY (username = 'admin') DESC, username LIMIT 1) WHERE owner = ''`);
         db.run(`INSERT INTO ports (chanMin, chanMax, udpMin, udpMax)
                 SELECT 1, 20000, 1024, 49151 WHERE NOT EXISTS (SELECT 1 FROM ports)`);

@@ -1945,6 +1945,7 @@ function openNewUserModal() {
     document.getElementById('usr_title').innerText = 'Añadir Nuevo Usuario';
     document.getElementById('usr_submit').innerText = 'Crear Cuenta';
     document.getElementById('usr_access_group').style.display = 'none';
+    document.getElementById('usr_enc_group').style.display = 'none';
     openModal('userModal');
 }
 
@@ -1956,7 +1957,8 @@ async function loadUserAccess(username) {
     list.innerHTML = '';
     const res = await fetch(`/api/users/${encodeURIComponent(username)}/access`).catch(() => null);
     if (!res || !res.ok) return;
-    const { owned, assigned } = await res.json();
+    const { owned, assigned, encoders: encAssigned = [] } = await res.json();
+    if (!encoderList.length) await fetchEncoders();
     if (document.getElementById('usr_username').value !== username) return; // se abrió otro usuario mientras tanto
     list.innerHTML = inputs.length ? inputs.map(i => {
         const own = owned.includes(i.channel);
@@ -1968,6 +1970,12 @@ async function loadUserAccess(username) {
         </label>`;
     }).join('') : '<div style="color:var(--text-muted); font-size:0.85rem;">No hay entradas.</div>';
     group.style.display = '';
+
+    document.getElementById('usr_enc_list').innerHTML = encoderList.length ? encoderList.map(e => `<label style="display:flex; align-items:center; gap:8px; font-size:0.85rem; color:var(--text-main); padding:3px 0;">
+            <input type="checkbox" value="${e.id}" ${encAssigned.includes(e.id) ? 'checked' : ''} style="width:auto;">
+            ${escapeHtml(e.name)} <span style="color:var(--text-muted); font-size:0.75rem;">${escapeHtml(e.model || '')}</span>
+        </label>`).join('') : '<div style="color:var(--text-muted); font-size:0.85rem;">No hay encoders.</div>';
+    document.getElementById('usr_enc_group').style.display = '';
 }
 
 function openEditUser(username) {
@@ -1985,6 +1993,7 @@ function openEditUser(username) {
     document.getElementById('usr_title').innerText = `Editar ${u.username}`;
     document.getElementById('usr_submit').innerText = 'Guardar cambios';
     document.getElementById('usr_access_group').style.display = 'none';
+    document.getElementById('usr_enc_group').style.display = 'none';
     if (u.role !== ROLE_ADMIN) loadUserAccess(u.username);
     openModal('userModal');
 }
@@ -2035,7 +2044,7 @@ async function submitUser(e) {
                 const resAcc = await fetch(`/api/users/${encodeURIComponent(username)}/access`, {
                     method: 'PUT',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ channels })
+                    body: JSON.stringify({ channels, encoders: [...document.querySelectorAll('#usr_enc_list input[type=checkbox]:checked')].map(c => parseInt(c.value, 10)) })
                 });
                 if (!resAcc.ok) {
                     const err = await resAcc.json().catch(() => ({}));
@@ -2518,8 +2527,10 @@ function encoderStateHtml(enc) {
 
     // Una línea por entrada del encoder con la señal del servidor que recibe lo que envía
     const chans = encoderChannels(enc);
-    const linked = chans.map((ch, k) => ({ ch, k })).filter(x => x.ch !== null);
-    const sig = !linked.length ? '<span class="sig-state off">Sin vincular</span>' : linked.map(({ ch, k }) => {
+    // Un operador puede tener el encoder sin tener asignadas las señales del servidor a las que
+    // llega: sólo se le muestran las que ve (si no ve ninguna, la fila Señal desaparece)
+    const linked = chans.map((ch, k) => ({ ch, k })).filter(x => x.ch !== null && (isAdmin() || inputs.some(i => i.channel == x.ch)));
+    const sig = !linked.length ? (isAdmin() ? '<span class="sig-state off">Sin vincular</span>' : '') : linked.map(({ ch, k }) => {
         const tag = chans.length > 1 ? `<span class="enc-in-tag">E${k + 1}</span>` : '';
         const inp = inputs.find(i => i.channel == ch);
         if (!inp) return `${tag}<span class="sig-state off">Señal borrada</span>`;
@@ -2593,16 +2604,16 @@ function renderEncoders() {
             </div>
             <dl class="enc-rows">
                 <dt>Web</dt><dd>${s.web}</dd>
-                <dt>Túnel</dt><dd>${s.vpn}</dd>
-                <dt>Señal</dt><dd>${s.sig}</dd>
+                ${isAdmin() || enc.vpn ? `<dt>Túnel</dt><dd>${s.vpn}</dd>` : ''}
+                ${s.sig ? `<dt>Señal</dt><dd>${s.sig}</dd>` : ''}
                 ${s.api ? `<dt>Encoder</dt><dd>${s.api}</dd>` : ''}
                 ${enc.vpn ? `<dt>VPN</dt><dd class="enc-muted">${escapeHtml(enc.vpn_ip)}${enc.vpn_lan ? ' · LAN ' + escapeHtml(enc.vpn_lan) : ''}</dd>` : ''}
                 ${enc.notes ? `<dt>Notas</dt><dd class="enc-muted">${escapeHtml(enc.notes)}</dd>` : ''}
                 ${st.proxyError ? `<dt>Proxy</dt><dd><span class="sig-state bad">${escapeHtml(st.proxyError)}</span></dd>` : ''}
             </dl>
             <div class="enc-actions">
-                <a class="enc-btn primary" href="${proxyUrl}" target="_blank" rel="noopener" title="Abrir la web del encoder a través del servidor (puerto ${enc.proxy_port})" aria-label="Abrir web de ${escapeHtml(enc.name)}"><i class="fa-solid fa-arrow-up-right-from-square"></i></a>
-                ${enc.driver !== 'none' ? `<button class="enc-btn" onclick="openEncoderControl(${enc.id})" title="Control: bitrate, emisión y reinicio por la API del encoder" aria-label="Control de ${escapeHtml(enc.name)}"${st.online ? '' : ' disabled'}><i class="fa-solid fa-sliders"></i></button>` : ''}
+                ${isAdmin() ? `<a class="enc-btn primary" href="${proxyUrl}" target="_blank" rel="noopener" title="Abrir la web del encoder a través del servidor (puerto ${enc.proxy_port})" aria-label="Abrir web de ${escapeHtml(enc.name)}"><i class="fa-solid fa-arrow-up-right-from-square"></i></a>` : ''}
+                ${enc.driver !== 'none' ? `<button class="enc-btn${isAdmin() ? '' : ' primary'}" onclick="openEncoderControl(${enc.id})" title="Control: codificación, emisiones y grabación por la API del encoder" aria-label="Control de ${escapeHtml(enc.name)}"${st.online ? '' : ' disabled'}><i class="fa-solid fa-sliders"></i></button>` : ''}
                 ${isAdmin() ? `
                 <button class="enc-btn" onclick="openEncoderVpn(${enc.id})" title="VPN: acceso WireGuard del router" aria-label="VPN de ${escapeHtml(enc.name)}"><i class="fa-solid fa-shield-halved"></i></button>
                 <button class="enc-btn enc-btn-push" onclick="openEditEncoderModal(${enc.id})" title="Editar" aria-label="Editar ${escapeHtml(enc.name)}"><i class="fa-solid fa-pen"></i></button>
@@ -2874,14 +2885,15 @@ function ctlStreamHtml(s, d) {
         <details class="ctl-stream" data-stream="${escapeHtml(s.id)}" ${ctlOpenStreams.has(s.id) ? 'open' : ''} ontoggle="ctlStreamToggled(this)">
             <summary class="ctl-stream-head">
                 <strong>${escapeHtml(s.name)}</strong>
-                <span class="enc-muted">${escapeHtml([s.codec, s.width && s.height ? `${s.width}×${s.height}` : '', s.fps ? `${s.fps} fps` : '', s.bitrate ? fmtKbps(s.bitrate) : '', s.rc].filter(Boolean).join(' · '))}</span>
+                <span class="enc-muted">${escapeHtml([s.profile ? `${s.codec} ${s.profile}` : s.codec, s.width && s.height ? `${s.width}×${s.height}` : '', s.fps ? `${s.fps} fps` : '', s.bitrate ? fmtKbps(s.bitrate) : '', s.rc].filter(Boolean).join(' · '))}</span>
                 ${live ? '<span class="enc-muted"><i class="fa-solid fa-tower-broadcast"></i> emitiendo</span>' : ''}
             </summary>
             <form onsubmit="applyEncoderStream(event, '${escapeHtml(s.id)}')">
                 <div class="ctl-grid">
                     <label>Bitrate (kbps)<input type="number" name="bitrate" min="${br.min}" max="${br.max}" step="1" value="${s.bitrate || ''}"></label>
-                    <label>Modo${sel('rc', ['CBR', 'VBR'], s.rc)}</label>
-                    <label>Códec${sel('codec', (s.codecs && s.codecs.length ? s.codecs : [s.codec]).filter(Boolean), s.codec)}</label>
+                    <label>Modo${sel('rc', (s.rcs && s.rcs.length ? s.rcs : ['CBR', 'VBR']), s.rc)}</label>
+                    <label>Códec${sel('codec', (s.codecs && s.codecs.length ? s.codecs : [s.codec]).filter(Boolean), s.codec).replace('<select ', '<select onchange="ctlCodecChanged(this)" ')}</label>
+                    ${(s.profiles || []).length ? `<label class="ctl-profile"${s.codec === 'H.264' ? '' : ' hidden'}>Profile H.264${sel('profile', s.profiles, s.profile || 'High')}</label>` : ''}
                     <label>FPS<input type="number" name="fps" min="1" max="60" value="${s.fps || ''}"></label>
                     <label>GOP<input type="number" name="gop" min="1" max="600" value="${s.gop || ''}" title="Fotogramas entre imágenes clave. Para SRT, 1–2 s (p. ej. 50 a 25 fps)"></label>
                     <div class="ctl-apply"><button type="submit" class="btn-primary"><i class="fa-solid fa-check"></i> Aplicar</button></div>
@@ -2977,7 +2989,7 @@ function renderEncoderControl() {
     body.innerHTML = `
         <div class="ctl-inputs">${inputsHtml}</div>
         <p class="enc-muted" style="margin-top:10px;">Cambiar el bitrate o el códec puede cortar la señal de ese stream unos segundos mientras el encoder reinicia la codificación.</p>
-        ${d.caps && d.caps.reboot ? `<div class="modal-actions"><button type="button" class="btn-secondary ctl-danger" onclick="rebootEncoder()"><i class="fa-solid fa-power-off"></i> Reiniciar encoder</button></div>` : ''}`;
+        ${d.caps && d.caps.reboot && isAdmin() ? `<div class="modal-actions"><button type="button" class="btn-secondary ctl-danger" onclick="rebootEncoder()"><i class="fa-solid fa-power-off"></i> Reiniciar encoder</button></div>` : ''}`;
     body.scrollTop = scroll;
 }
 
@@ -3018,6 +3030,12 @@ async function encoderOrder(path, payload, okMsg) {
     }
 }
 
+// El profile H.264 sólo aparece mientras el códec elegido es H.264
+function ctlCodecChanged(select) {
+    const prof = select.form && select.form.querySelector('.ctl-profile');
+    if (prof) prof.hidden = select.value !== 'H.264';
+}
+
 async function applyEncoderStream(e, sid) {
     e.preventDefault();
     const s = ctlStreams().find(x => x.id === sid) || {};
@@ -3025,7 +3043,9 @@ async function applyEncoderStream(e, sid) {
     const p = {};
     // Sólo se envía lo que ha cambiado: menos riesgo de que el firmware rechace un valor que no se tocó
     for (const k of ['bitrate', 'fps', 'gop']) { const v = f.get(k); if (v !== '' && v !== null && Number(v) !== s[k]) p[k] = Number(v); }
-    for (const k of ['rc', 'codec']) { const v = f.get(k); if (v && v !== s[k]) p[k] = v; }
+    for (const k of ['rc', 'codec', 'profile']) { const v = f.get(k); if (v && v !== s[k]) p[k] = v; }
+    // El profile sólo se manda si el stream queda en H.264
+    if ((p.codec || s.codec) !== 'H.264') delete p.profile;
     if (!Object.keys(p).length) return toast('No has cambiado nada', 'info');
     if (p.codec && !confirm(`¿Cambiar el códec a ${p.codec}? El receptor tiene que admitirlo y la señal se cortará unos segundos.`)) return;
     await encoderOrder(`stream/${encodeURIComponent(sid)}`, p, 'Codificación actualizada');

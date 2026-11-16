@@ -379,6 +379,7 @@ function registerRoutes(app, io) {
         res.json({
             owned: access.ownedBy(u.username).map(Number),
             assigned: access.grantsOf(u.username).map(Number),
+            encoders: access.encodersOf(u.username).map(Number),
         });
     });
 
@@ -388,6 +389,8 @@ function registerRoutes(app, io) {
         if (!u) return res.status(404).json({ error: 'Not found' });
         const list = req.body && req.body.channels;
         if (!Array.isArray(list)) return res.status(400).json({ error: 'channels debe ser una lista' });
+        const encList = req.body.encoders;
+        if (encList !== undefined && !Array.isArray(encList)) return res.status(400).json({ error: 'encoders debe ser una lista' });
 
         const existing = new Set((await all('SELECT channel FROM inputs')).map(r => Number(r.channel)));
         const owned = new Set(access.ownedBy(u.username).map(Number));
@@ -395,8 +398,16 @@ function registerRoutes(app, io) {
 
         await access.setGrants(u.username, channels);
         console.log(`[AUTH] ${req.user.username} asignó a ${u.username} las entradas [${channels.join(', ')}]`);
+        if (encList !== undefined) {
+            // Encoders: los ve enteros y sólo con la ventana Control (sin su web, VPN ni edición)
+            const encIds = new Set((await all('SELECT id FROM encoders')).map(r => Number(r.id)));
+            const ids = encList.map(Number).filter(id => Number.isInteger(id) && encIds.has(id));
+            await access.setEncoderGrants(u.username, ids);
+            console.log(`[AUTH] ${req.user.username} asignó a ${u.username} los encoders [${ids.join(', ')}]`);
+            require('./encoders').notify();
+        }
         io.emit('db_update', { event: 'inputs_changed' });
-        res.json({ assigned: access.grantsOf(u.username).map(Number) });
+        res.json({ assigned: access.grantsOf(u.username).map(Number), encoders: access.encodersOf(u.username).map(Number) });
     });
 }
 

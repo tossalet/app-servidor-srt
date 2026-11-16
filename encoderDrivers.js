@@ -145,6 +145,20 @@ function locate(state, { streamId, outputId, recordId }) {
  * ======================================= */
 const HISI_CODECS = { 96: 'H.264', 265: 'H.265', 26: 'MJPEG', 1002: 'MJPEG' };
 const HISI_CODEC_IDS = { 'H.264': 96, 'H.265': 265 };
+// Profile H.264 (venc_profile, sólo cuenta en H.264): 0 baseline, 1 main, 2 high
+const H264_PROFILES = ['Baseline', 'Main', 'High'];
+// Control de bitrate (venc_rc_mode). El CGI documenta 0 CBR y 1 VBR; firmwares más nuevos
+// añaden modos (Strong CBR en H.264). Un valor que no está aquí se muestra como «Modo N» y se
+// puede volver a elegir, para no perderlo al guardar otro cambio.
+const HISI_RC_MODES = { 0: 'CBR', 1: 'VBR' };
+const hisiRcName = (v) => (v === undefined || v === '' ? null : HISI_RC_MODES[v] || `Modo ${v}`);
+function hisiRcId(name) {
+    const known = Object.entries(HISI_RC_MODES).find(([, n]) => n === name);
+    if (known) return Number(known[0]);
+    const m = /^Modo (\d{1,3})$/.exec(String(name));
+    if (m) return Number(m[1]);
+    throw new ApiError(`Modo de bitrate no válido: ${name}`, 'EINVAL');
+}
 
 function hisiAuth(enc) {
     const user = enc.api_user || 'admin';
@@ -205,7 +219,11 @@ function hisiStream(input, index, o) {
         sameAsInput: o.venc_width_height_same_as_input === '1',
         fps: Number(o.venc_framerate) || null,
         bitrate: Number(o.venc_bitrate) || null,
-        rc: o.venc_rc_mode === '0' ? 'CBR' : o.venc_rc_mode === '1' ? 'VBR' : null,
+        rc: hisiRcName(o.venc_rc_mode),
+        rcs: [...new Set([...Object.values(HISI_RC_MODES), hisiRcName(o.venc_rc_mode)].filter(Boolean))],
+        // El profile sólo se ofrece en H.264 (en H.265 el encoder lo ignora)
+        profile: codec === 'H.264' && 'venc_profile' in o ? (H264_PROFILES[Number(o.venc_profile)] || `Perfil ${o.venc_profile}`) : null,
+        profiles: 'venc_profile' in o ? H264_PROFILES : [],
         gop: Number(o.venc_gop) || null,
         outputs: hisiOutputs(input, index, o)
     };
@@ -285,11 +303,12 @@ const hisilicon = {
         if (p.bitrate !== undefined) q.venc_bitrate = p.bitrate;
         if (p.fps !== undefined) q.venc_framerate = p.fps;
         if (p.gop !== undefined) q.venc_gop = p.gop;
-        if (p.rc !== undefined) q.venc_rc_mode = p.rc === 'CBR' ? 0 : 1;
+        if (p.rc !== undefined) q.venc_rc_mode = hisiRcId(p.rc);
+        if (p.profile !== undefined) q.venc_profile = H264_PROFILES.indexOf(p.profile);
         if (p.codec !== undefined) q.venc_codec = HISI_CODEC_IDS[p.codec];
         await hisiGet(enc, '/set_output', q);
         const after = await hisiOutputXml(enc, input, index);
-        const checks = { venc_bitrate: q.venc_bitrate, venc_framerate: q.venc_framerate, venc_gop: q.venc_gop, venc_rc_mode: q.venc_rc_mode, venc_codec: q.venc_codec };
+        const checks = { venc_bitrate: q.venc_bitrate, venc_framerate: q.venc_framerate, venc_gop: q.venc_gop, venc_rc_mode: q.venc_rc_mode, venc_codec: q.venc_codec, venc_profile: q.venc_profile };
         const ignored = Object.entries(checks).filter(([k, v]) => v !== undefined && after[k] !== undefined && String(after[k]) !== String(v)).map(([k]) => k);
         if (ignored.length) throw new ApiError(`El encoder no aplicó: ${ignored.join(', ')} (fuera de rango para este modelo)`, 'ENOTAPPLIED');
     },
@@ -360,6 +379,10 @@ async function zowie(enc, path, body) {
 const pick = (obj) => (obj && typeof obj === 'object' ? obj : {});
 const listSel = (o, listKey) => { const x = pick(o); const l = Array.isArray(x[listKey]) ? x[listKey] : []; return l[Number(x.selected_id)] ?? null; };
 
+// ZowieAPI da el profile abreviado (BP/MP/HP)
+const ZOWIE_PROFILES = { BP: 'Baseline', MP: 'Main', HP: 'High' };
+const zowieProfileName = (x) => (x == null ? null : ZOWIE_PROFILES[String(x).toUpperCase()] || String(x));
+
 function zowieStream(v, outputs) {
     const index = Number(v.venc_chnid) || 0;
     return {
@@ -375,6 +398,9 @@ function zowieStream(v, outputs) {
         fps: Number(v.framerate) || null,
         bitrate: Number(v.bitrate) || null,
         rc: listSel(v.ratecontrol, 'mode_list'),
+        rcs: (pick(v.ratecontrol).mode_list || []).filter(Boolean),
+        profile: listSel(v.codec, 'codec_list') === 'H.264' ? zowieProfileName(listSel(v.profile, 'profile_list')) : null,
+        profiles: (pick(v.profile).profile_list || []).map(zowieProfileName).filter(Boolean),
         gop: Number(v.gop) || Number(v.keyinterval) || null,
         // Las emisiones de ZowieBox salen del stream principal
         outputs: index === 0 ? outputs : []
@@ -543,6 +569,12 @@ const zowietek = {
         };
         if (p.codec !== undefined) setSel(next.codec, 'codec_list', p.codec);
         if (p.rc !== undefined) setSel(next.ratecontrol, 'mode_list', p.rc);
+        if (p.profile !== undefined) {
+            const list = pick(next.profile).profile_list || [];
+            const i = list.findIndex(x => zowieProfileName(x) === p.profile);
+            if (i < 0) throw new ApiError(`El encoder no admite el profile ${p.profile}`, 'EINVAL');
+            next.profile.selected_id = i;
+        }
         await zowie(enc, '/video?option=setinfo', { group: 'venc', venc: [next] });
     },
 
@@ -609,9 +641,14 @@ function validateStreamParams(body, caps) {
         if (!['H.264', 'H.265'].includes(body.codec)) throw new ApiError('Códec no válido', 'EINVAL');
         out.codec = body.codec;
     }
+    // Modo y profile se comprueban además contra lo que ofrece ese stream (rcs / profiles)
     if (body.rc !== undefined && body.rc !== '') {
-        if (!['CBR', 'VBR'].includes(body.rc)) throw new ApiError('Modo de bitrate no válido', 'EINVAL');
+        if (typeof body.rc !== 'string' || !/^[A-Za-z0-9 ._-]{1,24}$/.test(body.rc)) throw new ApiError('Modo de bitrate no válido', 'EINVAL');
         out.rc = body.rc;
+    }
+    if (body.profile !== undefined && body.profile !== '') {
+        if (!H264_PROFILES.includes(body.profile)) throw new ApiError('Profile H.264 no válido (Baseline, Main o High)', 'EINVAL');
+        out.profile = body.profile;
     }
     if (!Object.keys(out).length) throw new ApiError('No hay cambios que aplicar', 'EINVAL');
     return out;

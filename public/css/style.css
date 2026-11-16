@@ -607,6 +607,7 @@ input:checked + .slider:before { transform: translateX(18px); }
 .ctl-icon-btn.ctl-rec:hover { background: rgba(239, 68, 68, 0.12); }
 .ctl-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 10px; }
 .ctl-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 0.75rem; color: var(--text-muted); min-width: 0; }
+.ctl-grid label[hidden] { display: none; }
 .ctl-grid input, .ctl-grid select { width: 100%; }
 .ctl-apply { display: flex; align-items: flex-end; }
 .ctl-apply .btn-primary { width: 100%; justify-content: center; }

@@ -144,14 +144,16 @@ encoder ──cable──► router 4G del sitio ══ túnel WireGuard ══�
 
 Botón **Control** en la tarjeta del encoder: el panel habla con la API del encoder y no hace falta abrir su web. La ventana se organiza como el propio encoder: **entradas** (HDMI/SDI) → **stream principal (main) y secundario (sub)** de cada entrada → **emisiones** de cada stream.
 
-- **Codificación:** bitrate, modo (CBR/VBR), códec (H.264/H.265), FPS y GOP de cada stream, main y sub por separado. Después de aplicar, el servidor vuelve a leer el encoder y avisa si ignoró algún valor (estos firmwares a veces responden «OK» a un valor fuera de rango).
+- **Codificación:** bitrate, modo (CBR/VBR y los que ofrezca el encoder), códec (H.264/H.265), profile H.264 (Baseline/Main/High, solo aparece en H.264), FPS y GOP de cada stream, main y sub por separado. Después de aplicar, el servidor vuelve a leer el encoder y avisa si ignoró algún valor (estos firmwares a veces responden «OK» a un valor fuera de rango).
 - **Emisiones:** activa o para las salidas SRT/RTMP de cada stream. Un administrador también puede cambiar la URL de destino (p. ej. `srt://10.8.0.1:9000?latency=500` por el túnel).
 - **Grabación local** (Zowietek): graba, pausa, reanuda y para en el USB, la tarjeta SD o el NAS del propio encoder. Si no hay soporte montado o está lleno, se indica y no deja grabar. La tarjeta del encoder marca «grabando».
 - **Reiniciar** el encoder.
 - **Telemetría cada 10 s** en la tarjeta, una línea por entrada: si recibe vídeo y con qué resolución, bitrate de main y sub, y si está emitiendo. También la CPU del encoder. Si una entrada pierde el vídeo, el bot de Telegram avisa diciendo cuál. En `/metrics` (con etiquetas `input` y `stream=main|sub`): `tsst_encoder_api_up`, `tsst_encoder_input_signal`, `tsst_encoder_bitrate_kbps`, `tsst_encoder_cpu_percent`, `tsst_encoder_streaming`.
-- **Quién:** cualquier usuario que vea el encoder (de todas formas ya puede usar su web). Cambiar la URL de destino y las credenciales de la API es solo para administradores. Las órdenes quedan en el log (`journalctl -u tsst-srt | grep ENCODERS`) con el usuario.
+- **Quién:** el administrador y los operadores que tengan el encoder asignado. El operador ajusta la codificación, arranca y para emisiones y graba; cambiar la URL o el puerto de destino, reiniciar el encoder y sus credenciales de API es solo para administradores. Las órdenes quedan en el log (`journalctl -u tsst-srt | grep ENCODERS`) con el usuario.
 
-**Encoders de varias entradas** (p. ej. URAY de 4 HDMI): en **Editar**, elige el número de entradas y la señal SRT del servidor que recibe cada una (Entrada 1 → «Estadio HDMI 1»…). Cada entrada envía su propio SRT, así que dos entradas no pueden ir a la misma señal. Los permisos van por entrada: un operador ve el encoder si tiene asignada la señal de alguna de sus entradas, y en la tarjeta y en Control solo le aparecen esas entradas. Una entrada sin señal vinculada solo la ve un administrador.
+**Encoders de varias entradas** (p. ej. URAY de 4 HDMI): en **Editar**, elige el número de entradas y la señal SRT del servidor que recibe cada una (Entrada 1 → «Estadio HDMI 1»…). Cada entrada envía su propio SRT, así que dos entradas no pueden ir a la misma señal.
+
+**Encoders de los operadores:** en **Ajustes → Usuarios → Editar**, el administrador marca en «Encoders asignados» qué encoders controla cada operador. El operador ve esos encoders enteros (todas sus entradas), pero solo con el botón **Control**: no abre su web por el proxy, ni ve la IP, la VPN o las credenciales, ni puede editarlos o borrarlos. Tener asignada la señal a la que llega un encoder ya no basta para verlo.
 
 Fabricantes, en **Editar → Control por API** (por defecto, *Detectar automáticamente*):
 

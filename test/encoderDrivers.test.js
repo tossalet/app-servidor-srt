@@ -172,6 +172,40 @@ test('HiSilicon: cada orden va a su entrada y su stream', async () => {
     await assert.rejects(api.setStream(hisiEnc, 'x', { bitrate: 1000 }), e => e.code === 'EINVAL');
 });
 
+test('HiSilicon: profile H.264 y modos de bitrate no documentados', async () => {
+    const api = drivers.impl('uray');
+    hisi.state.out['3:0'].venc_profile = '0';
+    hisi.state.out['3:0'].venc_rc_mode = '2'; // p. ej. Strong CBR en firmwares nuevos
+    let s = (await api.state(hisiEnc)).inputs[3].streams[0];
+    assert.strictEqual(s.profile, 'Baseline');
+    assert.deepStrictEqual(s.profiles, ['Baseline', 'Main', 'High']);
+    assert.strictEqual(s.rc, 'Modo 2');
+    assert.deepStrictEqual(s.rcs, ['CBR', 'VBR', 'Modo 2']);
+    assert.deepStrictEqual((await api.state(hisiEnc)).inputs[3].streams[1].profiles, []); // el sub no informa de profile
+
+    await api.setStream(hisiEnc, '3:0', { profile: 'High', rc: 'CBR' });
+    assert.deepStrictEqual([hisi.state.out['3:0'].venc_profile, hisi.state.out['3:0'].venc_rc_mode], ['2', '0']);
+    await api.setStream(hisiEnc, '3:0', { rc: 'Modo 2' });
+    assert.strictEqual(hisi.state.out['3:0'].venc_rc_mode, '2');
+    await assert.rejects(api.setStream(hisiEnc, '3:0', { rc: 'Turbo' }), e => e.code === 'EINVAL');
+
+    // En H.265 no se ofrece profile
+    await api.setStream(hisiEnc, '3:0', { codec: 'H.265' });
+    s = (await api.state(hisiEnc)).inputs[3].streams[0];
+    assert.strictEqual(s.profile, null);
+});
+
+test('Zowietek: profile H.264 (BP/MP/HP)', async () => {
+    const api = drivers.impl('zowietek');
+    zowie.state.venc[0].codec.selected_id = 0; // H.264
+    let s = (await api.state(zowieEnc)).inputs[0].streams[0];
+    assert.strictEqual(s.profile, 'High');
+    assert.deepStrictEqual(s.profiles, ['Baseline', 'Main', 'High']);
+    assert.deepStrictEqual(s.rcs, ['CBR', 'VBR']);
+    await api.setStream(zowieEnc, '0:0', { profile: 'Main' });
+    assert.strictEqual(zowie.state.venc[0].profile.selected_id, 1);
+});
+
 test('HiSilicon: emisiones por entrada y stream', async () => {
     const api = drivers.impl('uray');
     await api.setOutput(hisiEnc, '1:0:srt_publish', { enabled: false });
@@ -281,6 +315,9 @@ test('validateStreamParams', () => {
     assert.throws(() => drivers.validateStreamParams({ bitrate: 50000 }, caps), /entre 32 y 32000/);
     assert.throws(() => drivers.validateStreamParams({ codec: 'VP9' }, caps), /Códec/);
     assert.throws(() => drivers.validateStreamParams({}, caps), /No hay cambios/);
+    assert.deepStrictEqual(drivers.validateStreamParams({ profile: 'High' }, caps), { profile: 'High' });
+    assert.throws(() => drivers.validateStreamParams({ profile: 'Extended' }, caps), /Profile/);
+    assert.throws(() => drivers.validateStreamParams({ rc: '<x>' }, caps), /Modo/);
 });
 
 test('Encoder apagado: error claro y sin esperar al infinito', async () => {
