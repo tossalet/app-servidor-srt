@@ -2,8 +2,11 @@
  * AUTENTICACIÓN
  *
  * - Contraseñas con scrypt (sal aleatoria por usuario), formato: scrypt$<sal b64>$<hash b64>
- * - Sesión en cookie HttpOnly firmada con HMAC. El secreto vive en data/session.secret,
- *   así que reiniciar el servicio no desconecta a nadie.
+ * - Sesión en cookie HttpOnly firmada con HMAC. El secreto (data/session.secret) y la lista de
+ *   sesiones vivas (tabla sessions) persisten, así que reiniciar el servicio no desconecta a nadie.
+ * - La sesión termina al cerrar el navegador o salir de él en el móvil: si ningún panel sigue
+ *   conectado ni hay peticiones durante SESSION_GRACE_SECONDS, el servidor la revoca. El margen
+ *   permite recargar la página y aguanta cortes breves de red.
  * - Cambiar la contraseña o borrar el usuario invalida sus sesiones al instante.
  * - Bloqueo progresivo por IP tras 5 intentos fallidos.
  *
@@ -20,7 +23,10 @@ const ROLE_USER = 16;
 const VALID_ROLES = [ROLE_ADMIN, ROLE_USER];
 const MIN_PASSWORD = 8;
 const COOKIE = 'tsst_sid';
-const SESSION_MS = (parseInt(process.env.SESSION_HOURS, 10) || 168) * 3600 * 1000; // 7 días
+const SESSION_MS = (parseInt(process.env.SESSION_HOURS, 10) || 168) * 3600 * 1000; // Máximo absoluto: 7 días
+const GRACE_MS = (parseInt(process.env.SESSION_GRACE_SECONDS, 10) || 60) * 1000; // Sin panel conectado
+const MUST_CHANGE_GRACE_MS = 15 * 60 * 1000; // El formulario de cambio de contraseña no abre socket
+const SWEEP_MS = 10 * 1000;
 const SCRYPT = { N: 16384, r: 8, p: 1 };
 const KEYLEN = 64;
 
@@ -111,11 +117,18 @@ async function init() {
         console.log(`[AUTH] ${migrated} contraseña(s) migradas a scrypt`);
         await loadUsers();
     }
+    // Tras un reinicio, los paneles abiertos tienen el margen completo para reconectar
+    const now = Date.now();
+    for (const s of await all('SELECT sid, username, pv, exp FROM sessions')) {
+        sessions.set(s.sid, { username: s.username, pv: s.pv, exp: s.exp, lastSeen: now, sockets: new Set() });
+    }
+    setInterval(sweepSessions, SWEEP_MS).unref();
 }
 
 /* =======================================
- *  SESIONES (token firmado)
+ *  SESIONES (token firmado + lista de sesiones vivas)
  * ======================================= */
+const sessions = new Map(); // sid -> { username, pv, exp, lastSeen, sockets }
 
 // Huella de la contraseña actual: si cambia, los tokens antiguos dejan de valer
 const passwordVersion = (stored) => crypto.createHash('sha256').update(stored).digest('base64url').slice(0, 12);
@@ -126,8 +139,39 @@ function sign(data) {
 
 function createToken(username) {
     const u = users.get(username);
-    const payload = Buffer.from(JSON.stringify({ u: username, pv: passwordVersion(u.password), exp: Date.now() + SESSION_MS })).toString('base64url');
+    const sid = crypto.randomBytes(16).toString('base64url');
+    const pv = passwordVersion(u.password);
+    const exp = Date.now() + SESSION_MS;
+    sessions.set(sid, { username, pv, exp, lastSeen: Date.now(), sockets: new Set() });
+    run('INSERT INTO sessions (sid, username, pv, exp) VALUES (?, ?, ?, ?)', [sid, username, pv, exp])
+        .catch(err => console.error('[AUTH] No se pudo guardar la sesión:', err.message));
+    const payload = Buffer.from(JSON.stringify({ u: username, sid, pv, exp })).toString('base64url');
     return `${payload}.${sign(payload)}`;
+}
+
+// Revoca la sesión y expulsa sus paneles, que al recargar acaban en el login
+function revokeSession(sid) {
+    const s = sessions.get(sid);
+    if (!s) return;
+    sessions.delete(sid);
+    for (const socket of s.sockets) socket.disconnect(true);
+    run('DELETE FROM sessions WHERE sid = ?', [sid])
+        .catch(err => console.error('[AUTH] No se pudo borrar la sesión:', err.message));
+}
+
+function sweepSessions() {
+    const now = Date.now();
+    for (const [sid, s] of sessions) {
+        const u = users.get(s.username);
+        if (!u || s.exp < now || s.pv !== passwordVersion(u.password)) {
+            revokeSession(sid);
+        } else if (s.sockets.size) {
+            s.lastSeen = now;
+        } else if (now - s.lastSeen > (u.must_change ? MUST_CHANGE_GRACE_MS : GRACE_MS)) {
+            revokeSession(sid);
+            console.log(`[AUTH] Sesión de ${s.username} cerrada: el navegador ya no está conectado`);
+        }
+    }
 }
 
 // Devuelve el usuario de la sesión o null
@@ -142,8 +186,10 @@ function readToken(token) {
     try {
         const data = JSON.parse(Buffer.from(payload, 'base64url').toString());
         const u = users.get(data.u);
-        if (!u || data.exp < Date.now() || data.pv !== passwordVersion(u.password)) return null;
-        return { username: u.username, role: u.role, email: u.email, mustChange: !!u.must_change };
+        const session = sessions.get(data.sid);
+        if (!session || !u || data.exp < Date.now() || data.pv !== passwordVersion(u.password)) return null;
+        session.lastSeen = Date.now();
+        return { username: u.username, role: u.role, email: u.email, mustChange: !!u.must_change, sid: data.sid };
     } catch (e) {
         return null;
     }
@@ -162,11 +208,11 @@ function parseCookies(header) {
 const sessionFromHeaders = (headers) => readToken(parseCookies(headers.cookie)[COOKIE]);
 
 function setSessionCookie(req, res, username) {
+    // Sin maxAge: cookie de sesión, el navegador la descarta al cerrarse
     res.cookie(COOKIE, createToken(username), {
         httpOnly: true,
         sameSite: 'strict', // Protege contra CSRF desde otras webs
         secure: req.secure,
-        maxAge: SESSION_MS,
         path: '/'
     });
 }
@@ -228,6 +274,13 @@ function socketAuth(socket, next) {
     const user = sessionFromHeaders(socket.request.headers);
     if (!user || user.mustChange) return next(new Error('unauthorized'));
     socket.data.user = user;
+    // La sesión sigue viva mientras tenga al menos un panel conectado
+    const session = sessions.get(user.sid);
+    session.sockets.add(socket);
+    socket.on('disconnect', () => {
+        session.sockets.delete(socket);
+        session.lastSeen = Date.now();
+    });
     next();
 }
 
@@ -274,6 +327,7 @@ function registerRoutes(app, io) {
     });
 
     app.post('/api/auth/logout', (req, res) => {
+        revokeSession(req.user.sid);
         res.clearCookie(COOKIE, { path: '/' });
         res.json({ ok: true });
     });

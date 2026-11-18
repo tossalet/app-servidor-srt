@@ -68,6 +68,20 @@ socket.on('disconnect', (reason) => {
     setConnectionBadge(false);
     if (reason === 'io server disconnect') location.reload();
 });
+// En el móvil, salir del navegador suelta la conexión y el servidor cierra la sesión pasado el
+// margen. Si se vuelve antes, se reconecta; si no, connect_error lleva al login.
+// En escritorio una pestaña en segundo plano sigue conectada: un panel de control puede estar detrás.
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+        if (!socket.connected) socket.connect();
+    } else if (window.matchMedia('(pointer: coarse)').matches) {
+        socket.disconnect();
+    }
+});
+// Página restaurada de la caché del navegador (botón atrás)
+window.addEventListener('pageshow', (e) => {
+    if (e.persisted && !socket.connected) socket.connect();
+});
 
 let currentUser = null;
 const ROLE_ADMIN = 4;
@@ -750,6 +764,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Thumbnail auto-refresh
     setInterval(() => {
+        if (document.hidden) return; // Oculto no pide nada: estas peticiones mantendrían viva la sesión
         const thumbs = document.querySelectorAll('.thumb-container img');
         thumbs.forEach(img => {
             const baseSrc = img.dataset.src;

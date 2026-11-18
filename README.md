@@ -98,6 +98,7 @@ El panel, la API, las miniaturas, las grabaciones y la telemetría en vivo piden
 - **Seguridad:**
   - Las contraseñas se guardan con scrypt y sal por usuario.
   - La sesión va en una cookie HttpOnly SameSite=Strict, firmada con `data/session.secret`.
+  - La sesión se cierra al cerrar el navegador o salir de él en el móvil, tras un margen de 60 s que permite recargar la página o volver enseguida.
   - Cambiar una contraseña o borrar un usuario cierra sus sesiones al momento.
   - Tras 5 intentos fallidos, la IP queda bloqueada de forma progresiva: 30 s, 60 s… hasta 15 min.
 - El panel va por HTTP en la red local, salvo que actives HTTPS (abajo). Para acceder desde Internet, usa HTTPS o una VPN.
@@ -284,6 +285,7 @@ Las métricas SRT sólo existen cuando la señal va por `srt-live-transmit`.
 | `GRAFANA_PORT` | Puerto de Grafana: muestra el enlace "Gráficas" en el panel |
 | `PROMETHEUS_URL` | Dónde está Prometheus para el historial del dashboard (por defecto `http://127.0.0.1:9090`) |
 | `METRICS_TOKEN` | Token Bearer para leer `/metrics` desde otra máquina |
-| `SESSION_HOURS` | Duración de la sesión en horas (por defecto 168 = 7 días) |
+| `SESSION_HOURS` | Duración máxima de la sesión en horas, aunque el panel siga abierto (por defecto 168 = 7 días) |
+| `SESSION_GRACE_SECONDS` | Segundos sin ningún panel conectado antes de cerrar la sesión (por defecto 60) |
 | `TLS_CERT_FILE`, `TLS_KEY_FILE` | Certificado (fullchain) y clave en PEM: activan HTTPS en el panel y los proxies |
 | `GRAFANA_PROTOCOL` | `https` si Grafana lleva el certificado (lo pone el instalador) |

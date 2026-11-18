@@ -116,6 +116,14 @@ function initDB() {
         // Vacío = una entrada, la del campo channel
         db.run("ALTER TABLE encoders ADD COLUMN input_channels TEXT NOT NULL DEFAULT ''", () => {});
 
+        // Sesiones vivas: un token sólo vale si su sid sigue aquí (ver auth.js)
+        db.run(`CREATE TABLE IF NOT EXISTS sessions (
+            sid TEXT PRIMARY KEY,
+            username TEXT NOT NULL,
+            pv TEXT NOT NULL,
+            exp INTEGER NOT NULL
+        )`);
+
         // Valores iniciales sólo si las tablas están vacías. Sólo se crea admin/admin (cambio obligatorio
         // al entrar); auth.js cifra la contraseña al arrancar.
         db.run(`INSERT INTO users (username, password, role, must_change)
