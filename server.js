@@ -376,9 +376,9 @@ app.get('/hls/:channel/index.m3u8', access.requireChannel(), async (req, res) =>
 
 app.get('/hls/:channel/:segment', access.requireChannel(), (req, res) => {
     const { channel, segment } = req.params;
-    if (!/^\d+$/.test(channel) || !/^seg_\d+\.ts$/.test(segment)) return res.status(404).end();
+    if (!/^\d+$/.test(channel) || !/^(seg_\d+\.m4s|init\.mp4)$/.test(segment)) return res.status(404).end();
     res.set('Cache-Control', 'no-store');
-    res.type('video/mp2t');
+    res.type(segment === 'init.mp4' ? 'video/mp4' : 'video/iso.segment');
     res.sendFile(path.join(streamManager.HLS_DIR, channel, segment), (err) => {
         if (err && !res.headersSent) res.status(404).end();
     });

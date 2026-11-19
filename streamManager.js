@@ -598,11 +598,18 @@ async function startHls(st, hls) {
         '-fflags', '+genpts',
         '-i', inputUdpUrl(port),
         '-map', '0:v:0?', '-map', '0:a:0?',
-        '-c', 'copy',
+        '-c:v', 'copy',
+        // El navegador no decodifica MP2 ni AC-3 en MSE: el audio va a AAC (coste de CPU mínimo)
+        '-c:a', 'aac', '-b:a', '128k',
+        // Safari sólo acepta H.265 con la etiqueta hvc1 (FFmpeg pone hev1 por defecto)
+        ...(st.codec === 'H.265' ? ['-tag:v', 'hvc1'] : []),
         // Con copy cada trozo empieza en un keyframe: dura lo que el GOP aunque pidamos 1 s
         '-f', 'hls', '-hls_time', '1', '-hls_list_size', '4',
         '-hls_flags', 'delete_segments+omit_endlist+temp_file',
-        '-hls_segment_filename', path.join(hls.dir, 'seg_%05d.ts'),
+        // fMP4 y no TS: hls.js no sabe desmultiplexar H.265 dentro de MPEG-TS, mientras que
+        // el fMP4 lo pasa tal cual al navegador, que lo decodifica si tiene soporte HEVC
+        '-hls_segment_type', 'fmp4', '-hls_fmp4_init_filename', 'init.mp4',
+        '-hls_segment_filename', path.join(hls.dir, 'seg_%05d.m4s'),
         path.join(hls.dir, 'index.m3u8')
     ];
     const child = spawn(FFMPEG, args, { stdio: ['ignore', 'ignore', 'pipe'] });
