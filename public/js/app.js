@@ -772,6 +772,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const thumbs = document.querySelectorAll('.thumb-container img');
         thumbs.forEach(img => {
             const baseSrc = img.dataset.src;
+            // Recién congelada con el último fotograma del vídeo: el JPEG aún es el viejo
+            if (Number(img.dataset.frozenUntil) > Date.now()) return;
             if (baseSrc && img.classList.contains('preview-active')) {
                 const tempImg = new Image();
                 tempImg.onload = () => { img.src = tempImg.src; };
@@ -2365,11 +2367,32 @@ function stopThumbPlayer(channel) {
     if (!p) return;
     delete thumbPlayers[channel];
     clearTimeout(p.retry);
+    freezeThumbFrame(channel, p.video);
     if (p.hls) p.hls.destroy();
     p.video.pause();
     p.video.removeAttribute('src');
     p.video.load();
     p.video.remove();
+}
+
+// Mientras el vídeo en vivo tapa la miniatura, el JPEG del servidor no se renueva: es el
+// fotograma de cuando llegó la señal. Al parar el vídeo se deja a la vista su último fotograma
+// y se pide al servidor uno nuevo, para que la imagen fija no retroceda a aquel momento.
+const FROZEN_MS = 20000; // El fotograma del servidor espera un keyframe: hasta 15 s con GOP largos
+function freezeThumbFrame(channel, video) {
+    const img = document.getElementById(`thumb-img-${channel}`);
+    if (!img || !video.classList.contains('playing')) return;
+    try {
+        if (video.readyState >= 2 && video.videoWidth) {
+            const c = document.createElement('canvas');
+            c.width = 480;
+            c.height = Math.round(480 * video.videoHeight / video.videoWidth);
+            c.getContext('2d').drawImage(video, 0, 0, c.width, c.height);
+            img.src = c.toDataURL('image/jpeg', 0.8);
+        }
+    } catch (e) { /* Sin fotograma decodificado: queda el JPEG */ }
+    img.dataset.frozenUntil = Date.now() + FROZEN_MS;
+    fetch(`/api/inputs/${channel}/snapshot`, { method: 'POST' }).catch(() => {});
 }
 
 async function togglePreview(channelId) {
