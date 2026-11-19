@@ -228,6 +228,7 @@ button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible
     /* border-bottom: 1px solid var(--panel-border); */
 }
 .expand-mode .stream-header { border-bottom: 1px solid var(--panel-border); background: rgba(0,0,0,0.2); }
+.stream-card[id^="input-card-"] > .stream-header { cursor: pointer; }
 
 .left-section { display: flex; align-items: center; gap: 15px; width: 38%; }
 .left-section.sub { padding-left: 45px; }

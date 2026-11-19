@@ -1369,6 +1369,15 @@ async function copyText(text) {
     ta.remove();
     return ok;
 }
+// Pinchar en la cabecera de una entrada la despliega o la pliega, salvo sobre sus controles
+// y sobre la ruta (el doble clic de copiar la plegaría y desplegaría otra vez).
+document.addEventListener('click', (e) => {
+    const header = e.target.closest('.stream-card[id^="input-card-"] > .stream-header');
+    if (!header || e.target.closest('button, a, input, select, textarea, label, [data-copy], .tooltip')) return;
+    if (String(window.getSelection())) return; // Estaba seleccionando texto
+    toggleExpand(header.parentElement.id.slice('input-card-'.length));
+});
+
 document.addEventListener('dblclick', async (e) => {
     const el = e.target.closest('[data-copy]');
     if (!el) return;
