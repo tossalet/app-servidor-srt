@@ -116,6 +116,24 @@ function withDefaults(url, params) {
     return url + sep + extra.join('&');
 }
 
+// Línea "Video:" de la entrada en la cabecera de FFmpeg, p. ej.
+// "Video: h264 (High), yuv420p(tv, bt709, top first), 1920x1080 [SAR 1:1 DAR 16:9], 25 fps, ..."
+// Sólo se acepta la línea completa: puede llegar partida entre dos chunks de stderr.
+function parseVideoLine(header) {
+    const m = header.match(/Video:\s*([a-zA-Z0-9_-]+)([^\r\n]*)\r?\n/);
+    if (!m) return null;
+    const rest = m[2];
+    const r = rest.match(/\b(\d{2,5})x(\d{2,5})\b/);
+    const f = rest.match(/([\d.]+)\s*fps/);
+    let res = '';
+    if (r) {
+        const interlaced = /(top|bottom) first|interlaced/.test(rest);
+        const fps = f ? String(Math.round(parseFloat(f[1]) * 100) / 100) : '';
+        res = `${r[1]}×${r[2]}${interlaced ? 'i' : 'p'}${fps}`;
+    }
+    return { codec: normCodec(m[1]), res };
+}
+
 function normCodec(c) {
     c = c.toUpperCase();
     if (c === 'HEVC') return 'H.265';
@@ -223,14 +241,18 @@ function spawnInputProcess(st) {
     if (viaSlt) srt.attachStats(child, st, 'recv');
 
     let header = '';
+    let parsed = false;
     child.stderr.on('data', (data) => {
         const out = data.toString();
-        // El códec aparece una sola vez al abrir la fuente; con -nostats no hay más ruido que parsear
-        if (!st.codec && header.length < 16384) {
+        // Códec y resolución aparecen una vez al abrir la fuente; se releen en cada reconexión
+        // por si el encoder cambió de formato. Con -nostats no hay más ruido que parsear.
+        if (!parsed && header.length < 16384) {
             header += out;
-            const m = header.match(/Video:\s*([a-zA-Z0-9_-]+)/);
-            if (m) {
-                st.codec = normCodec(m[1]);
+            const v = parseVideoLine(header);
+            if (v) {
+                st.codec = v.codec;
+                if (v.res) st.res = v.res;
+                parsed = true;
                 header = '';
             }
         }
@@ -327,6 +349,7 @@ function onDataPlaneStats(m) {
             time: st.signalSince ? fmtDuration(m.t - st.signalSince) : '--:--:--',
             active: true,
             codec: st.codec,
+            res: st.res,
             delay: st.delay,
             queuedMs,
             srt: st.srt ? srt.summarize(st) : undefined,
@@ -374,9 +397,9 @@ async function startPreview(channel, singleFrame = false) {
     child.stderr.on('data', (data) => {
         if (codecDone) return;
         header += data.toString();
-        const m = header.match(/Video:\s*([a-zA-Z0-9_-]+)/);
-        if (m) st.codec = normCodec(m[1]);
-        if (m || header.length > 16384) codecDone = true;
+        const v = parseVideoLine(header);
+        if (v) { st.codec = v.codec; if (v.res) st.res = v.res; }
+        if (v || header.length > 16384) codecDone = true;
     });
     st.preview = prev;
     dpSub(channel, port, true);
@@ -954,6 +977,7 @@ function getMetricsSnapshot() {
         restarts: st.restarts || 0,
         delayMs: st.delay || 0,
         codec: st.codec || '',
+        res: st.res || '',
         queuedMs: st.queuedMs || 0,
         srt: st.srt ? srt.snapshot(st) : null,
         srtTotals: st.srtTotals || null

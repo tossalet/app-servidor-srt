@@ -695,6 +695,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const codecElem = document.getElementById(`codec-${data.channel}`);
             if (codecElem && data.codec.length > 0) codecElem.innerText = data.codec;
         }
+        if (data.res) {
+            const resElem = document.getElementById(`res-${data.channel}`);
+            if (resElem && resElem.innerText !== data.res) { resElem.innerText = data.res; resElem.hidden = false; }
+        }
 
         if ('srt' in data) renderSrtStats(String(data.channel), data.srt);
         noteLiveStats(data);
@@ -849,6 +853,7 @@ function renderStreams() {
                         </div>
                         <div class="badge-protocol ${protocolBadge}">${protocolText}</div>
                         <span id="codec-${input.channel}" class="badge-protocol udp" style="background:#4b5563;">H.26X</span>
+                        <span id="res-${input.channel}" class="badge-protocol udp" style="background:#4b5563;" title="Resolución recibida" hidden></span>
                         <span class="stream-name" style="display:flex; flex-direction:column; line-height:1.2;">
                             ${escapeHtml(input.name || 'Channel ' + input.channel)}
                             <span class="stream-url" data-copy="${escapeHtml(displayUrl(input.url))}" title="${escapeHtml(displayUrl(input.url))} · doble clic para copiar">${escapeHtml(displayUrl(input.url))}</span>
