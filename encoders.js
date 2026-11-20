@@ -915,7 +915,10 @@ function registerRoutes(app) {
         if (enc.kind === 'decoder') {
             const state = await api.state(enc);
             const admin = req.user.role === auth.ROLE_ADMIN;
-            if (!admin) state.urls = state.urls.map(maskPass);
+            if (!admin) {
+                state.urls = state.urls.map(maskPass);
+                if (state.srt) state.srt.channels = state.srt.channels.map(c => ({ ...c, passphrase: c.passphrase ? '***' : '' }));
+            }
             // Dirección del servidor tal como la ve el decoder, para montar la URL de sus salidas:
             // la del túnel si va por un sitio VPN, o la de la red del servidor en la que está
             let serverAddress = null;
@@ -1004,6 +1007,26 @@ function registerRoutes(app) {
         if (!Object.keys(p).length) throw new drivers.ApiError('No hay cambios que aplicar', 'EINVAL');
         await api.setConfig(enc, p);
         const shown = (p.urls || []).map((u, i) => (u === null ? null : `C${i + 1} ${maskPass(u) || '(vacío)'}`)).filter(Boolean).join(', ');
+        return [p.split !== undefined ? `división ${p.split}` : '', shown].filter(Boolean).join(' · ');
+    }));
+
+    // Apartado SRT del decoder (pasa el decoder a reproducir SRT, como su web)
+    app.post('/api/encoders/:id/control/decoder-srt', auth.requireAdmin, order('cambia el SRT que recibe el decoder', async (req, api, enc) => {
+        if (enc.kind !== 'decoder' || typeof api.setSrt !== 'function') throw new drivers.ApiError('Este equipo no es un decoder con SRT', 'EINVAL');
+        const body = req.body || {};
+        const p = {};
+        if (body.split !== undefined && body.split !== '') {
+            const split = Number(body.split);
+            if (!drivers.DEC_SRT_SPLITS.some(s => s.value === split)) throw new drivers.ApiError('División de pantalla no válida', 'EINVAL');
+            p.split = split;
+        }
+        if (body.channels !== undefined) {
+            if (!Array.isArray(body.channels) || body.channels.length > 4) throw new drivers.ApiError('Canales SRT no válidos', 'EINVAL');
+            p.channels = body.channels.map((c, i) => drivers.validateDecoderSrt(c, i + 1));
+        }
+        if (!Object.keys(p).length) throw new drivers.ApiError('No hay cambios que aplicar', 'EINVAL');
+        await api.setSrt(enc, p);
+        const shown = (p.channels || []).map((c, i) => (!c ? null : `SRT${i + 1} ${!c.enabled ? 'off' : c.mode === 'listener' ? `listener :${c.listenPort}` : `${c.host}:${c.port}`}`)).filter(Boolean).join(', ');
         return [p.split !== undefined ? `división ${p.split}` : '', shown].filter(Boolean).join(' · ');
     }));
 

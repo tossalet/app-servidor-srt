@@ -583,6 +583,17 @@ input:checked + .slider:before { transform: translateX(18px); }
 .enc-warn { color: var(--color-yellow); font-size: 0.85rem; line-height: 1.5; }
 /* Control del decoder */
 #decForm .enc-input-rows { grid-template-columns: 1fr; }
+.dec-tabs { display: flex; gap: 6px; margin: 0.25rem 0 1rem; border-bottom: 1px solid var(--panel-border); }
+.dec-tab { background: none; border: none; border-bottom: 2px solid transparent; color: var(--text-muted); padding: 8px 12px; cursor: pointer; font-size: 0.9rem; margin-bottom: -1px; }
+.dec-tab.active { color: var(--text-main); border-bottom-color: var(--accent-blue); }
+.dec-tab i { color: var(--color-green); font-size: 0.75rem; margin-left: 4px; }
+.dec-srt { border: 1px solid var(--panel-border); border-radius: 10px; padding: 0.6rem 0.85rem 0.85rem; margin: 0 0 0.75rem; background: rgba(0,0,0,0.15); }
+.dec-srt legend { display: flex; align-items: center; gap: 8px; padding: 0 6px; }
+.dec-check { display: inline-flex; align-items: center; gap: 6px; font-size: 0.9rem; font-weight: 600; cursor: pointer; }
+.dec-check input { width: auto; }
+.dec-srt-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px 12px; }
+.dec-srt-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 0.75rem; color: var(--text-muted); min-width: 0; }
+.dec-srt-grid label[hidden] { display: none; }
 .dec-url-field { display: flex; gap: 6px; align-items: center; min-width: 0; flex: 1; }
 .dec-url-field input { min-width: 0; flex: 1; }
 .dec-hdmi { display: flex; gap: 8px; align-items: center; }

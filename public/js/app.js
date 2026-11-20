@@ -2653,7 +2653,18 @@ function decoderApiHtml(enc) {
     const a = (enc.status || {}).api;
     if (!a) return (enc.status || {}).online ? '<span class="sig-state off">Comprobando…</span>' : null;
     if (!a.ok) return `<span class="sig-state ${a.auth ? 'bad' : 'off'}">${a.auth ? 'Credenciales incorrectas' : 'Sin control'}</span> <span class="enc-muted">${escapeHtml(a.error || '')}</span>`;
-    const head = `<div class="enc-line">${a.playing ? '<span class="sig-state good">Reproduciendo</span>' : '<span class="sig-state warn">Sin stream</span>'} <span class="enc-muted">· ${DEC_SPLIT_NAMES[a.split] || a.split}</span></div>`;
+    const src = a.source === 'srt' ? 'SRT' : a.source === 'url' ? 'URL' : a.source === 'private' ? 'protocolo privado' : a.source === 'file' ? 'archivo' : '';
+    if (a.source === 'srt' && Array.isArray(a.srt)) {
+        const multi = a.srt.length > 1;
+        const lines = a.srt.map((c, i) => {
+            const tag = multi ? `<span class="enc-in-tag">S${i + 1}</span>` : '';
+            if (!c.enabled) return `<div class="enc-line">${tag}<span class="enc-muted">desactivado</span></div>`;
+            const where = c.mode === 'listener' ? `escucha en :${c.listenPort || '?'}` : `${escapeHtml(c.host)}:${c.port || '?'}`;
+            return `<div class="enc-line">${tag}<span class="enc-muted">${where}${c.latency ? ` · ${c.latency} ms` : ''}${c.encrypted ? ' <i class="fa-solid fa-lock" title="Con passphrase"></i>' : ''}</span></div>`;
+        }).join('');
+        return `<div class="enc-line">${a.playing ? '<span class="sig-state good">Reproduciendo</span>' : '<span class="sig-state warn">Sin stream</span>'} <span class="enc-muted">· SRT</span></div>${lines}`;
+    }
+    const head = `<div class="enc-line">${a.playing ? '<span class="sig-state good">Reproduciendo</span>' : '<span class="sig-state warn">Sin stream</span>'} <span class="enc-muted">· ${src ? src + ' · ' : ''}${DEC_SPLIT_NAMES[a.split] || a.split}</span></div>`;
     const n = decSplitChannels(a.split);
     const urls = (a.urls || []).slice(0, n).map((u, i) =>
         `<div class="enc-line">${n > 1 ? `<span class="enc-in-tag">C${i + 1}</span>` : ''}<span class="enc-muted">${u ? escapeHtml(u) : 'sin URL'}</span></div>`).join('');
@@ -3117,6 +3128,7 @@ async function openEncoderControl(id) {
     ctlOpenStreams = new Set();
     ctlEncoderId = id;
     ctlState = null;
+    decTab = null;
     document.getElementById('ctl_title').innerText = `Control · ${enc.name}`;
     document.getElementById('ctl_top').innerHTML = '';
     document.getElementById('ctl_body').scrollTop = 0;
@@ -3163,40 +3175,44 @@ function decoderUrlForOutput(o, enc) {
     return `srt://${host}:${m[1]}${qs ? '?' + qs : ''}`;
 }
 
+// Salida del servidor -> datos SRT para que el decoder la recoja como caller
+function srtFromOutput(o) {
+    const m = /^srt:\/\/[^/:?]*:(\d{1,5})\/?(?:\?(.*))?$/i.exec(String((o && o.url) || '').trim());
+    if (!m) return null;
+    const params = new URLSearchParams(m[2] || '');
+    if ((params.get('mode') || 'listener') !== 'listener') return null;
+    return {
+        host: (ctlState && ctlState.serverAddress) || window.location.hostname,
+        port: Number(m[1]),
+        latency: params.get('latency') ? Math.round(Number(params.get('latency')) / (Number(params.get('latency')) > 100000 ? 1000 : 1)) : null,
+        passphrase: params.get('passphrase') || ''
+    };
+}
+
+const DEC_SOURCE_NAMES = { srt: 'SRT', url: 'URL (Open protocol)', private: 'Protocolo privado', file: 'Archivo local' };
+let decTab = null; // pestaña abierta en la ventana del decoder: 'srt' | 'url'
+
 function renderDecoderControl() {
     const d = ctlState;
     const enc = encoderList.find(e => e.id === ctlEncoderId) || {};
     const dev = d.device || {};
-    const n = decSplitChannels(d.split);
+    if (!decTab || (decTab === 'srt' && !d.srt)) decTab = d.source === 'url' || !d.srt ? 'url' : 'srt';
     document.getElementById('ctl_top').innerHTML = `
         <dl class="enc-rows">
             <dt>Decoder</dt><dd>${escapeHtml(d.label || d.driver)}${dev.version ? ` · <span class="enc-muted">${escapeHtml(dev.version)}</span>` : ''}</dd>
             <dt>Estado</dt><dd>${d.playing === null ? '<span class="sig-state off">Sin datos</span>' : d.playing ? '<span class="sig-state good">Reproduciendo</span>' : '<span class="sig-state warn">Sin stream</span>'}</dd>
-            ${d.fileMode ? '<dt>Modo</dt><dd><span class="sig-state warn">Reproduce un archivo local</span> <span class="enc-muted">al guardar pasa a URL</span></dd>' : ''}
-            ${d.privateProtocol ? '<dt>Protocolo</dt><dd class="enc-muted">privado del fabricante activado</dd>' : ''}
+            <dt>Fuente</dt><dd>${escapeHtml(DEC_SOURCE_NAMES[d.source] || d.source || '—')}</dd>
         </dl>
         <div class="ctl-toolbar">
             <button type="button" class="ctl-icon-btn" onclick="loadEncoderControl()" title="Volver a leer la configuración del decoder" aria-label="Releer"><i class="fa-solid fa-rotate"></i></button>
             ${isAdmin() ? '<button type="button" class="ctl-icon-btn" onclick="rebootDecoder()" title="Reiniciar el decoder" aria-label="Reiniciar el decoder"><i class="fa-solid fa-power-off"></i></button>' : ''}
         </div>`;
 
-    const edit = !!d.canEditUrls;
-    const linked = Array.isArray(d.outputs) ? d.outputs : [];
-    const rows = Array.from({ length: 4 }, (_, i) => {
-        const o = linked[i] !== null && linked[i] !== undefined ? outputs.find(x => x.id === linked[i]) : null;
-        const fromOut = o ? decoderUrlForOutput(o, enc) : null;
-        const btn = edit && fromOut
-            ? `<button type="button" class="ctl-icon-btn" data-url="${escapeHtml(fromOut)}" onclick="decFillFromOutput(${i}, this.dataset.url)" title="Poner la URL de su salida vinculada: ${escapeHtml(outputName(o))}" aria-label="Usar la salida vinculada del canal ${i + 1}"><i class="fa-solid fa-link"></i></button>`
-            : '';
-        return `
-            <label class="enc-input-row dec-url-row" data-ch="${i}" ${i >= n ? 'hidden' : ''}>
-                <span>${n > 1 || i > 0 ? `Canal ${i + 1}` : 'URL'}</span>
-                <span class="dec-url-field">
-                    <input type="text" class="form-control" name="url${i}" value="${escapeHtml(d.urls[i] || '')}" placeholder="srt://servidor:puerto" maxlength="512" ${edit ? '' : 'readonly'}>
-                    ${btn}
-                </span>
-            </label>`;
-    }).join('');
+    const tabs = `
+        <div class="dec-tabs" role="tablist">
+            ${d.srt ? `<button type="button" role="tab" class="dec-tab ${decTab === 'srt' ? 'active' : ''}" aria-selected="${decTab === 'srt'}" onclick="decTab = 'srt'; renderDecoderControl();">SRT${d.source === 'srt' ? ' <i class="fa-solid fa-circle-play" title="Fuente actual"></i>' : ''}</button>` : ''}
+            <button type="button" role="tab" class="dec-tab ${decTab === 'url' ? 'active' : ''}" aria-selected="${decTab === 'url'}" onclick="decTab = 'url'; renderDecoderControl();">URL${d.source === 'url' ? ' <i class="fa-solid fa-circle-play" title="Fuente actual"></i>' : ''}</button>
+        </div>`;
 
     const hdmi = (d.hdmiModes || []).length ? `
         <h4 class="ctl-h">Salida HDMI</h4>
@@ -3207,8 +3223,87 @@ function renderDecoderControl() {
 
     const body = document.getElementById('ctl_body');
     const scroll = body.scrollTop;
-    body.innerHTML = `
-        <h4 class="ctl-h">Qué reproduce</h4>
+    body.innerHTML = tabs + (decTab === 'srt' ? decSrtHtml(d) : decUrlHtml(d, enc)) + hdmi;
+    body.scrollTop = scroll;
+}
+
+// Salida del servidor vinculada al canal i del decoder (en la ficha del equipo)
+function decLinkedOutput(i) {
+    const linked = Array.isArray(ctlState.outputs) ? ctlState.outputs : [];
+    return linked[i] !== null && linked[i] !== undefined ? outputs.find(x => x.id === linked[i]) : null;
+}
+
+function decSrtHtml(d) {
+    const edit = !!d.canEditUrls;
+    const s = d.srt;
+    const n = (s.splits.find(x => x.value === s.split) || s.splits[0]).channels;
+    const ro = edit ? '' : 'disabled';
+    const rows = s.channels.map((c, i) => {
+        const o = decLinkedOutput(i);
+        const fromOut = o ? srtFromOutput(o) : null;
+        const btn = edit && fromOut
+            ? `<button type="button" class="ctl-icon-btn" data-srt="${escapeHtml(JSON.stringify(fromOut))}" onclick="decFillSrt(${i}, JSON.parse(this.dataset.srt))" title="Poner los datos de su salida vinculada: ${escapeHtml(outputName(o))}" aria-label="Usar la salida vinculada en SRT ${i + 1}"><i class="fa-solid fa-link"></i></button>`
+            : '';
+        const listener = c.mode === 'listener';
+        return `
+        <fieldset class="dec-srt" data-ch="${i}" ${i >= n ? 'hidden' : ''}>
+            <legend>
+                <label class="dec-check"><input type="checkbox" name="en${i}" ${c.enabled ? 'checked' : ''} ${ro}> SRT ${i + 1}</label>
+                ${btn}
+            </legend>
+            <div class="dec-srt-grid">
+                <label><span>Modo</span>
+                    <select name="mode${i}" class="form-control" onchange="decSrtModeChanged(${i})" ${ro}>
+                        <option value="caller" ${!listener ? 'selected' : ''}>Caller (se conecta)</option>
+                        <option value="listener" ${listener ? 'selected' : ''}>Listener (espera)</option>
+                    </select></label>
+                <label class="dec-caller" ${listener ? 'hidden' : ''}><span>Dirección</span>
+                    <input type="text" name="host${i}" class="form-control" value="${escapeHtml(c.host)}" placeholder="tsst.dyndns.tv" ${ro}></label>
+                <label class="dec-caller" ${listener ? 'hidden' : ''}><span>Puerto</span>
+                    <input type="number" name="port${i}" class="form-control" min="1" max="65535" value="${c.port ?? ''}" ${ro}></label>
+                <label class="dec-listener" ${listener ? '' : 'hidden'}><span>Puerto de escucha</span>
+                    <input type="number" name="lport${i}" class="form-control" min="1" max="65535" value="${c.listenPort ?? ''}" ${ro}></label>
+                <label><span>Latencia (ms)</span>
+                    <input type="number" name="lat${i}" class="form-control" min="20" max="8000" value="${c.latency ?? ''}" placeholder="500" ${ro}></label>
+                <label><span>Passphrase</span>
+                    <input type="${edit ? 'text' : 'password'}" name="pass${i}" class="form-control" value="${escapeHtml(c.passphrase)}" placeholder="sin cifrar" maxlength="79" autocomplete="off" ${ro}></label>
+            </div>
+        </fieldset>`;
+    }).join('');
+    return `
+        <form id="decSrtForm" onsubmit="applyDecoderSrt(event)">
+            <div class="form-group">
+                <label>División de pantalla</label>
+                <select name="split" class="form-control" onchange="decSrtSplitChanged(this)" ${ro}>
+                    ${s.splits.map(x => `<option value="${x.value}" ${x.value === s.split ? 'selected' : ''}>${escapeHtml(x.label)}</option>`).join('')}
+                </select>
+            </div>
+            ${rows}
+            ${edit ? `<small class="enc-muted" style="display:block; margin:6px 0 10px;">Para recoger una salida del servidor: modo <em>caller</em> hacia el servidor y el puerto de la salida (en modo <em>listener</em> en el servidor). <i class="fa-solid fa-link"></i> lo rellena con la salida vinculada. Al guardar, el decoder pasa a reproducir SRT.</small>
+            <div class="modal-actions"><button type="submit" class="btn-primary"><i class="fa-solid fa-floppy-disk"></i> Guardar SRT en el decoder</button></div>`
+            : '<p class="enc-muted">Cambiar lo que recibe el decoder es sólo para administradores.</p>'}
+        </form>`;
+}
+
+function decUrlHtml(d, enc) {
+    const edit = !!d.canEditUrls;
+    const n = decSplitChannels(d.split);
+    const rows = Array.from({ length: 4 }, (_, i) => {
+        const o = decLinkedOutput(i);
+        const fromOut = o ? decoderUrlForOutput(o, enc) : null;
+        const btn = edit && fromOut
+            ? `<button type="button" class="ctl-icon-btn" data-url="${escapeHtml(fromOut)}" onclick="decFillFromOutput(${i}, this.dataset.url)" title="Poner la URL de su salida vinculada: ${escapeHtml(outputName(o))}" aria-label="Usar la salida vinculada del canal ${i + 1}"><i class="fa-solid fa-link"></i></button>`
+            : '';
+        return `
+            <label class="enc-input-row dec-url-row" data-ch="${i}" ${i >= n ? 'hidden' : ''}>
+                <span>${n > 1 || i > 0 ? `Canal ${i + 1}` : 'URL'}</span>
+                <span class="dec-url-field">
+                    <input type="text" class="form-control" name="url${i}" value="${escapeHtml(d.urls[i] || '')}" placeholder="udp://… rtmp://… rtsp://…" maxlength="512" ${edit ? '' : 'readonly'}>
+                    ${btn}
+                </span>
+            </label>`;
+    }).join('');
+    return `
         <form id="decForm" onsubmit="applyDecoderConfig(event)">
             <div class="form-group">
                 <label>División de pantalla</label>
@@ -3217,12 +3312,53 @@ function renderDecoderControl() {
                 </select>
             </div>
             <div class="enc-input-rows">${rows}</div>
-            ${edit ? `<small class="enc-muted" style="display:block; margin:6px 0 10px;">El decoder se conecta como <em>caller</em>: la salida del servidor tiene que estar en modo <em>listener</em>. <i class="fa-solid fa-link"></i> pone la URL de la salida vinculada${enc.site ? ' por el túnel' : ''}.</small>
+            ${edit ? `<small class="enc-muted" style="display:block; margin:6px 0 10px;">Para UDP, RTMP, RTSP o HTTP. Para SRT usa la pestaña SRT. Al guardar, el decoder pasa a reproducir por URL.</small>
             <div class="modal-actions"><button type="submit" class="btn-primary"><i class="fa-solid fa-floppy-disk"></i> Guardar en el decoder</button></div>`
             : '<p class="enc-muted">Cambiar lo que reproduce el decoder es sólo para administradores.</p>'}
-        </form>
-        ${hdmi}`;
-    body.scrollTop = scroll;
+        </form>`;
+}
+
+function decSrtModeChanged(i) {
+    const f = document.getElementById('decSrtForm');
+    const listener = f.elements['mode' + i].value === 'listener';
+    const box = f.querySelector(`.dec-srt[data-ch="${i}"]`);
+    box.querySelectorAll('.dec-caller').forEach(el => { el.hidden = listener; });
+    box.querySelectorAll('.dec-listener').forEach(el => { el.hidden = !listener; });
+}
+
+function decSrtSplitChanged(sel) {
+    const s = ctlState.srt;
+    const n = (s.splits.find(x => x.value === Number(sel.value)) || s.splits[0]).channels;
+    document.querySelectorAll('#decSrtForm .dec-srt').forEach(r => { r.hidden = Number(r.dataset.ch) >= n; });
+}
+
+function decFillSrt(i, v) {
+    const f = document.getElementById('decSrtForm');
+    f.elements['en' + i].checked = true;
+    f.elements['mode' + i].value = 'caller';
+    decSrtModeChanged(i);
+    f.elements['host' + i].value = v.host;
+    f.elements['port' + i].value = v.port;
+    if (v.latency) f.elements['lat' + i].value = v.latency;
+    f.elements['pass' + i].value = v.passphrase || '';
+}
+
+async function applyDecoderSrt(e) {
+    e.preventDefault();
+    const f = e.target;
+    const split = Number(f.elements.split.value);
+    const n = (ctlState.srt.splits.find(x => x.value === split) || ctlState.srt.splits[0]).channels;
+    // Los canales que la división no usa se dejan como están en el decoder
+    const channels = Array.from({ length: 4 }, (_, i) => (i >= n ? null : {
+        enabled: f.elements['en' + i].checked,
+        mode: f.elements['mode' + i].value,
+        host: f.elements['host' + i].value.trim(),
+        port: f.elements['port' + i].value,
+        listenPort: f.elements['lport' + i].value,
+        latency: f.elements['lat' + i].value || (f.elements['en' + i].checked ? 500 : ''),
+        passphrase: f.elements['pass' + i].value
+    }));
+    await encoderOrder('decoder-srt', { split, channels }, 'SRT del decoder actualizado');
 }
 
 function decSplitChanged(sel) {

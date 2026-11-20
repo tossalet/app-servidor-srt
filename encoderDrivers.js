@@ -604,10 +604,38 @@ const zowietek = {
  *    /set_hdmi_mode?hdmi_mode=1920x1080i-50 -> "succeed"
  *    /get_version  { status: 1, versionData: { versionName } }
  *    /reboot -> "succeed"   (/reset es el restablecimiento de fábrica: no se usa nunca)
+ *    /get_srt      { split_mode, srt1..srt4: { status, ip, port, latency, passphrase, listen, srt_ip,
+ *                    srt_port, transport, udp_ip, udp_port, id } }   (apartado «SRT Settings»)
+ *    /set_srt?request=<JSON>  el mismo objeto (sin id) -> { status: 0 }
+ *  current_play (en /get_codec) es la fuente que reproduce: 0 URL («Open protocol»), 2 protocolo
+ *  privado, 3 SRT (visto con SRT1 activo). Guardar un apartado pasa el decoder a esa fuente, como
+ *  en su web. split_mode de SRT: 0 un canal, 1 dos, 2 cuatro.
  *  Su web manda request ya pasado por encodeURIComponent y jQuery lo vuelve a codificar: el firmware
  *  espera el JSON codificado dos veces, y así se envía aquí.
  * ======================================= */
 const DEC_CHANNELS = 4;
+const DEC_SOURCES = { 0: 'url', 1: 'file', 2: 'private', 3: 'srt' };
+const DEC_SRT_SPLITS = [{ value: 0, label: '1 canal', channels: 1 }, { value: 1, label: '2 canales', channels: 2 }, { value: 2, label: '4 canales', channels: 4 }];
+
+// Canal SRT del decoder tal como lo maneja el panel
+function decSrtChannel(c) {
+    c = c || {};
+    return {
+        enabled: !!c.status,
+        mode: c.listen ? 'listener' : 'caller',
+        host: c.listen ? '' : String(c.ip || ''),
+        port: Number(c.port) > 0 ? Number(c.port) : null,
+        listenPort: Number(c.srt_port) > 0 ? Number(c.srt_port) : null,
+        latency: Number(c.latency) > 0 ? Number(c.latency) : null,
+        passphrase: String(c.passphrase || '')
+    };
+}
+
+async function decSrt(enc) {
+    const r = await decJson(enc, '/get_srt');
+    if (!r || typeof r.srt1 !== 'object') throw new ApiError('Respuesta no reconocida en /get_srt', 'EFORMAT');
+    return r;
+}
 // split_mode: su web ofrece 1 X 1 (0) y 2 X 2 (2); el 1 lo trata también como división en 4
 const DEC_SPLITS = [{ value: 0, label: '1×1', channels: 1 }, { value: 2, label: '2×2', channels: 4 }];
 
@@ -631,23 +659,36 @@ const hwsdec = {
     },
 
     async poll(enc) {
-        const r = await decJson(enc, '/get_status');
+        const [r, d, s] = await Promise.all([
+            decJson(enc, '/get_status'),
+            decCodec(enc).catch(() => null),
+            decSrt(enc).catch(() => null)
+        ]);
         if (!r || !r.result) throw new ApiError('Respuesta no reconocida en /get_status', 'EFORMAT');
         const split = Number(r.result.split_screen_count) || 0;
-        return { decoder: true, playing: Number(r.status) !== 3, split, urls: decUrls(r.result.video_stream_urls) };
+        const out = { decoder: true, playing: Number(r.status) !== 3, split, urls: decUrls(r.result.video_stream_urls) };
+        if (d) out.source = DEC_SOURCES[Number(d.current_play)] || `modo ${d.current_play}`;
+        if (s) {
+            const n = (DEC_SRT_SPLITS.find(x => x.value === Number(s.split_mode)) || DEC_SRT_SPLITS[0]).channels;
+            out.srt = [1, 2, 3, 4].slice(0, n).map(i => decSrtChannel(s[`srt${i}`])).map(({ passphrase, ...c }) => ({ ...c, encrypted: !!passphrase }));
+        }
+        return out;
     },
 
     async state(enc) {
-        const [d, st, ver] = await Promise.all([
+        const [d, st, ver, srt] = await Promise.all([
             decCodec(enc),
             decJson(enc, '/get_status').catch(() => null),
-            decJson(enc, '/get_version').catch(() => null)
+            decJson(enc, '/get_version').catch(() => null),
+            decSrt(enc).catch(() => null)
         ]);
         const split = Number(d.split_mode) || 0;
         return {
             decoder: true,
             device: { model: 'Decoder SDI', version: ver && ver.versionData ? ver.versionData.versionName : '' },
             playing: st ? Number(st.status) !== 3 : null,
+            source: DEC_SOURCES[Number(d.current_play)] || `modo ${d.current_play}`,
+            srt: srt ? { split: Number(srt.split_mode) || 0, splits: DEC_SRT_SPLITS, channels: [1, 2, 3, 4].map(i => decSrtChannel(srt[`srt${i}`])) } : null,
             split,
             splits: DEC_SPLITS,
             urls: decUrls(d.input_urls),
@@ -678,6 +719,46 @@ const hwsdec = {
         const got = decUrls(after.input_urls);
         if (got.some((u, i) => u !== next[i]) || (Number(after.split_mode) || 0) !== request.split_mode) {
             throw new ApiError('El decoder respondió OK pero no guardó los cambios', 'ENOTAPPLIED');
+        }
+    },
+
+    // Apartado SRT: división y, por canal, activado, caller (destino) o listener (puerto propio),
+    // latencia y passphrase. Lo demás del canal (salida UDP, transporte) se reenvía tal como está.
+    async setSrt(enc, { split, channels }) {
+        const cur = await decSrt(enc);
+        const request = { split_mode: split === undefined ? Number(cur.split_mode) || 0 : split };
+        for (let i = 1; i <= DEC_CHANNELS; i++) {
+            const { id, ...c } = cur[`srt${i}`] || {};
+            const p = Array.isArray(channels) ? channels[i - 1] : null;
+            const next = {
+                status: !!c.status, ip: String(c.ip || ''), port: Number(c.port ?? -1), transport: !!c.transport,
+                latency: Number(c.latency) || 0, passphrase: String(c.passphrase || ''), listen: !!c.listen,
+                srt_ip: String(c.srt_ip || ''), srt_port: Number(c.srt_port) || 0,
+                udp_ip: String(c.udp_ip || ''), udp_port: Number(c.udp_port) || 0
+            };
+            if (p) {
+                if (p.enabled !== undefined) next.status = !!p.enabled;
+                if (p.mode !== undefined) next.listen = p.mode === 'listener';
+                if (p.host !== undefined && !next.listen) next.ip = p.host;
+                if (p.port !== undefined && p.port !== null) next.port = p.port;
+                if (p.listenPort !== undefined && p.listenPort !== null) next.srt_port = p.listenPort;
+                if (p.latency !== undefined && p.latency !== null) next.latency = p.latency;
+                if (p.passphrase !== undefined && p.passphrase !== null) next.passphrase = p.passphrase;
+            }
+            request[`srt${i}`] = next;
+        }
+        const r = await decJson(enc, '/set_srt', { request: encodeURIComponent(JSON.stringify(request)), _: Date.now() });
+        if (!r || Number(r.status) !== 0) throw new ApiError('El decoder rechazó la configuración SRT', 'EREJECTED');
+        // Comprobación: lo leído después tiene que coincidir con lo enviado
+        const after = await decSrt(enc);
+        const keys = ['status', 'ip', 'port', 'latency', 'passphrase', 'listen', 'srt_port'];
+        const bad = [1, 2, 3, 4].some(i => {
+            const a = after[`srt${i}`] || {};
+            const b = request[`srt${i}`];
+            return keys.some(k => (k === 'ip' && b.listen ? false : String(typeof b[k] === 'boolean' ? !!a[k] : a[k]) !== String(b[k])));
+        });
+        if (bad || (Number(after.split_mode) || 0) !== request.split_mode) {
+            throw new ApiError('El decoder respondió OK pero no guardó la configuración SRT', 'ENOTAPPLIED');
         }
     },
 
@@ -715,6 +796,37 @@ async function detectDecoder(enc) {
         if (e.code === 'ETIMEDOUT' || e.code === 'ECONNREFUSED' || e.code === 'EHOSTUNREACH') throw e;
         throw new ApiError('API del decoder no reconocida: elige el fabricante o usa su web', 'EUNKNOWN');
     }
+}
+
+// Un canal SRT del decoder tal como llega del panel. null = no tocarlo.
+function validateDecoderSrt(p, n) {
+    if (p === null || p === undefined) return null;
+    const label = `SRT ${n}`;
+    const out = { enabled: !!p.enabled, mode: p.mode === 'listener' ? 'listener' : 'caller' };
+    const intIn = (v, min, max, what) => {
+        if (v === '' || v === null || v === undefined) return null;
+        const x = Number(v);
+        if (!Number.isInteger(x) || x < min || x > max) throw new ApiError(`${label}: ${what} entre ${min} y ${max}`, 'EINVAL');
+        return x;
+    };
+    out.port = intIn(p.port, 1, 65535, 'puerto');
+    out.listenPort = intIn(p.listenPort, 1, 65535, 'puerto de escucha');
+    out.latency = intIn(p.latency, 20, 8000, 'latencia (ms)');
+    if (out.mode === 'caller') {
+        const host = String(p.host || '').trim();
+        if (host && (host.length > 253 || !/^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$/.test(host))) throw new ApiError(`${label}: dirección no válida`, 'EINVAL');
+        if (out.enabled && (!host || !out.port)) throw new ApiError(`${label}: en modo caller hacen falta dirección y puerto`, 'EINVAL');
+        out.host = host;
+    } else if (out.enabled && !out.listenPort) {
+        throw new ApiError(`${label}: en modo listener hace falta el puerto de escucha`, 'EINVAL');
+    }
+    if (p.passphrase !== undefined && p.passphrase !== null) {
+        const pass = String(p.passphrase);
+        // SRT exige de 10 a 79 caracteres; vacío = sin cifrar
+        if (pass && (pass.length < 10 || pass.length > 79 || /[\s"'<>\\]/.test(pass))) throw new ApiError(`${label}: la passphrase va de 10 a 79 caracteres, sin espacios ni comillas`, 'EINVAL');
+        out.passphrase = pass;
+    }
+    return out;
 }
 
 // URLs de stream de un decoder: vacía (canal sin usar) o srt/rtmp/udp/rtp/rtsp/http, sin espacios ni comillas
@@ -781,7 +893,7 @@ function validateStreamParams(body, caps) {
 }
 
 module.exports = {
-    DRIVERS, DRIVER_CHOICES, DECODER_DRIVER_CHOICES, DEC_SPLITS, ApiError, detect, detectDecoder, impl,
+    DRIVERS, DRIVER_CHOICES, DECODER_DRIVER_CHOICES, DEC_SPLITS, DEC_SRT_SPLITS, validateDecoderSrt, ApiError, detect, detectDecoder, impl,
     validateStreamParams, validateDecoderUrl, locate, parseStreamId,
     _test: { parseXml, flat, hisilicon, zowietek, hwsdec, zowiePublishList, zowieRecordList }
 };
