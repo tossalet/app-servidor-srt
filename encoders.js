@@ -102,14 +102,14 @@ function validateEncoder(body) {
     }
     const channels = decoder ? [null] : list;
     const channel = channels[0];
-    // Los drivers de API son de encoders: el decoder se maneja por su web
-    const driver = decoder ? 'none' : (body.driver === undefined || body.driver === '' ? 'auto' : String(body.driver));
-    if (!drivers.DRIVER_CHOICES.includes(driver)) return { error: 'Fabricante (API) no válido' };
-    const apiUser = decoder ? '' : String(body.api_user || '').trim();
+    // Cada tipo de equipo tiene sus fabricantes (APIs) posibles
+    const driver = body.driver === undefined || body.driver === '' ? 'auto' : String(body.driver);
+    if (!(decoder ? drivers.DECODER_DRIVER_CHOICES : drivers.DRIVER_CHOICES).includes(driver)) return { error: 'Fabricante (API) no válido' };
+    const apiUser = String(body.api_user || '').trim();
     if (apiUser.length > 64 || /[:\r\n]/.test(apiUser)) return { error: 'Usuario de la API no válido' };
     // api_pass: undefined o '' = conservar la guardada; null = borrarla
     let apiPass;
-    if (body.api_pass === null || decoder) apiPass = '';
+    if (body.api_pass === null) apiPass = '';
     else if (body.api_pass !== undefined && body.api_pass !== '') {
         apiPass = String(body.api_pass);
         if (apiPass.length > 128 || /[\r\n]/.test(apiPass)) return { error: 'Contraseña de la API no válida' };
@@ -440,6 +440,14 @@ function handleRequest(id, req, res) {
         // Cookies del encoder: sin Domain (es la IP del servidor) ni Secure (el proxy puede ir por HTTP)
         if (h['set-cookie']) h['set-cookie'] = h['set-cookie'].map(c => c.replace(/;\s*domain=[^;]*/ig, '').replace(/;\s*secure/ig, '').replace(/;\s*samesite=none/ig, '; SameSite=Lax'));
         delete h['strict-transport-security'];
+        // Con el proxy en HTTPS, las webs de estos equipos piden sus datos y su login a http://<host>
+        // y el navegador lo bloquea (contenido mixto): campos vacíos y login que no entra. Así el
+        // navegador convierte esas peticiones (y los ws://) a https:// del mismo proxy.
+        if (tlsConfig.enabled && /text\/html/i.test(h['content-type'] || '')) {
+            const csp = h['content-security-policy'];
+            if (!csp) h['content-security-policy'] = 'upgrade-insecure-requests';
+            else if (!/upgrade-insecure-requests/i.test(String(csp))) h['content-security-policy'] = `${csp}; upgrade-insecure-requests`;
+        }
         res.writeHead(pres.statusCode || 502, h);
         pres.pipe(res);
     });
@@ -526,7 +534,7 @@ async function resolveDriver(enc) {
     const last = detectFailAt.get(enc.id);
     if (last && Date.now() - last < REDETECT_MS) throw new drivers.ApiError('API no reconocida: elige el fabricante en el encoder o usa su web', 'EUNKNOWN');
     try {
-        const r = await drivers.detect(enc);
+        const r = enc.kind === 'decoder' ? await drivers.detectDecoder(enc) : await drivers.detect(enc);
         detected.set(enc.id, r.driver);
         detectFailAt.delete(enc.id);
         console.log(`[ENCODERS] ${enc.name}: API detectada ${drivers.DRIVERS[r.driver].label}`);
@@ -543,6 +551,9 @@ function forgetDriver(id) {
     detectFailAt.delete(id);
 }
 
+// Las URLs SRT pueden llevar la passphrase: en el estado de la tarjeta y para operadores se oculta
+const maskPass = (u) => String(u || '').replace(/(passphrase=)[^&]*/gi, '$1***');
+
 const driverLabel = (d) => (d && drivers.DRIVERS[d] ? drivers.DRIVERS[d].label : '');
 
 async function pollApi(enc) {
@@ -551,6 +562,7 @@ async function pollApi(enc) {
     try {
         driver = await resolveDriver(enc);
         const t = await drivers.impl(driver).poll(enc);
+        if (t.decoder) t.urls = (t.urls || []).map(maskPass);
         return { ok: true, driver, label: driverLabel(driver), ...t, at: Date.now() };
     } catch (e) {
         // Si el equipo deja de hablar esa API (lo han cambiado por otro), se vuelve a detectar
@@ -900,6 +912,23 @@ function registerRoutes(app) {
 
     app.get('/api/encoders/:id/control', control(async (req, res, enc) => {
         const { driver, api } = await withDriver(enc);
+        if (enc.kind === 'decoder') {
+            const state = await api.state(enc);
+            const admin = req.user.role === auth.ROLE_ADMIN;
+            if (!admin) state.urls = state.urls.map(maskPass);
+            // Dirección del servidor tal como la ve el decoder, para montar la URL de sus salidas:
+            // la del túnel si va por un sitio VPN, o la de la red del servidor en la que está
+            let serverAddress = null;
+            if (admin) {
+                if (siteOf(enc)) serverAddress = (await wgInfo()).serverIp || null;
+                else {
+                    const net = localNets().find(n => inCidr(enc.host, n.text));
+                    serverAddress = net ? net.address : null;
+                }
+            }
+            res.set('Cache-Control', 'no-store');
+            return res.json({ driver, label: driverLabel(driver), canEditUrls: admin, outputs: decoderOutputsOf(enc), serverAddress, ...state });
+        }
         const state = withLinks(enc, await api.state(enc), req.user);
         res.set('Cache-Control', 'no-store');
         res.json({ driver, label: driverLabel(driver), canEditUrls: req.user.role === auth.ROLE_ADMIN, ...state });
@@ -955,6 +984,35 @@ function registerRoutes(app) {
         if (!['start', 'stop', 'pause', 'resume'].includes(command)) throw new drivers.ApiError('Orden de grabación no válida', 'EINVAL');
         await api.setRecord(enc, found.record.id, command);
         return `grabación ${found.record.label}: ${command}`;
+    }));
+
+    // Decoder: qué streams reproduce y cómo divide la pantalla. Cambiar a dónde se conecta es,
+    // como las URLs de emisión de un encoder, sólo para administradores.
+    app.post('/api/encoders/:id/control/decoder', auth.requireAdmin, order('cambia lo que reproduce el decoder', async (req, api, enc) => {
+        if (enc.kind !== 'decoder' || typeof api.setConfig !== 'function') throw new drivers.ApiError('Este equipo no es un decoder', 'EINVAL');
+        const body = req.body || {};
+        const p = {};
+        if (body.split !== undefined && body.split !== '') {
+            const split = Number(body.split);
+            if (!drivers.DEC_SPLITS.some(s => s.value === split)) throw new drivers.ApiError('División de pantalla no válida', 'EINVAL');
+            p.split = split;
+        }
+        if (body.urls !== undefined) {
+            if (!Array.isArray(body.urls) || body.urls.length > 4) throw new drivers.ApiError('URLs no válidas', 'EINVAL');
+            p.urls = body.urls.map(u => (u === null ? null : drivers.validateDecoderUrl(u)));
+        }
+        if (!Object.keys(p).length) throw new drivers.ApiError('No hay cambios que aplicar', 'EINVAL');
+        await api.setConfig(enc, p);
+        const shown = (p.urls || []).map((u, i) => (u === null ? null : `C${i + 1} ${maskPass(u) || '(vacío)'}`)).filter(Boolean).join(', ');
+        return [p.split !== undefined ? `división ${p.split}` : '', shown].filter(Boolean).join(' · ');
+    }));
+
+    app.post('/api/encoders/:id/control/hdmi', order('cambia la resolución HDMI', async (req, api, enc) => {
+        if (enc.kind !== 'decoder' || typeof api.setHdmiMode !== 'function') throw new drivers.ApiError('Este equipo no es un decoder', 'EINVAL');
+        const mode = String((req.body && req.body.mode) || '');
+        if (!/^[A-Za-z0-9_.-]{1,32}$/.test(mode)) throw new drivers.ApiError('Resolución no válida', 'EINVAL');
+        await api.setHdmiMode(enc, mode);
+        return mode;
     }));
 
     app.post('/api/encoders/:id/control/reboot', auth.requireAdmin, order('reinicia el encoder', async (req, api, enc) => {

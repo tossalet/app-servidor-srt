@@ -592,14 +592,140 @@ const zowietek = {
 };
 
 /* =======================================
+ *  DRIVER DECODER SDI HW Stream / URAY (firmware «sdi_hb», p. ej. ver2.2.8_20200723_sdi_hb_01_03)
+ *
+ *  Leído de la propia web del decoder. GET con autenticación básica (admin/admin), respuestas JSON:
+ *    /get_status   { result: { split_screen_count, video_stream_urls{0..3}, output_screen_resolution }, status }
+ *                  status 3 = no está reproduciendo ningún stream
+ *    /get_codec    { data: { split_mode, input_urls{0..3}, hdmi_mode, hdmi_modes[], cvbs_mode, cvbs_modes[],
+ *                    addr_way, play_file, current_play, output_mode_selected, audio_source_channel }, status: 0 }
+ *    /set_codec?request=<JSON>  { output_mode_selected, split_mode, addr_way, play_file, current_play,
+ *                    input_urls{0..3} } -> { status: 0 } si se aplicó
+ *    /set_hdmi_mode?hdmi_mode=1920x1080i-50 -> "succeed"
+ *    /get_version  { status: 1, versionData: { versionName } }
+ *    /reboot -> "succeed"   (/reset es el restablecimiento de fábrica: no se usa nunca)
+ *  Su web manda request ya pasado por encodeURIComponent y jQuery lo vuelve a codificar: el firmware
+ *  espera el JSON codificado dos veces, y así se envía aquí.
+ * ======================================= */
+const DEC_CHANNELS = 4;
+// split_mode: su web ofrece 1 X 1 (0) y 2 X 2 (2); el 1 lo trata también como división en 4
+const DEC_SPLITS = [{ value: 0, label: '1×1', channels: 1 }, { value: 2, label: '2×2', channels: 4 }];
+
+async function decJson(enc, path, params) {
+    const text = await hisiGet(enc, path, params);
+    try { return JSON.parse(text); } catch { throw new ApiError(`Respuesta no reconocida en ${path}`, 'EFORMAT'); }
+}
+
+const decUrls = (obj) => Array.from({ length: DEC_CHANNELS }, (_, i) => String((obj && (obj[i] ?? obj[String(i)])) || ''));
+
+async function decCodec(enc) {
+    const r = await decJson(enc, '/get_codec');
+    if (!r || !r.data || typeof r.data.input_urls !== 'object') throw new ApiError('Respuesta no reconocida en /get_codec', 'EFORMAT');
+    return r.data;
+}
+
+const hwsdec = {
+    async detect(enc) {
+        await decCodec(enc);
+        return {};
+    },
+
+    async poll(enc) {
+        const r = await decJson(enc, '/get_status');
+        if (!r || !r.result) throw new ApiError('Respuesta no reconocida en /get_status', 'EFORMAT');
+        const split = Number(r.result.split_screen_count) || 0;
+        return { decoder: true, playing: Number(r.status) !== 3, split, urls: decUrls(r.result.video_stream_urls) };
+    },
+
+    async state(enc) {
+        const [d, st, ver] = await Promise.all([
+            decCodec(enc),
+            decJson(enc, '/get_status').catch(() => null),
+            decJson(enc, '/get_version').catch(() => null)
+        ]);
+        const split = Number(d.split_mode) || 0;
+        return {
+            decoder: true,
+            device: { model: 'Decoder SDI', version: ver && ver.versionData ? ver.versionData.versionName : '' },
+            playing: st ? Number(st.status) !== 3 : null,
+            split,
+            splits: DEC_SPLITS,
+            urls: decUrls(d.input_urls),
+            fileMode: String(d.addr_way) === '1',
+            privateProtocol: Number(d.current_play) === 2,
+            hdmiMode: d.hdmi_mode || '',
+            hdmiModes: Array.isArray(d.hdmi_modes) ? d.hdmi_modes.map(String) : []
+        };
+    },
+
+    // Cambia la división y las URLs; el resto de la configuración se reenvía tal como está
+    async setConfig(enc, { split, urls }) {
+        const d = await decCodec(enc);
+        const cur = decUrls(d.input_urls);
+        const next = Array.isArray(urls) ? cur.map((u, i) => (urls[i] === undefined || urls[i] === null ? u : String(urls[i]))) : cur;
+        const request = {
+            output_mode_selected: d.output_mode_selected ?? 0,
+            split_mode: split === undefined ? Number(d.split_mode) || 0 : split,
+            addr_way: '0', // reproducir por URL (no un archivo local del decoder)
+            play_file: d.play_file || '',
+            current_play: Number(d.current_play) === 2 ? 2 : 0,
+            input_urls: Object.fromEntries(next.map((u, i) => [String(i), u]))
+        };
+        const r = await decJson(enc, '/set_codec', { request: encodeURIComponent(JSON.stringify(request)), _: Date.now() });
+        if (!r || Number(r.status) !== 0) throw new ApiError('El decoder rechazó la configuración', 'EREJECTED');
+        // Estos firmwares a veces responden OK sin aplicar: se comprueba leyendo de nuevo
+        const after = await decCodec(enc);
+        const got = decUrls(after.input_urls);
+        if (got.some((u, i) => u !== next[i]) || (Number(after.split_mode) || 0) !== request.split_mode) {
+            throw new ApiError('El decoder respondió OK pero no guardó los cambios', 'ENOTAPPLIED');
+        }
+    },
+
+    async setHdmiMode(enc, mode) {
+        const d = await decCodec(enc);
+        if (!(d.hdmi_modes || []).map(String).includes(mode)) throw new ApiError('Resolución HDMI no admitida por el decoder', 'EINVAL');
+        const text = await hisiGet(enc, '/set_hdmi_mode', { hdmi_mode: mode, _: Date.now() });
+        if (text.trim() !== 'succeed') throw new ApiError('El decoder no aceptó la resolución', 'EREJECTED');
+    },
+
+    async reboot(enc) {
+        await hisiGet(enc, '/reboot', { _: Date.now() });
+    }
+};
+
+/* =======================================
  *  REGISTRO Y DETECCIÓN
  * ======================================= */
 const DRIVERS = {
     uray: { label: 'URAY (CGI)', impl: hisilicon },
     hwstream: { label: 'HW Stream (CGI)', impl: hisilicon },
-    zowietek: { label: 'Zowietek (ZowieAPI)', impl: zowietek }
+    zowietek: { label: 'Zowietek (ZowieAPI)', impl: zowietek },
+    hwsdec: { label: 'Decoder SDI HW Stream / URAY', impl: hwsdec, decoder: true }
 };
-const DRIVER_CHOICES = ['auto', 'none', ...Object.keys(DRIVERS)];
+// Fabricantes que se pueden elegir según el tipo de equipo
+const DRIVER_CHOICES = ['auto', 'none', ...Object.keys(DRIVERS).filter(d => !DRIVERS[d].decoder)];
+const DECODER_DRIVER_CHOICES = ['auto', 'none', ...Object.keys(DRIVERS).filter(d => DRIVERS[d].decoder)];
+
+// Decoders: hoy sólo hay una API conocida
+async function detectDecoder(enc) {
+    try {
+        return { driver: 'hwsdec', info: await hwsdec.detect(enc) };
+    } catch (e) {
+        if (e.code === 'EAUTH') return { driver: 'hwsdec', info: null, error: e };
+        if (e.code === 'ETIMEDOUT' || e.code === 'ECONNREFUSED' || e.code === 'EHOSTUNREACH') throw e;
+        throw new ApiError('API del decoder no reconocida: elige el fabricante o usa su web', 'EUNKNOWN');
+    }
+}
+
+// URLs de stream de un decoder: vacía (canal sin usar) o srt/rtmp/udp/rtp/rtsp/http, sin espacios ni comillas
+function validateDecoderUrl(u) {
+    const url = String(u === null || u === undefined ? '' : u).trim();
+    if (!url) return '';
+    if (url.length > 512 || /[\s"'<>\\]/.test(url) || !/^(srt|rtmp|rtmps|udp|rtp|rtsp|http|https):\/\//i.test(url)) {
+        throw new ApiError(`URL no válida: ${url.slice(0, 60)} (srt://, rtmp://, udp://, rtsp://…)`, 'EINVAL');
+    }
+    return url;
+}
 
 // Prueba las APIs en orden. Un error de credenciales cuenta como detectado (la API existe).
 // HiSilicon va primero: su 401 de autenticación básica identifica el firmware; ZowieAPI no la usa.
@@ -655,6 +781,7 @@ function validateStreamParams(body, caps) {
 }
 
 module.exports = {
-    DRIVERS, DRIVER_CHOICES, ApiError, detect, impl, validateStreamParams, locate, parseStreamId,
-    _test: { parseXml, flat, hisilicon, zowietek, zowiePublishList, zowieRecordList }
+    DRIVERS, DRIVER_CHOICES, DECODER_DRIVER_CHOICES, DEC_SPLITS, ApiError, detect, detectDecoder, impl,
+    validateStreamParams, validateDecoderUrl, locate, parseStreamId,
+    _test: { parseXml, flat, hisilicon, zowietek, hwsdec, zowiePublishList, zowieRecordList }
 };

@@ -537,9 +537,10 @@
                         <label>Control por API</label>
                         <select id="enc_driver" class="form-control">
                             <option value="auto">Detectar automáticamente</option>
-                            <option value="uray">URAY (CGI)</option>
-                            <option value="hwstream">HW Stream (CGI)</option>
-                            <option value="zowietek">Zowietek (ZowieAPI)</option>
+                            <option value="uray" data-kind="encoder">URAY (CGI)</option>
+                            <option value="hwstream" data-kind="encoder">HW Stream (CGI)</option>
+                            <option value="zowietek" data-kind="encoder">Zowietek (ZowieAPI)</option>
+                            <option value="hwsdec" data-kind="decoder">Decoder SDI HW Stream / URAY</option>
                             <option value="none">Ninguno (sólo su web)</option>
                         </select>
                     </div>

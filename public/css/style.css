@@ -581,6 +581,12 @@ input:checked + .slider:before { transform: translateX(18px); }
 .enc-empty i { font-size: 2rem; color: var(--text-muted); margin-bottom: 0.75rem; }
 .enc-steps { font-size: 0.85rem; line-height: 1.6; padding-left: 1.25rem; margin-bottom: 1rem; }
 .enc-warn { color: var(--color-yellow); font-size: 0.85rem; line-height: 1.5; }
+/* Control del decoder */
+#decForm .enc-input-rows { grid-template-columns: 1fr; }
+.dec-url-field { display: flex; gap: 6px; align-items: center; min-width: 0; flex: 1; }
+.dec-url-field input { min-width: 0; flex: 1; }
+.dec-hdmi { display: flex; gap: 8px; align-items: center; }
+.dec-hdmi select { flex: 1; min-width: 0; }
 .enc-kind-icon { font-size: 0.85rem; color: var(--text-muted); margin-right: 8px; }
 .enc-toolbar { display: flex; justify-content: flex-end; margin-bottom: 1rem; }
 /* Sitios VPN: una tarjeta por router o pasarela, con sus equipos */

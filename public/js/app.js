@@ -2627,7 +2627,7 @@ function encoderStateHtml(enc) {
     else vpn = `${siteTag}<span class="sig-state bad">Caído</span> <span class="enc-muted">${st.vpn.handshakeAge !== null && st.vpn.handshakeAge !== undefined ? 'último contacto ' + agoText(st.vpn.handshakeAge) : 'el router aún no se ha conectado'}</span>`;
 
     const ok = st.online && (!enc.vpn || (st.vpn && st.vpn.up));
-    if (enc.kind === 'decoder') return { web, vpn, sig: decoderOutputsHtml(enc), sigLabel: 'Recibe', api: null, ok };
+    if (enc.kind === 'decoder') return { web, vpn, sig: decoderOutputsHtml(enc), sigLabel: 'Recibe', api: decoderApiHtml(enc), apiLabel: 'Decoder', ok };
 
     // Una línea por entrada del encoder con la señal del servidor que recibe lo que envía
     const chans = encoderChannels(enc);
@@ -2642,7 +2642,22 @@ function encoderStateHtml(enc) {
         if (inputHasSignal(inp.channel)) return `${tag}<span class="sig-state good">${escapeHtml(inp.name)} · recibiendo</span>`;
         return `${tag}<span class="sig-state warn">${escapeHtml(inp.name)} · sin señal</span>`;
     }).map(l => `<div class="enc-line">${l}</div>`).join('');
-    return { web, vpn, sig, sigLabel: 'Señal', api: encoderApiHtml(enc), ok };
+    return { web, vpn, sig, sigLabel: 'Señal', api: encoderApiHtml(enc), apiLabel: 'Encoder', ok };
+}
+
+// Lo que dice la API del decoder: si reproduce, la división y la URL de cada canal
+const DEC_SPLIT_NAMES = { 0: '1×1', 1: '2×2', 2: '2×2', 3: '4×4' };
+const decSplitChannels = (split) => (Number(split) === 0 ? 1 : 4);
+function decoderApiHtml(enc) {
+    if (enc.driver === 'none') return null;
+    const a = (enc.status || {}).api;
+    if (!a) return (enc.status || {}).online ? '<span class="sig-state off">Comprobando…</span>' : null;
+    if (!a.ok) return `<span class="sig-state ${a.auth ? 'bad' : 'off'}">${a.auth ? 'Credenciales incorrectas' : 'Sin control'}</span> <span class="enc-muted">${escapeHtml(a.error || '')}</span>`;
+    const head = `<div class="enc-line">${a.playing ? '<span class="sig-state good">Reproduciendo</span>' : '<span class="sig-state warn">Sin stream</span>'} <span class="enc-muted">· ${DEC_SPLIT_NAMES[a.split] || a.split}</span></div>`;
+    const n = decSplitChannels(a.split);
+    const urls = (a.urls || []).slice(0, n).map((u, i) =>
+        `<div class="enc-line">${n > 1 ? `<span class="enc-in-tag">C${i + 1}</span>` : ''}<span class="enc-muted">${u ? escapeHtml(u) : 'sin URL'}</span></div>`).join('');
+    return head + urls;
 }
 
 // Salidas del servidor que recibe cada canal del decoder, con su estado
@@ -2734,7 +2749,7 @@ function renderEncoders() {
                 <dt>Web</dt><dd>${s.web}</dd>
                 ${isAdmin() || enc.vpn ? `<dt>Túnel</dt><dd>${s.vpn}</dd>` : ''}
                 ${s.sig ? `<dt>${s.sigLabel}</dt><dd>${s.sig}</dd>` : ''}
-                ${s.api ? `<dt>Encoder</dt><dd>${s.api}</dd>` : ''}
+                ${s.api ? `<dt>${s.apiLabel}</dt><dd>${s.api}</dd>` : ''}
                 ${enc.notes ? `<dt>Notas</dt><dd class="enc-muted">${escapeHtml(enc.notes)}</dd>` : ''}
                 ${st.proxyError ? `<dt>Proxy</dt><dd><span class="sig-state bad">${escapeHtml(st.proxyError)}</span></dd>` : ''}
             </dl>
@@ -2772,8 +2787,17 @@ function labelEncoderKind() {
         const n = Number(o.value);
         o.text = `${n} ${dec ? (n === 1 ? 'canal' : 'canales') : (n === 1 ? 'entrada' : 'entradas')}`;
     });
-    document.getElementById('enc_api_group').style.display = dec ? 'none' : '';
-    document.getElementById('enc_model').placeholder = dec ? 'URAY decoder H.265' : 'URAY H.265';
+    // Fabricantes (API) de cada tipo de equipo; si el elegido no vale para este tipo, a automático
+    const drv = document.getElementById('enc_driver');
+    [...drv.options].forEach(o => {
+        const k = o.dataset.kind;
+        o.hidden = o.disabled = !!k && k !== (dec ? 'decoder' : 'encoder');
+    });
+    if (drv.selectedOptions[0] && drv.selectedOptions[0].disabled) drv.value = 'auto';
+    document.getElementById('enc_api_hint').textContent = dec
+        ? 'Vacío: el decoder usa admin / admin de fábrica. La contraseña no se vuelve a mostrar.'
+        : 'Vacío: URAY y HW Stream usan admin / admin de fábrica. La contraseña no se vuelve a mostrar.';
+    document.getElementById('enc_model').placeholder = dec ? 'URAY decoder SDI' : 'URAY H.265';
 }
 
 function renderEncoderInputRows(values) {
@@ -2883,9 +2907,9 @@ async function submitEncoder(e) {
         web_port: document.getElementById('enc_port').value,
         https: document.getElementById('enc_https').checked,
         notes: document.getElementById('enc_notes').value,
-        driver: dec ? 'none' : document.getElementById('enc_driver').value,
-        api_user: dec ? '' : document.getElementById('enc_api_user').value,
-        api_pass: dec ? '' : document.getElementById('enc_api_pass').value
+        driver: document.getElementById('enc_driver').value,
+        api_user: document.getElementById('enc_api_user').value,
+        api_pass: document.getElementById('enc_api_pass').value
     };
     if (dec) body.outputs = rows; else body.channels = rows;
     const res = await fetch(id ? `/api/encoders/${id}` : '/api/encoders', {
@@ -3119,7 +3143,118 @@ async function loadEncoderControl() {
     }
     if (id !== ctlEncoderId) return; // se abrió otro mientras cargaba
     ctlState = data;
-    renderEncoderControl();
+    if (data.decoder) renderDecoderControl(); else renderEncoderControl();
+}
+
+/* ---- Control del decoder: qué reproduce cada canal, división de pantalla, resolución HDMI ---- */
+
+// URL con la que el decoder recoge una salida del servidor en modo listener: el servidor tal como
+// lo ve el decoder (su IP en el túnel si el decoder va por un sitio VPN) y el puerto de la salida
+function decoderUrlForOutput(o, enc) {
+    // Las salidas listener se escriben srt://:9101?mode=listener (sin host): no vale new URL()
+    const m = /^srt:\/\/[^/:?]*:(\d{1,5})\/?(?:\?(.*))?$/i.exec(String(o.url || '').trim());
+    if (!m) return null;
+    const params = new URLSearchParams(m[2] || '');
+    if ((params.get('mode') || 'listener') !== 'listener') return null;
+    params.delete('mode');
+    // El servidor dice con qué IP lo ve el decoder (túnel o su red); si no lo sabe, la del panel
+    const host = (ctlState && ctlState.serverAddress) || window.location.hostname;
+    const qs = params.toString();
+    return `srt://${host}:${m[1]}${qs ? '?' + qs : ''}`;
+}
+
+function renderDecoderControl() {
+    const d = ctlState;
+    const enc = encoderList.find(e => e.id === ctlEncoderId) || {};
+    const dev = d.device || {};
+    const n = decSplitChannels(d.split);
+    document.getElementById('ctl_top').innerHTML = `
+        <dl class="enc-rows">
+            <dt>Decoder</dt><dd>${escapeHtml(d.label || d.driver)}${dev.version ? ` · <span class="enc-muted">${escapeHtml(dev.version)}</span>` : ''}</dd>
+            <dt>Estado</dt><dd>${d.playing === null ? '<span class="sig-state off">Sin datos</span>' : d.playing ? '<span class="sig-state good">Reproduciendo</span>' : '<span class="sig-state warn">Sin stream</span>'}</dd>
+            ${d.fileMode ? '<dt>Modo</dt><dd><span class="sig-state warn">Reproduce un archivo local</span> <span class="enc-muted">al guardar pasa a URL</span></dd>' : ''}
+            ${d.privateProtocol ? '<dt>Protocolo</dt><dd class="enc-muted">privado del fabricante activado</dd>' : ''}
+        </dl>
+        <div class="ctl-toolbar">
+            <button type="button" class="ctl-icon-btn" onclick="loadEncoderControl()" title="Volver a leer la configuración del decoder" aria-label="Releer"><i class="fa-solid fa-rotate"></i></button>
+            ${isAdmin() ? '<button type="button" class="ctl-icon-btn" onclick="rebootDecoder()" title="Reiniciar el decoder" aria-label="Reiniciar el decoder"><i class="fa-solid fa-power-off"></i></button>' : ''}
+        </div>`;
+
+    const edit = !!d.canEditUrls;
+    const linked = Array.isArray(d.outputs) ? d.outputs : [];
+    const rows = Array.from({ length: 4 }, (_, i) => {
+        const o = linked[i] !== null && linked[i] !== undefined ? outputs.find(x => x.id === linked[i]) : null;
+        const fromOut = o ? decoderUrlForOutput(o, enc) : null;
+        const btn = edit && fromOut
+            ? `<button type="button" class="ctl-icon-btn" data-url="${escapeHtml(fromOut)}" onclick="decFillFromOutput(${i}, this.dataset.url)" title="Poner la URL de su salida vinculada: ${escapeHtml(outputName(o))}" aria-label="Usar la salida vinculada del canal ${i + 1}"><i class="fa-solid fa-link"></i></button>`
+            : '';
+        return `
+            <label class="enc-input-row dec-url-row" data-ch="${i}" ${i >= n ? 'hidden' : ''}>
+                <span>${n > 1 || i > 0 ? `Canal ${i + 1}` : 'URL'}</span>
+                <span class="dec-url-field">
+                    <input type="text" class="form-control" name="url${i}" value="${escapeHtml(d.urls[i] || '')}" placeholder="srt://servidor:puerto" maxlength="512" ${edit ? '' : 'readonly'}>
+                    ${btn}
+                </span>
+            </label>`;
+    }).join('');
+
+    const hdmi = (d.hdmiModes || []).length ? `
+        <h4 class="ctl-h">Salida HDMI</h4>
+        <form class="dec-hdmi" onsubmit="applyDecoderHdmi(event)">
+            <select name="mode" class="form-control">${d.hdmiModes.map(m => `<option value="${escapeHtml(m)}" ${m === d.hdmiMode ? 'selected' : ''}>${escapeHtml(m)}</option>`).join('')}</select>
+            <button type="submit" class="btn-secondary">Aplicar</button>
+        </form>` : '';
+
+    const body = document.getElementById('ctl_body');
+    const scroll = body.scrollTop;
+    body.innerHTML = `
+        <h4 class="ctl-h">Qué reproduce</h4>
+        <form id="decForm" onsubmit="applyDecoderConfig(event)">
+            <div class="form-group">
+                <label>División de pantalla</label>
+                <select name="split" class="form-control" onchange="decSplitChanged(this)" ${edit ? '' : 'disabled'}>
+                    ${(d.splits || []).map(s => `<option value="${s.value}" ${Number(s.value) === Number(d.split) || (Number(d.split) === 1 && s.value === 2) ? 'selected' : ''}>${escapeHtml(s.label)}</option>`).join('')}
+                </select>
+            </div>
+            <div class="enc-input-rows">${rows}</div>
+            ${edit ? `<small class="enc-muted" style="display:block; margin:6px 0 10px;">El decoder se conecta como <em>caller</em>: la salida del servidor tiene que estar en modo <em>listener</em>. <i class="fa-solid fa-link"></i> pone la URL de la salida vinculada${enc.site ? ' por el túnel' : ''}.</small>
+            <div class="modal-actions"><button type="submit" class="btn-primary"><i class="fa-solid fa-floppy-disk"></i> Guardar en el decoder</button></div>`
+            : '<p class="enc-muted">Cambiar lo que reproduce el decoder es sólo para administradores.</p>'}
+        </form>
+        ${hdmi}`;
+    body.scrollTop = scroll;
+}
+
+function decSplitChanged(sel) {
+    const n = decSplitChannels(sel.value);
+    document.querySelectorAll('#decForm .dec-url-row').forEach(r => { r.hidden = Number(r.dataset.ch) >= n; });
+}
+
+function decFillFromOutput(ch, url) {
+    const input = document.querySelector(`#decForm input[name="url${ch}"]`);
+    if (input) input.value = url;
+}
+
+async function applyDecoderConfig(e) {
+    e.preventDefault();
+    const f = e.target;
+    const split = Number(f.elements.split.value);
+    // Los canales que la división no usa se dejan como están en el decoder
+    const n = decSplitChannels(split);
+    const urls = Array.from({ length: 4 }, (_, i) => (i < n ? f.elements['url' + i].value.trim() : null));
+    await encoderOrder('decoder', { split, urls }, 'Decoder actualizado');
+}
+
+async function applyDecoderHdmi(e) {
+    e.preventDefault();
+    const mode = e.target.elements.mode.value;
+    if (!confirm(`¿Cambiar la salida HDMI del decoder a ${mode}? La pantalla puede quedarse en negro unos segundos.`)) return;
+    await encoderOrder('hdmi', { mode }, `Salida HDMI: ${mode}`);
+}
+
+async function rebootDecoder() {
+    if (!confirm('¿Reiniciar el decoder? Dejará de reproducir durante el arranque.')) return;
+    await encoderOrder('reboot', {}, 'Reiniciando el decoder');
 }
 
 // Entradas y streams desplegados en la ventana de control (se conservan al releer tras una orden)
