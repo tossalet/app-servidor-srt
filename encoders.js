@@ -264,8 +264,17 @@ const siteOf = (enc) => siteOfHost(enc.host);
 function validateSite(body) {
     const name = String(body.name || '').trim();
     if (!name || name.length > 64) return { error: 'El nombre del sitio es obligatorio (máximo 64 caracteres)' };
-    return { value: { name, notes: String(body.notes || '').slice(0, 500), lan: String(body.lan || '').trim() } };
+    const videoVia = body.video_via === 'public' ? 'public' : 'tunnel';
+    const videoHost = String(body.video_host || '').trim();
+    if (videoHost && (videoHost.length > 253 || !/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/i.test(videoHost))) {
+        return { error: 'Dirección pública no válida (ej. tsst.dyndns.tv o 203.0.113.10, sin puerto)' };
+    }
+    if (videoVia === 'public' && !videoHost) return { error: 'Indica la dirección pública del servidor por la que llega el vídeo' };
+    return { value: { name, notes: String(body.notes || '').slice(0, 500), lan: String(body.lan || '').trim(), videoVia, videoHost } };
 }
+
+// Dirección del servidor que usan los decoders de un sitio para recibir sus salidas
+const siteVideoHost = (site, info) => (site.video_via === 'public' && site.video_host) ? site.video_host : (info.serverIp || null);
 
 // Comprueba la red LAN de un sitio: no puede pisar el túnel, otro sitio ni una red del servidor
 // (si no, el servidor mandaría su propio tráfico por el túnel y perdería la red de la oficina)
@@ -288,7 +297,7 @@ function checkLan(lanText, subnet, exceptId) {
     return lan;
 }
 
-async function createSite({ name, notes, lan: lanText }) {
+async function createSite({ name, notes, lan: lanText, videoVia, videoHost }) {
     const info = await wgInfo(true);
     if (!info.available) throw new Error(info.reason);
     const subnet = parseCidr(info.subnet);
@@ -305,9 +314,9 @@ async function createSite({ name, notes, lan: lanText }) {
     const priv = await run('wg', ['genkey']);
     const pub = await run('wg', ['pubkey'], priv + '\n');
     const psk = await run('wg', ['genpsk']);
-    const r = await dbRun('INSERT INTO vpn_sites (name, notes, vpn_ip, vpn_lan, vpn_pubkey, vpn_privkey, vpn_psk) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [name, notes, ip, lan ? lan.text : '', pub, priv, psk]);
-    const site = { id: r.lastID, name, notes, vpn_ip: ip, vpn_lan: lan ? lan.text : '', vpn_pubkey: pub, vpn_privkey: priv, vpn_psk: psk, legacy_encoder_id: null };
+    const r = await dbRun('INSERT INTO vpn_sites (name, notes, vpn_ip, vpn_lan, vpn_pubkey, vpn_privkey, vpn_psk, video_via, video_host) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [name, notes, ip, lan ? lan.text : '', pub, priv, psk, videoVia || 'tunnel', videoHost || '']);
+    const site = { id: r.lastID, name, notes, video_via: videoVia || 'tunnel', video_host: videoHost || '', vpn_ip: ip, vpn_lan: lan ? lan.text : '', vpn_pubkey: pub, vpn_privkey: priv, vpn_psk: psk, legacy_encoder_id: null };
     try {
         await writeSiteBlock(site, siteBlock(site));
     } catch (e) {
@@ -330,7 +339,7 @@ async function applySite(info, oldLan, newLan) {
     return warnings;
 }
 
-async function updateSite(site, { name, notes, lan: lanText }) {
+async function updateSite(site, { name, notes, lan: lanText, videoVia, videoHost }) {
     let lanOut = site.vpn_lan;
     let warnings = [];
     if (lanText !== site.vpn_lan) {
@@ -343,7 +352,8 @@ async function updateSite(site, { name, notes, lan: lanText }) {
         await dbRun('UPDATE vpn_sites SET legacy_encoder_id = NULL WHERE id = ?', [site.id]);
         warnings = await applySite(info, site.vpn_lan, lanOut);
     }
-    await dbRun('UPDATE vpn_sites SET name = ?, notes = ?, vpn_lan = ? WHERE id = ?', [name, notes, lanOut, site.id]);
+    await dbRun('UPDATE vpn_sites SET name = ?, notes = ?, vpn_lan = ?, video_via = ?, video_host = ? WHERE id = ?',
+        [name, notes, lanOut, videoVia || 'tunnel', videoHost || '', site.id]);
     return warnings;
 }
 
@@ -664,6 +674,7 @@ function decoderOutputsOf(row) {
 function publicSite(s) {
     return {
         id: s.id, name: s.name, notes: s.notes, vpn_ip: s.vpn_ip, vpn_lan: s.vpn_lan,
+        video_via: s.video_via || 'tunnel', video_host: s.video_host || '',
         status: siteStatus.get(s.id) || null,
         devices: [...encoders.values()].filter(e => siteOf(e) === s).map(e => ({ id: e.id, name: e.name, kind: e.kind || 'encoder' }))
     };
@@ -920,10 +931,11 @@ function registerRoutes(app) {
                 if (state.srt) state.srt.channels = state.srt.channels.map(c => ({ ...c, passphrase: c.passphrase ? '***' : '' }));
             }
             // Dirección del servidor tal como la ve el decoder, para montar la URL de sus salidas:
-            // la del túnel si va por un sitio VPN, o la de la red del servidor en la que está
+            // la del túnel (o la pública que diga su sitio VPN), o la de la red del servidor en la que está
             let serverAddress = null;
             if (admin) {
-                if (siteOf(enc)) serverAddress = (await wgInfo()).serverIp || null;
+                const site = siteOf(enc);
+                if (site) serverAddress = siteVideoHost(site, await wgInfo());
                 else {
                     const net = localNets().find(n => inCidr(enc.host, n.text));
                     serverAddress = net ? net.address : null;

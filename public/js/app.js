@@ -3008,6 +3008,18 @@ function renderVpnSites() {
                     <small class="enc-muted" style="display:block; margin-top:5px;">Con LAN, el servidor llega a todos los equipos del sitio por su IP. Déjala <strong>vacía</strong> si ese rango se repite en otros sitios o es el de la red del servidor: llegarás a cada equipo por un puerto que redirige el router (8080, 8081…).${s ? ' Cambiarla no cambia las claves: el router no hay que tocarlo.' : ''}</small>
                 </div>
                 <div class="form-group">
+                    <label>El vídeo de los decoders llega por</label>
+                    <select id="site_video_via" onchange="document.getElementById('site_video_host_group').style.display = this.value === 'public' ? '' : 'none'">
+                        <option value="tunnel"${s && s.video_via === 'public' ? '' : ' selected'}>El túnel VPN (${escapeHtml(info.serverIp || 'IP del servidor en el túnel')})</option>
+                        <option value="public"${s && s.video_via === 'public' ? ' selected' : ''}>Internet, a la dirección pública del servidor</option>
+                    </select>
+                    <small class="enc-muted" style="display:block; margin-top:5px;">Es la dirección que pone el botón <i class="fa-solid fa-link"></i> en el SRT de los decoders. Por Internet, el túnel queda sólo para el control y no hace falta tocar rutas en el sitio; usa passphrase en esas salidas.</small>
+                </div>
+                <div class="form-group" id="site_video_host_group"${s && s.video_via === 'public' ? '' : ' style="display:none"'}>
+                    <label>Dirección pública del servidor</label>
+                    <input type="text" id="site_video_host" maxlength="253" placeholder="${escapeHtml(String(info.endpoint || 'tsst.dyndns.tv').replace(/:\d+$/, ''))}" value="${s ? escapeHtml(s.video_host || '') : ''}">
+                </div>
+                <div class="form-group">
                     <label>Notas</label>
                     <input type="text" id="site_notes" maxlength="500" placeholder="Raspberry de la unidad móvil · interfaz oficina" value="${s ? escapeHtml(s.notes || '') : ''}">
                 </div>
@@ -3030,6 +3042,7 @@ function renderVpnSites() {
                 <dt>IP del router</dt><dd>${ip}</dd>
                 <dt>LAN del sitio</dt><dd>${escapeHtml(s.vpn_lan || '— (puertos redirigidos en el router)')}</dd>
                 <dt>Servidor</dt><dd>${escapeHtml(vpnEndpointText())} (UDP)</dd>
+                <dt>Vídeo de decoders</dt><dd>${s.video_via === 'public' ? `Por Internet, a <strong>${escapeHtml(s.video_host)}</strong>` : 'Por el túnel'}</dd>
             </dl>
             <ol class="enc-steps">
                 <li>Descarga el archivo e impórtalo en el router o pasarela del sitio (<em>VPN → WireGuard</em>), o cópialo a <code>/etc/wireguard/</code> en una Raspberry.</li>
@@ -3090,7 +3103,10 @@ async function submitVpnSite(e) {
         body: JSON.stringify({
             name: document.getElementById('site_name').value,
             lan: document.getElementById('site_lan').value,
-            notes: document.getElementById('site_notes').value
+            notes: document.getElementById('site_notes').value,
+            video_via: document.getElementById('site_video_via').value,
+            video_host: document.getElementById('site_video_host').value.trim()
+                || (document.getElementById('site_video_via').value === 'public' ? String((encoderVpnInfo || {}).endpoint || '').replace(/:\d+$/, '') : '')
         })
     });
     const data = await res.json().catch(() => ({}));

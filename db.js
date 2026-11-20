@@ -133,6 +133,10 @@ function initDB() {
             vpn_psk TEXT NOT NULL DEFAULT '',
             legacy_encoder_id INTEGER
         )`);
+        // Por dónde llega el vídeo de los decoders del sitio al servidor: por el túnel o directo por
+        // Internet a una dirección pública (el túnel queda sólo para el control)
+        db.run("ALTER TABLE vpn_sites ADD COLUMN video_via TEXT NOT NULL DEFAULT 'tunnel'", () => {});
+        db.run("ALTER TABLE vpn_sites ADD COLUMN video_host TEXT NOT NULL DEFAULT ''", () => {});
         // Antes el acceso VPN iba dentro de cada encoder: pasa a un sitio con las mismas claves (el router
         // no se toca) y legacy_encoder_id recuerda la marca de su bloque en wg0.conf (# tsst-encoder-<id>)
         db.run(`INSERT INTO vpn_sites (name, vpn_ip, vpn_lan, vpn_pubkey, vpn_privkey, vpn_psk, legacy_encoder_id)
