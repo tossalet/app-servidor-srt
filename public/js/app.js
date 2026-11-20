@@ -238,14 +238,15 @@ function switchTab(tabId) {
     document.getElementById('view-toggle').hidden = tabId !== 'streams';
     document.getElementById('expand-toggle').hidden = tabId !== 'streams';
     addBtn.onclick = tabId === 'encoders' ? openAddEncoderModal : openAddInputModal;
-    addBtn.innerHTML = tabId === 'encoders' ? '<i class="fa-solid fa-plus"></i> Añadir encoder' : '<i class="fa-solid fa-plus"></i> Añadir entrada';
+    addBtn.innerHTML = tabId === 'encoders' ? '<i class="fa-solid fa-plus"></i> Añadir equipo' : '<i class="fa-solid fa-plus"></i> Añadir entrada';
 
     if (tabId === 'encoders') {
         ['streamsContainer', 'analyticsContainer', 'systemContainer', 'settingsContainer', 'storageContainer']
             .forEach(id => { document.getElementById(id).style.display = 'none'; });
         document.getElementById('topbar-title').innerText = 'Encoders';
-        document.getElementById('topbar-subtitle').innerText = 'Equipos remotos: estado, túnel VPN y acceso a su web';
+        document.getElementById('topbar-subtitle').innerText = 'Encoders y decoders remotos: estado, túnel VPN y acceso a su web';
         addBtn.style.display = currentUser && currentUser.role === ROLE_ADMIN ? 'inline-block' : 'none';
+        document.getElementById('encoders-toolbar').style.display = currentUser && currentUser.role === ROLE_ADMIN ? '' : 'none';
         fetchEncoders();
     } else if (tabId === 'streams') {
         document.getElementById('streamsContainer').style.display = ''; // lista o mosaico, según su clase
@@ -724,6 +725,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     socket.on('audio_levels', renderAudioLevels);
     socket.on('encoders_status', applyEncoderStatus);
+    socket.on('vpn_sites_status', applyVpnSitesStatus);
     socket.on('rtmp_viewers', (v) => { rtmpViewers = v || {}; paintRtmpViewers(); });
 
     socket.on('sys_stats', (stats) => {
@@ -2593,6 +2595,7 @@ async function fetchEncoders() {
         ]);
         encoderList = Array.isArray(list) ? list : [];
         encoderVpnInfo = vpn;
+        await fetchVpnSites();
         renderEncoders();
     } catch (e) {
         console.error('Encoders', e);
@@ -2615,11 +2618,16 @@ function encoderStateHtml(enc) {
     else if (st.online) web = `<span class="sig-state good">En línea</span> <span class="enc-muted">${st.responseMs !== null ? Math.round(st.responseMs) + ' ms' : ''}</span>`;
     else web = `<span class="sig-state bad">Sin respuesta</span> <span class="enc-muted">${escapeHtml(st.error || '')}${st.lastSeen ? ' · visto ' + agoText((Date.now() - st.lastSeen) / 1000) : ''}</span>`;
 
+    // El túnel es el del sitio VPN al que pertenece el equipo (por su IP)
     let vpn;
-    if (!enc.vpn) vpn = '<span class="sig-state off">Sin túnel</span>';
-    else if (!st.vpn) vpn = '<span class="sig-state off">Comprobando…</span>';
-    else if (st.vpn.up) vpn = `<span class="sig-state good">Activo</span> <span class="enc-muted">${agoText(st.vpn.handshakeAge)}${st.vpn.endpoint ? ' · ' + escapeHtml(st.vpn.endpoint) : ''}</span>`;
-    else vpn = `<span class="sig-state bad">Caído</span> <span class="enc-muted">${st.vpn.handshakeAge !== null ? 'último contacto ' + agoText(st.vpn.handshakeAge) : 'el router aún no se ha conectado'}</span>`;
+    const siteTag = enc.site ? `<span class="enc-in-tag">${escapeHtml(enc.site.name)}</span>` : '';
+    if (!enc.vpn) vpn = '<span class="sig-state off">No usa</span> <span class="enc-muted">el servidor llega por su red</span>';
+    else if (!st.vpn || st.vpn.up === undefined) vpn = `${siteTag}<span class="sig-state off">Comprobando…</span>`;
+    else if (st.vpn.up) vpn = `${siteTag}<span class="sig-state good">Activo</span> <span class="enc-muted">${agoText(st.vpn.handshakeAge)}${st.vpn.endpoint ? ' · ' + escapeHtml(st.vpn.endpoint) : ''}</span>`;
+    else vpn = `${siteTag}<span class="sig-state bad">Caído</span> <span class="enc-muted">${st.vpn.handshakeAge !== null && st.vpn.handshakeAge !== undefined ? 'último contacto ' + agoText(st.vpn.handshakeAge) : 'el router aún no se ha conectado'}</span>`;
+
+    const ok = st.online && (!enc.vpn || (st.vpn && st.vpn.up));
+    if (enc.kind === 'decoder') return { web, vpn, sig: decoderOutputsHtml(enc), sigLabel: 'Recibe', api: null, ok };
 
     // Una línea por entrada del encoder con la señal del servidor que recibe lo que envía
     const chans = encoderChannels(enc);
@@ -2634,7 +2642,31 @@ function encoderStateHtml(enc) {
         if (inputHasSignal(inp.channel)) return `${tag}<span class="sig-state good">${escapeHtml(inp.name)} · recibiendo</span>`;
         return `${tag}<span class="sig-state warn">${escapeHtml(inp.name)} · sin señal</span>`;
     }).map(l => `<div class="enc-line">${l}</div>`).join('');
-    return { web, vpn, sig, api: encoderApiHtml(enc), ok: st.online && (!enc.vpn || (st.vpn && st.vpn.up)) };
+    return { web, vpn, sig, sigLabel: 'Señal', api: encoderApiHtml(enc), ok };
+}
+
+// Salidas del servidor que recibe cada canal del decoder, con su estado
+const outputHasData = (id) => {
+    const hist = frontendTelemetryCache['out_' + id];
+    return !!(hist && hist.length && hist[hist.length - 1].y > 0);
+};
+function outputName(o) {
+    const inp = inputs.find(i => i.channel === o.channel);
+    return `${inp ? inp.name : 'Entrada ' + o.channel} → ${(o.location || maskUrl(o.url)).substring(0, 40)}`;
+}
+function decoderOutputsHtml(enc) {
+    const outs = Array.isArray(enc.outputs) && enc.outputs.length ? enc.outputs : [null];
+    const linked = outs.map((id, k) => ({ id, k })).filter(x => x.id !== null);
+    if (!linked.length) return isAdmin() ? '<span class="sig-state off">Sin vincular</span>' : '';
+    return linked.map(({ id, k }) => {
+        const tag = outs.length > 1 ? `<span class="enc-in-tag">C${k + 1}</span>` : '';
+        const o = outputs.find(x => x.id === id);
+        if (!o) return `${tag}<span class="sig-state off">Salida borrada</span>`;
+        const name = escapeHtml(outputName(o));
+        if (!o.enabled) return `${tag}<span class="sig-state off">${name} · apagada</span>`;
+        if (outputHasData(id)) return `${tag}<span class="sig-state good">${name} · enviando</span>`;
+        return `${tag}<span class="sig-state warn">${name} · sin datos</span>`;
+    }).map(l => `<div class="enc-line">${l}</div>`).join('');
 }
 
 const fmtKbps = (k) => (k >= 1000 ? `${(k / 1000).toFixed(k % 1000 ? 1 : 0)} Mbps` : `${k} kbps`);
@@ -2679,8 +2711,8 @@ function renderEncoders() {
     }
 
     if (!encoderList.length) {
-        grid.innerHTML = `<div class="enc-empty"><i class="fa-solid fa-tower-broadcast"></i><p>No hay encoders.</p>
-            <p class="enc-muted">${isAdmin() ? 'Pulsa <strong>Añadir encoder</strong> para dar de alta el primero.' : 'Pide a un administrador que los dé de alta.'}</p></div>`;
+        grid.innerHTML = `<div class="enc-empty"><i class="fa-solid fa-tower-broadcast"></i><p>No hay equipos.</p>
+            <p class="enc-muted">${isAdmin() ? 'Pulsa <strong>Añadir equipo</strong> para dar de alta el primer encoder o decoder.' : 'Pide a un administrador que los dé de alta.'}</p></div>`;
         return;
     }
 
@@ -2694,16 +2726,15 @@ function renderEncoders() {
             <div class="enc-head">
                 <span class="connection-led active ${led}"></span>
                 <div style="min-width:0;">
-                    <div class="enc-name">${escapeHtml(enc.name)}</div>
-                    <div class="enc-muted">${escapeHtml(enc.model || 'Encoder')}${enc.host ? ` · ${escapeHtml(enc.host)}:${enc.web_port}${enc.https ? ' (HTTPS)' : ''}` : ''}</div>
+                    <div class="enc-name"><i class="fa-solid ${enc.kind === 'decoder' ? 'fa-tv' : 'fa-tower-broadcast'} enc-kind-icon" title="${enc.kind === 'decoder' ? 'Decoder' : 'Encoder'}"></i>${escapeHtml(enc.name)}</div>
+                    <div class="enc-muted">${escapeHtml(enc.model || (enc.kind === 'decoder' ? 'Decoder' : 'Encoder'))}${enc.host ? ` · ${escapeHtml(enc.host)}:${enc.web_port}${enc.https ? ' (HTTPS)' : ''}` : ''}</div>
                 </div>
             </div>
             <dl class="enc-rows">
                 <dt>Web</dt><dd>${s.web}</dd>
                 ${isAdmin() || enc.vpn ? `<dt>Túnel</dt><dd>${s.vpn}</dd>` : ''}
-                ${s.sig ? `<dt>Señal</dt><dd>${s.sig}</dd>` : ''}
+                ${s.sig ? `<dt>${s.sigLabel}</dt><dd>${s.sig}</dd>` : ''}
                 ${s.api ? `<dt>Encoder</dt><dd>${s.api}</dd>` : ''}
-                ${enc.vpn ? `<dt>VPN</dt><dd class="enc-muted">${escapeHtml(enc.vpn_ip)}${enc.vpn_lan ? ' · LAN ' + escapeHtml(enc.vpn_lan) : ''}</dd>` : ''}
                 ${enc.notes ? `<dt>Notas</dt><dd class="enc-muted">${escapeHtml(enc.notes)}</dd>` : ''}
                 ${st.proxyError ? `<dt>Proxy</dt><dd><span class="sig-state bad">${escapeHtml(st.proxyError)}</span></dd>` : ''}
             </dl>
@@ -2711,7 +2742,6 @@ function renderEncoders() {
                 ${isAdmin() ? `<a class="enc-btn primary" href="${proxyUrl}" target="_blank" rel="noopener" title="Abrir la web del encoder a través del servidor (puerto ${enc.proxy_port})" aria-label="Abrir web de ${escapeHtml(enc.name)}"><i class="fa-solid fa-arrow-up-right-from-square"></i></a>` : ''}
                 ${enc.driver !== 'none' ? `<button class="enc-btn${isAdmin() ? '' : ' primary'}" onclick="openEncoderControl(${enc.id})" title="Control: codificación, emisiones y grabación por la API del encoder" aria-label="Control de ${escapeHtml(enc.name)}"${st.online ? '' : ' disabled'}><i class="fa-solid fa-sliders"></i></button>` : ''}
                 ${isAdmin() ? `
-                <button class="enc-btn" onclick="openEncoderVpn(${enc.id})" title="VPN: acceso WireGuard del router" aria-label="VPN de ${escapeHtml(enc.name)}"><i class="fa-solid fa-shield-halved"></i></button>
                 <button class="enc-btn enc-btn-push" onclick="openEditEncoderModal(${enc.id})" title="Editar" aria-label="Editar ${escapeHtml(enc.name)}"><i class="fa-solid fa-pen"></i></button>
                 <button class="enc-btn danger" onclick="deleteEncoder(${enc.id})" title="Borrar" aria-label="Borrar ${escapeHtml(enc.name)}"><i class="fa-solid fa-trash"></i></button>` : ''}
             </div>
@@ -2719,43 +2749,110 @@ function renderEncoders() {
     }).join('');
 }
 
-// Una fila por entrada del encoder: qué señal del servidor recibe lo que envía esa entrada
-function fillEncoderChannels(channels) {
-    const list = Array.isArray(channels) && channels.length ? channels : [null];
+// Una fila por entrada del encoder (qué señal del servidor recibe lo que envía) o por canal del
+// decoder (qué salida del servidor le llega)
+const encKindIsDecoder = () => document.getElementById('enc_kind').value === 'decoder';
+
+function fillEncoderChannels(list0) {
+    const list = Array.isArray(list0) && list0.length ? list0 : [null];
     const count = document.getElementById('enc_input_count');
-    // Si el número de entradas no está en la lista (p. ej. 6), se añade
-    if (![...count.options].some(o => Number(o.value) === list.length)) count.add(new Option(`${list.length} entradas`, String(list.length)));
+    // Si el número no está en la lista (p. ej. 6), se añade
+    if (![...count.options].some(o => Number(o.value) === list.length)) count.add(new Option(String(list.length), String(list.length)));
     count.value = String(list.length);
+    labelEncoderKind();
     renderEncoderInputRows(list);
+}
+
+// Textos del formulario según sea encoder o decoder
+function labelEncoderKind() {
+    const dec = encKindIsDecoder();
+    document.getElementById('enc_count_label').innerText = dec ? 'Canales del decoder (salidas HDMI/SDI)' : 'Entradas del encoder (HDMI/SDI)';
+    document.getElementById('enc_inputs_label').innerText = dec ? 'Salida del servidor que recibe cada canal' : 'Señal SRT que envía cada entrada';
+    [...document.getElementById('enc_input_count').options].forEach(o => {
+        const n = Number(o.value);
+        o.text = `${n} ${dec ? (n === 1 ? 'canal' : 'canales') : (n === 1 ? 'entrada' : 'entradas')}`;
+    });
+    document.getElementById('enc_api_group').style.display = dec ? 'none' : '';
+    document.getElementById('enc_model').placeholder = dec ? 'URAY decoder H.265' : 'URAY H.265';
 }
 
 function renderEncoderInputRows(values) {
     const box = document.getElementById('enc_inputs');
     const n = Number(document.getElementById('enc_input_count').value) || 1;
+    const dec = encKindIsDecoder();
     // Al cambiar el número se conservan las que ya estaban elegidas
     const current = values || [...box.querySelectorAll('select')].map(s => s.value || null);
-    const opts = (sel) => '<option value="">— Ninguna —</option>' + inputs.map(i =>
-        `<option value="${i.channel}" ${String(i.channel) === String(sel ?? '') ? 'selected' : ''}>${escapeHtml(i.name)} (canal ${i.channel})</option>`).join('');
+    const opts = (sel) => '<option value="">— Ninguna —</option>' + (dec
+        ? outputs.map(o => `<option value="${o.id}" ${String(o.id) === String(sel ?? '') ? 'selected' : ''}>${escapeHtml(outputName(o))} (salida ${o.id})</option>`)
+        : inputs.map(i => `<option value="${i.channel}" ${String(i.channel) === String(sel ?? '') ? 'selected' : ''}>${escapeHtml(i.name)} (canal ${i.channel})</option>`)).join('');
     box.innerHTML = Array.from({ length: n }, (_, k) => `
-        <label class="enc-input-row"><span>${n > 1 ? `Entrada ${k + 1}` : 'Entrada'}</span>
+        <label class="enc-input-row"><span>${n > 1 ? `${dec ? 'Canal' : 'Entrada'} ${k + 1}` : (dec ? 'Canal' : 'Entrada')}</span>
         <select class="form-control" data-input="${k}">${opts(current[k])}</select></label>`).join('');
 }
 
-function openAddEncoderModal() {
+function onEncoderKindChange() {
+    // Las señales de un encoder no valen como salidas de un decoder: se empieza de cero
+    const n = Number(document.getElementById('enc_input_count').value) || 1;
+    labelEncoderKind();
+    renderEncoderInputRows(Array(n).fill(null));
+}
+
+function fillEncoderSites(selected) {
+    const sel = document.getElementById('enc_site');
+    sel.innerHTML = '<option value="">— Ninguno: el servidor llega por su red —</option>' + vpnSites.map(s =>
+        `<option value="${s.id}">${escapeHtml(s.name)} · ${escapeHtml(s.vpn_lan || s.vpn_ip + ' (puertos)')}</option>`).join('');
+    sel.value = selected ? String(selected) : '';
+    onEncoderSiteChange(false);
+}
+
+// Qué IP poner según el sitio: la del equipo en la LAN del sitio, o la del router en el túnel
+// más el puerto que el router redirige a ese equipo
+function onEncoderSiteChange(userChanged) {
+    const site = vpnSites.find(s => String(s.id) === document.getElementById('enc_site').value);
+    const hint = document.getElementById('enc_site_hint');
+    const host = document.getElementById('enc_host');
+    if (!site) {
+        hint.textContent = 'Sin túnel: pon la IP con la que el servidor llega al equipo por su propia red.';
+        host.placeholder = '192.168.0.20';
+        return;
+    }
+    if (site.vpn_lan) {
+        hint.textContent = `Pon la IP del equipo en la LAN del sitio (${site.vpn_lan}) y su puerto web.`;
+        host.placeholder = site.vpn_lan.replace(/\.0\/\d+$/, '.20');
+    } else {
+        hint.textContent = `Este sitio no enruta su LAN: pon la IP del router en el túnel (${site.vpn_ip}) y el puerto que el router redirige a este equipo (8080, 8081…).`;
+        host.placeholder = site.vpn_ip;
+        if (userChanged) {
+            host.value = site.vpn_ip;
+            // Primer puerto libre desde 8080 entre los equipos que ya van por este router
+            const editing = Number(document.getElementById('enc_id').value) || null;
+            const used = new Set(encoderList.filter(e => e.host === site.vpn_ip && e.id !== editing).map(e => Number(e.web_port)));
+            let port = 8080;
+            while (used.has(port)) port++;
+            document.getElementById('enc_port').value = port;
+        }
+    }
+}
+
+async function openAddEncoderModal() {
     document.getElementById('formEncoder').reset();
     document.getElementById('enc_id').value = '';
-    document.getElementById('enc_title').innerText = 'Añadir encoder';
+    document.getElementById('enc_title').innerText = 'Añadir equipo';
+    document.getElementById('enc_kind').value = 'encoder';
     document.getElementById('enc_driver').value = 'auto';
     document.getElementById('enc_api_pass').placeholder = 'admin';
+    await fetchVpnSites();
+    fillEncoderSites(null);
     fillEncoderChannels(null);
     openModal('encoderModal');
 }
 
-function openEditEncoderModal(id) {
+async function openEditEncoderModal(id) {
     const enc = encoderList.find(e => e.id === id);
     if (!enc) return;
     document.getElementById('enc_id').value = enc.id;
-    document.getElementById('enc_title').innerText = 'Editar encoder';
+    document.getElementById('enc_title').innerText = enc.kind === 'decoder' ? 'Editar decoder' : 'Editar encoder';
+    document.getElementById('enc_kind').value = enc.kind || 'encoder';
     document.getElementById('enc_name').value = enc.name;
     document.getElementById('enc_model').value = enc.model || '';
     document.getElementById('enc_host').value = enc.host;
@@ -2766,32 +2863,38 @@ function openEditEncoderModal(id) {
     document.getElementById('enc_api_user').value = enc.api_user || '';
     document.getElementById('enc_api_pass').value = '';
     document.getElementById('enc_api_pass').placeholder = enc.api_has_pass ? '•••••• (sin cambios)' : 'admin';
-    fillEncoderChannels(enc.channels || [enc.channel]);
+    await fetchVpnSites();
+    fillEncoderSites(enc.site ? enc.site.id : null);
+    fillEncoderChannels(enc.kind === 'decoder' ? enc.outputs : (enc.channels || [enc.channel]));
     openModal('encoderModal');
 }
 
 async function submitEncoder(e) {
     e.preventDefault();
     const id = document.getElementById('enc_id').value;
+    const dec = encKindIsDecoder();
+    const rows = [...document.querySelectorAll('#enc_inputs select')].map(s => s.value || null);
     const body = {
+        kind: dec ? 'decoder' : 'encoder',
+        site_id: document.getElementById('enc_site').value || null,
         name: document.getElementById('enc_name').value,
         model: document.getElementById('enc_model').value,
         host: document.getElementById('enc_host').value,
         web_port: document.getElementById('enc_port').value,
         https: document.getElementById('enc_https').checked,
-        channels: [...document.querySelectorAll('#enc_inputs select')].map(s => s.value || null),
         notes: document.getElementById('enc_notes').value,
-        driver: document.getElementById('enc_driver').value,
-        api_user: document.getElementById('enc_api_user').value,
-        api_pass: document.getElementById('enc_api_pass').value
+        driver: dec ? 'none' : document.getElementById('enc_driver').value,
+        api_user: dec ? '' : document.getElementById('enc_api_user').value,
+        api_pass: dec ? '' : document.getElementById('enc_api_pass').value
     };
+    if (dec) body.outputs = rows; else body.channels = rows;
     const res = await fetch(id ? `/api/encoders/${id}` : '/api/encoders', {
         method: id ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) return toast(data.error || 'No se pudo guardar el encoder');
+    if (!res.ok) return toast(data.error || 'No se pudo guardar el equipo');
     closeModal('encoderModal');
     fetchEncoders();
 }
@@ -2799,80 +2902,182 @@ async function submitEncoder(e) {
 async function deleteEncoder(id) {
     const enc = encoderList.find(e => e.id === id);
     if (!enc) return;
-    const extra = enc.vpn ? '\n\nTambién se borrará su acceso WireGuard: el router dejará de conectar.' : '';
-    if (!confirm(`¿Borrar el encoder "${enc.name}"?${extra}`)) return;
+    const what = enc.kind === 'decoder' ? 'el decoder' : 'el encoder';
+    if (!confirm(`¿Borrar ${what} "${enc.name}"?${enc.site ? `\n\nEl túnel del sitio "${enc.site.name}" sigue activo para sus demás equipos.` : ''}`)) return;
     const res = await fetch(`/api/encoders/${id}`, { method: 'DELETE' });
     if (!res.ok) { const d = await res.json().catch(() => ({})); return toast(d.error || 'No se pudo borrar'); }
     fetchEncoders();
 }
 
-async function openEncoderVpn(id) {
-    const enc = encoderList.find(e => e.id === id);
-    if (!enc) return;
-    encoderVpnInfo = await fetch('/api/encoders/vpn?refresh=1').then(r => r.json()).catch(() => encoderVpnInfo);
-    const info = encoderVpnInfo || {};
-    document.getElementById('vpn_title').innerText = `Acceso WireGuard · ${enc.name}`;
-    const body = document.getElementById('vpn_body');
+/* ---- Sitios VPN: un acceso WireGuard por router o pasarela de cada sitio, para todos sus equipos ---- */
+let vpnSites = [];
+let vpnSiteView = { mode: 'list' }; // list | form (id: null = nuevo) | info (id)
 
-    if (enc.vpn) {
-        const endpoint = info.endpoint ? info.endpoint + (/:\d+$/.test(info.endpoint) ? '' : ':' + (info.listenPort || 51820)) : `IP pública del servidor, puerto ${info.listenPort || 51820}`;
-        body.innerHTML = `
-            <dl class="enc-rows" style="margin-bottom:1rem;">
-                <dt>IP del router</dt><dd>${escapeHtml(enc.vpn_ip)}</dd>
-                <dt>LAN del sitio</dt><dd>${escapeHtml(enc.vpn_lan || '— (sólo el router)')}</dd>
-                <dt>Servidor</dt><dd>${escapeHtml(endpoint)} (UDP)</dd>
-            </dl>
-            <ol class="enc-steps">
-                <li>Descarga el archivo y, en el router, ve a <em>VPN → WireGuard</em> e impórtalo (o copia los campos a mano).</li>
-                <li>Conecta el encoder por cable a un puerto LAN del router${enc.vpn_lan ? ` y comprueba que la LAN del router es <strong>${escapeHtml(enc.vpn_lan)}</strong>` : ''}.</li>
-                <li>Permite el tráfico del túnel hacia la LAN (en Teltonika: zona del túnel con <em>forward</em> a <em>lan</em>).</li>
-                <li>En el encoder: SRT en modo <strong>Caller</strong> hacia el servidor y el puerto de su entrada.</li>
-            </ol>
-            ${!info.endpoint ? '<p class="enc-warn"><i class="fa-solid fa-triangle-exclamation"></i> No hay WG_ENDPOINT configurado: en el archivo aparece IP_PUBLICA_DEL_SERVIDOR y tendrás que cambiarla.</p>' : ''}
-            <div class="modal-actions">
-                <button type="button" class="btn-secondary" onclick="removeEncoderVpn(${enc.id})"><i class="fa-solid fa-ban"></i> Quitar acceso</button>
-                <a class="btn-primary" href="/api/encoders/${enc.id}/wireguard.conf" download><i class="fa-solid fa-download"></i> Descargar configuración</a>
-            </div>`;
-    } else if (!info.available) {
-        body.innerHTML = `<p class="enc-warn"><i class="fa-solid fa-triangle-exclamation"></i> WireGuard no está disponible: ${escapeHtml(info.reason || 'desconocido')}.</p>
-            <p class="enc-muted" style="margin-top:0.75rem;">Actívalo volviendo a ejecutar <code>sudo bash instalar_servidor.sh</code> y respondiendo que sí a WireGuard. En Docker la VPN se gestiona en el propio host.</p>`;
-    } else {
-        body.innerHTML = `
-            <p class="enc-muted" style="margin-bottom:1rem;">Se crea un acceso para el router del sitio: el servidor le asigna una IP en el túnel (${escapeHtml(info.subnet)}) y genera sus claves.</p>
-            <form onsubmit="createEncoderVpn(event, ${enc.id})">
-                <div class="form-group">
-                    <label>Red LAN del router del sitio (opcional)</label>
-                    <input type="text" id="vpn_lan" placeholder="192.168.101.0/24" pattern="\\d{1,3}(\\.\\d{1,3}){3}/\\d{1,2}">
-                    <small class="enc-muted" style="display:block; margin-top:5px;">Cada sitio necesita una LAN distinta (192.168.101.0/24, 192.168.102.0/24…). Déjala vacía si el router redirige el puerto web del encoder a su IP del túnel.</small>
-                </div>
-                <div class="modal-actions">
-                    <button type="button" class="btn-secondary" onclick="closeModal('encoderVpnModal')">Cancelar</button>
-                    <button type="submit" class="btn-primary"><i class="fa-solid fa-key"></i> Crear acceso</button>
-                </div>
-            </form>`;
-    }
+async function fetchVpnSites() {
+    if (!isAdmin()) { vpnSites = []; return; }
+    try {
+        const res = await fetch('/api/vpn-sites', { cache: 'no-store' });
+        if (res.ok) vpnSites = await res.json();
+    } catch (e) { /* sin red: se queda la lista anterior */ }
+    const count = document.getElementById('enc-sites-count');
+    if (count) count.textContent = vpnSites.length ? `(${vpnSites.length})` : '';
+}
+
+function applyVpnSitesStatus(list) {
+    if (!Array.isArray(list)) return;
+    list.forEach(s => {
+        const site = vpnSites.find(x => x.id === s.id);
+        if (site) site.status = s;
+    });
+    if (vpnSiteView.mode !== 'form' && document.getElementById('encoderVpnModal').style.display === 'flex') renderVpnSites();
+}
+
+async function openVpnSites() {
+    vpnSiteView = { mode: 'list' };
+    encoderVpnInfo = await fetch('/api/encoders/vpn?refresh=1').then(r => r.json()).catch(() => encoderVpnInfo);
+    await fetchVpnSites();
+    renderVpnSites();
     openModal('encoderVpnModal');
 }
 
-async function createEncoderVpn(e, id) {
-    e.preventDefault();
-    const res = await fetch(`/api/encoders/${id}/vpn`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lan: document.getElementById('vpn_lan').value })
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) return toast(data.error || 'No se pudo crear el acceso');
-    if (data.warnings && data.warnings.length) toast('Acceso creado, con avisos:\n\n' + data.warnings.join('\n'));
-    await fetchEncoders();
-    openEncoderVpn(id);
+function vpnEndpointText() {
+    const info = encoderVpnInfo || {};
+    return info.endpoint ? info.endpoint + (/:\d+$/.test(info.endpoint) ? '' : ':' + (info.listenPort || 51820)) : `IP pública del servidor, puerto ${info.listenPort || 51820}`;
 }
 
-async function removeEncoderVpn(id) {
-    if (!confirm('¿Quitar el acceso WireGuard? El router dejará de conectar hasta que crees uno nuevo y lo importes.')) return;
-    const res = await fetch(`/api/encoders/${id}/vpn`, { method: 'DELETE' });
-    if (!res.ok) { const d = await res.json().catch(() => ({})); return toast(d.error || 'No se pudo quitar'); }
-    closeModal('encoderVpnModal');
+function vpnSiteStateHtml(s) {
+    const st = s.status;
+    if (!st || st.up === undefined) return '<span class="sig-state off">Comprobando…</span>';
+    if (st.up) return `<span class="sig-state good">Activo</span> <span class="enc-muted">${agoText(st.handshakeAge)}${st.endpoint ? ' · ' + escapeHtml(st.endpoint) : ''}</span>`;
+    return `<span class="sig-state bad">Caído</span> <span class="enc-muted">${st.handshakeAge !== null && st.handshakeAge !== undefined ? 'último contacto ' + agoText(st.handshakeAge) : 'el router aún no se ha conectado'}</span>`;
+}
+
+function renderVpnSites() {
+    const info = encoderVpnInfo || {};
+    const body = document.getElementById('vpn_body');
+    const title = document.getElementById('vpn_title');
+    const v = vpnSiteView;
+
+    if (v.mode === 'form') {
+        const s = v.id ? vpnSites.find(x => x.id === v.id) : null;
+        title.innerText = s ? `Editar sitio · ${s.name}` : 'Nuevo sitio VPN';
+        body.innerHTML = `
+            <form onsubmit="submitVpnSite(event)">
+                <div class="form-group">
+                    <label>Nombre del sitio</label>
+                    <input type="text" id="site_name" maxlength="64" required placeholder="Unidad móvil · Estadio" value="${s ? escapeHtml(s.name) : ''}">
+                </div>
+                <div class="form-group">
+                    <label>Red LAN del sitio (opcional)</label>
+                    <input type="text" id="site_lan" placeholder="192.168.101.0/24" pattern="\\d{1,3}(\\.\\d{1,3}){3}/\\d{1,2}" value="${s ? escapeHtml(s.vpn_lan || '') : ''}">
+                    <small class="enc-muted" style="display:block; margin-top:5px;">Con LAN, el servidor llega a todos los equipos del sitio por su IP. Déjala <strong>vacía</strong> si ese rango se repite en otros sitios o es el de la red del servidor: llegarás a cada equipo por un puerto que redirige el router (8080, 8081…).${s ? ' Cambiarla no cambia las claves: el router no hay que tocarlo.' : ''}</small>
+                </div>
+                <div class="form-group">
+                    <label>Notas</label>
+                    <input type="text" id="site_notes" maxlength="500" placeholder="Raspberry de la unidad móvil · interfaz oficina" value="${s ? escapeHtml(s.notes || '') : ''}">
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn-secondary" onclick="vpnSiteView = { mode: 'list' }; renderVpnSites();">Volver</button>
+                    <button type="submit" class="btn-primary"><i class="fa-solid ${s ? 'fa-floppy-disk' : 'fa-key'}"></i> ${s ? 'Guardar' : 'Crear acceso'}</button>
+                </div>
+            </form>`;
+        return;
+    }
+
+    if (v.mode === 'info') {
+        const s = vpnSites.find(x => x.id === v.id);
+        if (!s) { vpnSiteView = { mode: 'list' }; return renderVpnSites(); }
+        title.innerText = `Sitio VPN · ${s.name}`;
+        const ip = escapeHtml(s.vpn_ip);
+        body.innerHTML = `
+            <dl class="enc-rows" style="margin-bottom:1rem;">
+                <dt>Túnel</dt><dd>${vpnSiteStateHtml(s)}</dd>
+                <dt>IP del router</dt><dd>${ip}</dd>
+                <dt>LAN del sitio</dt><dd>${escapeHtml(s.vpn_lan || '— (puertos redirigidos en el router)')}</dd>
+                <dt>Servidor</dt><dd>${escapeHtml(vpnEndpointText())} (UDP)</dd>
+            </dl>
+            <ol class="enc-steps">
+                <li>Descarga el archivo e impórtalo en el router o pasarela del sitio (<em>VPN → WireGuard</em>), o cópialo a <code>/etc/wireguard/</code> en una Raspberry.</li>
+                ${s.vpn_lan
+                    ? `<li>Comprueba que la LAN del router es <strong>${escapeHtml(s.vpn_lan)}</strong> y permite el tráfico del túnel hacia la LAN.</li>
+                       <li>Da de alta cada equipo con <strong>Añadir equipo</strong>, eligiendo este sitio y poniendo su IP en esa LAN.</li>`
+                    : `<li>En el router, redirige un puerto del túnel a la web de cada equipo (<code>8080 → equipo 1:80</code>, <code>8081 → equipo 2:80</code>…) y activa el enmascaramiento (masquerade) del túnel hacia la LAN.</li>
+                       <li>Da de alta cada equipo con <strong>Añadir equipo</strong>, eligiendo este sitio: IP <strong>${ip}</strong> y el puerto que le redirige el router.</li>`}
+                <li>Encoders: SRT en modo <strong>Caller</strong> hacia el servidor y el puerto de su entrada. Decoders: SRT <strong>Caller</strong> hacia el servidor y el puerto de la salida que deben recibir (salida en modo <em>listener</em>).</li>
+            </ol>
+            ${!info.endpoint ? '<p class="enc-warn"><i class="fa-solid fa-triangle-exclamation"></i> No hay WG_ENDPOINT configurado: en el archivo aparece IP_PUBLICA_DEL_SERVIDOR y tendrás que cambiarla.</p>' : ''}
+            <div class="modal-actions">
+                <button type="button" class="btn-secondary" onclick="vpnSiteView = { mode: 'list' }; renderVpnSites();">Volver</button>
+                <a class="btn-primary" href="/api/vpn-sites/${s.id}/wireguard.conf" download><i class="fa-solid fa-download"></i> Descargar configuración</a>
+            </div>`;
+        return;
+    }
+
+    title.innerText = 'Sitios VPN';
+    const unavailable = !info.available
+        ? `<p class="enc-warn"><i class="fa-solid fa-triangle-exclamation"></i> WireGuard no está disponible: ${escapeHtml(info.reason || 'desconocido')}.</p>
+           <p class="enc-muted" style="margin:0.5rem 0 1rem;">Actívalo volviendo a ejecutar <code>sudo bash instalar_servidor.sh</code> y respondiendo que sí a WireGuard.</p>`
+        : '';
+    const list = vpnSites.length ? vpnSites.map(s => {
+        const devs = (s.devices || []).map(d => `<span class="enc-site-dev"><i class="fa-solid ${d.kind === 'decoder' ? 'fa-tv' : 'fa-tower-broadcast'}"></i> ${escapeHtml(d.name)}</span>`).join('');
+        return `
+        <div class="enc-site">
+            <div class="enc-site-head">
+                <div style="min-width:0;">
+                    <div class="enc-name">${escapeHtml(s.name)}</div>
+                    <div class="enc-muted">${escapeHtml(s.vpn_ip)} · ${escapeHtml(s.vpn_lan ? 'LAN ' + s.vpn_lan : 'sin LAN (puertos redirigidos)')}</div>
+                </div>
+                <div class="enc-actions" style="margin:0;">
+                    <button type="button" class="enc-btn" onclick="vpnSiteView = { mode: 'info', id: ${s.id} }; renderVpnSites();" title="Configuración del router" aria-label="Configuración de ${escapeHtml(s.name)}"><i class="fa-solid fa-circle-info"></i></button>
+                    <a class="enc-btn" href="/api/vpn-sites/${s.id}/wireguard.conf" download title="Descargar configuración" aria-label="Descargar configuración de ${escapeHtml(s.name)}"><i class="fa-solid fa-download"></i></a>
+                    <button type="button" class="enc-btn" onclick="vpnSiteView = { mode: 'form', id: ${s.id} }; renderVpnSites();" title="Editar" aria-label="Editar ${escapeHtml(s.name)}"><i class="fa-solid fa-pen"></i></button>
+                    <button type="button" class="enc-btn danger" onclick="deleteVpnSite(${s.id})" title="Borrar" aria-label="Borrar ${escapeHtml(s.name)}"><i class="fa-solid fa-trash"></i></button>
+                </div>
+            </div>
+            <div class="enc-line">${vpnSiteStateHtml(s)}</div>
+            <div class="enc-site-devs">${devs || '<span class="enc-muted">Ningún equipo usa este sitio todavía</span>'}</div>
+            ${s.notes ? `<div class="enc-muted">${escapeHtml(s.notes)}</div>` : ''}
+        </div>`;
+    }).join('') : '<p class="enc-muted" style="margin-bottom:1rem;">No hay sitios. Crea uno por cada router o pasarela (Raspberry) que abra el túnel hacia este servidor; después elige el sitio al dar de alta sus encoders y decoders.</p>';
+    body.innerHTML = `${unavailable}<div class="enc-sites">${list}</div>
+        <div class="modal-actions">
+            <button type="button" class="btn-secondary" onclick="closeModal('encoderVpnModal')">Cerrar</button>
+            <button type="button" class="btn-primary" onclick="vpnSiteView = { mode: 'form', id: null }; renderVpnSites();"${info.available ? '' : ' disabled'}><i class="fa-solid fa-plus"></i> Nuevo sitio</button>
+        </div>`;
+}
+
+async function submitVpnSite(e) {
+    e.preventDefault();
+    const id = vpnSiteView.id;
+    const res = await fetch(id ? `/api/vpn-sites/${id}` : '/api/vpn-sites', {
+        method: id ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            name: document.getElementById('site_name').value,
+            lan: document.getElementById('site_lan').value,
+            notes: document.getElementById('site_notes').value
+        })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return toast(data.error || 'No se pudo guardar el sitio');
+    if (data.warnings && data.warnings.length) toast('Guardado, con avisos:\n\n' + data.warnings.join('\n'));
+    await fetchVpnSites();
+    vpnSiteView = { mode: 'info', id: data.id };
+    renderVpnSites();
+    fetchEncoders();
+}
+
+async function deleteVpnSite(id) {
+    const s = vpnSites.find(x => x.id === id);
+    if (!s) return;
+    const devs = (s.devices || []).map(d => d.name);
+    const extra = devs.length ? `\n\nSe dejará de llegar a: ${devs.join(', ')}.` : '';
+    if (!confirm(`¿Borrar el sitio "${s.name}"? Su router dejará de conectar hasta que crees otro acceso y lo importes.${extra}`)) return;
+    const res = await fetch(`/api/vpn-sites/${id}`, { method: 'DELETE' });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); return toast(d.error || 'No se pudo borrar'); }
+    await fetchVpnSites();
+    vpnSiteView = { mode: 'list' };
+    renderVpnSites();
     fetchEncoders();
 }
 

@@ -429,8 +429,9 @@ function watchViewers() {
     }
 }
 
-function encoder(name, host, online, error) {
-    notify(online ? `✅ El encoder ${name} (${host}) vuelve a estar en línea.` : `🔴 El encoder ${name} (${host}) no responde: ${error || 'sin conexión'}.`);
+function encoder(name, host, online, error, kind) {
+    const what = kind === 'decoder' ? 'decoder' : 'encoder';
+    notify(online ? `✅ El ${what} ${name} (${host}) vuelve a estar en línea.` : `🔴 El ${what} ${name} (${host}) no responde: ${error || 'sin conexión'}.`);
 }
 
 // Señal de vídeo en la entrada del encoder (HDMI/SDI), leída por su API

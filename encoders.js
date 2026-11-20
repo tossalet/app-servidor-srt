@@ -17,6 +17,7 @@ const https = require('https');
 const net = require('net');
 const tls = require('tls');
 const fs = require('fs');
+const os = require('os');
 const { spawn } = require('child_process');
 const db = require('./db');
 const auth = require('./auth');
@@ -27,7 +28,8 @@ const PANEL_PORT = parseInt(process.env.PORT, 10) || 4000;
 // Puertos del proxy: panel + 10 en adelante (panel 2000 -> encoders 2010, 2011...). Grafana usa panel + 1.
 const PROXY_BASE = parseInt(process.env.ENCODER_PROXY_PORT, 10) || PANEL_PORT + 10;
 const MAX_SLOTS = 50;
-const MAX_INPUTS = 8; // encoders de hasta 8 entradas (los habituales: 1, 2 o 4)
+const MAX_INPUTS = 8; // encoders de hasta 8 entradas (los habituales: 1, 2 o 4); decoders de hasta 8 canales
+const KINDS = ['encoder', 'decoder'];
 const CHECK_MS = 10000;
 const PROBE_TIMEOUT_MS = 3000;
 // Sin handshake en 3 min el router se da por desconectado (con keepalive de 25 s hay uno cada 2 min)
@@ -39,7 +41,9 @@ const WG_CONF = `/etc/wireguard/${WG_IF}.conf`;
 const WG_ENDPOINT = process.env.WG_ENDPOINT || '';
 
 let io = null;
-const encoders = new Map(); // id -> fila de la BBDD
+const encoders = new Map(); // id -> fila de la BBDD (encoders y decoders)
+const sites = new Map();    // id -> sitio VPN (tabla vpn_sites)
+const siteStatus = new Map(); // id sitio -> estado de su túnel
 const status = new Map();   // id -> estado de la última comprobación
 const proxies = new Map();  // id -> { server, port }
 
@@ -73,30 +77,39 @@ function validateEncoder(body) {
         return { error: 'IP o nombre del encoder no válido' };
     }
     // El proxy no debe dar acceso a servicios del propio servidor (Prometheus, /metrics...)
-    if (/^localhost$/i.test(host) || (isIPv4(host) && (host.startsWith('127.') || host === '0.0.0.0'))) {
-        return { error: 'La IP del encoder no puede ser la del propio servidor' };
+    if (/^localhost$/i.test(host) || (isIPv4(host) && (host.startsWith('127.') || host === '0.0.0.0' || serverAddresses().has(host)))) {
+        return { error: 'La IP del equipo no puede ser la del propio servidor' };
     }
     const webPort = parseInt(body.web_port, 10) || (body.https ? 443 : 80);
     if (webPort < 1 || webPort > 65535) return { error: 'Puerto web no válido' };
-    // Señal del servidor que envía cada entrada del encoder (channels[0] = entrada 1).
+    const kind = body.kind === undefined || body.kind === '' ? 'encoder' : String(body.kind);
+    if (!KINDS.includes(kind)) return { error: 'Tipo de equipo no válido (encoder o decoder)' };
+    const decoder = kind === 'decoder';
+    // Encoder: señal del servidor que envía cada entrada (channels[0] = entrada 1).
     // Compatibilidad: sin channels, el campo channel es la única entrada.
-    const rawChannels = Array.isArray(body.channels) ? body.channels : [body.channel];
-    if (!rawChannels.length || rawChannels.length > MAX_INPUTS) return { error: `El encoder puede tener de 1 a ${MAX_INPUTS} entradas` };
-    const channels = [];
-    for (const c of rawChannels) {
-        const ch = c === '' || c === null || c === undefined ? null : parseInt(c, 10);
-        if (ch !== null && Number.isNaN(ch)) return { error: 'Señal vinculada no válida' };
-        if (ch !== null && channels.includes(ch)) return { error: 'Dos entradas del encoder no pueden enviar la misma señal' };
-        channels.push(ch);
+    // Decoder: salida del servidor que recibe cada uno de sus canales (outputs[0] = canal 1).
+    const rawList = decoder
+        ? (Array.isArray(body.outputs) ? body.outputs : [null])
+        : (Array.isArray(body.channels) ? body.channels : [body.channel]);
+    const what = decoder ? 'El decoder puede tener de 1 a %d canales' : 'El encoder puede tener de 1 a %d entradas';
+    if (!rawList.length || rawList.length > MAX_INPUTS) return { error: what.replace('%d', MAX_INPUTS) };
+    const list = [];
+    for (const c of rawList) {
+        const v = c === '' || c === null || c === undefined ? null : parseInt(c, 10);
+        if (v !== null && Number.isNaN(v)) return { error: decoder ? 'Salida vinculada no válida' : 'Señal vinculada no válida' };
+        if (v !== null && list.includes(v)) return { error: decoder ? 'Dos canales del decoder no pueden recibir la misma salida' : 'Dos entradas del encoder no pueden enviar la misma señal' };
+        list.push(v);
     }
+    const channels = decoder ? [null] : list;
     const channel = channels[0];
-    const driver = body.driver === undefined || body.driver === '' ? 'auto' : String(body.driver);
+    // Los drivers de API son de encoders: el decoder se maneja por su web
+    const driver = decoder ? 'none' : (body.driver === undefined || body.driver === '' ? 'auto' : String(body.driver));
     if (!drivers.DRIVER_CHOICES.includes(driver)) return { error: 'Fabricante (API) no válido' };
-    const apiUser = String(body.api_user || '').trim();
+    const apiUser = decoder ? '' : String(body.api_user || '').trim();
     if (apiUser.length > 64 || /[:\r\n]/.test(apiUser)) return { error: 'Usuario de la API no válido' };
     // api_pass: undefined o '' = conservar la guardada; null = borrarla
     let apiPass;
-    if (body.api_pass === null) apiPass = '';
+    if (body.api_pass === null || decoder) apiPass = '';
     else if (body.api_pass !== undefined && body.api_pass !== '') {
         apiPass = String(body.api_pass);
         if (apiPass.length > 128 || /[\r\n]/.test(apiPass)) return { error: 'Contraseña de la API no válida' };
@@ -108,9 +121,12 @@ function validateEncoder(body) {
             host,
             web_port: webPort,
             https: body.https ? 1 : 0,
+            kind,
             channel,
             channels,
             input_channels: channels.length > 1 ? JSON.stringify(channels) : '',
+            outputs: decoder ? list : [],
+            output_ids: decoder ? JSON.stringify(list) : '',
             notes: String(body.notes || '').slice(0, 500),
             driver,
             api_user: apiUser,
@@ -179,32 +195,107 @@ async function wgPeers() {
     return peers;
 }
 
-const peerBlockRe = (id) => new RegExp(`\\n?# tsst-encoder-${id}\\b[\\s\\S]*?# /tsst-encoder-${id}\\n?`, 'g');
+/* ---- Sitios VPN: un acceso WireGuard por router (o pasarela) del sitio, para todos sus equipos ---- */
+
+// Bloque del peer de un sitio en wg0.conf. Los sitios migrados de la versión anterior (un acceso por
+// encoder) conservan su marca antigua # tsst-encoder-<id> hasta que se reescriben.
+function siteBlockRe(site) {
+    const marks = [`tsst-site-${site.id}`];
+    if (site.legacy_encoder_id) marks.push(`tsst-encoder-${site.legacy_encoder_id}`);
+    return new RegExp(`\\n?# (${marks.join('|')})\\b[\\s\\S]*?# /\\1\\b\\n?`, 'g');
+}
+
+function siteBlock(site) {
+    const allowed = [`${site.vpn_ip}/32`, ...(site.vpn_lan ? [site.vpn_lan] : [])].join(', ');
+    const safeName = String(site.name).replace(/[\r\n]/g, ' ');
+    return `\n# tsst-site-${site.id} ${safeName}\n[Peer]\nPublicKey = ${site.vpn_pubkey}\nPresharedKey = ${site.vpn_psk}\nAllowedIPs = ${allowed}\n# /tsst-site-${site.id}\n`;
+}
+
+// Escribe (o quita, con block vacío) el peer del sitio en wg0.conf
+async function writeSiteBlock(site, block) {
+    const conf = (await fs.promises.readFile(WG_CONF, 'utf8')).replace(siteBlockRe(site), '\n').replace(/\n{3,}/g, '\n\n');
+    await fs.promises.writeFile(WG_CONF, conf.replace(/\s*$/, '\n') + (block || ''), { mode: 0o600 });
+}
 
 async function applyWg() {
     // syncconf aplica peers sin cortar los túneles que ya están establecidos
     await run('bash', ['-c', `wg syncconf ${WG_IF} <(wg-quick strip ${WG_IF})`]);
 }
 
-async function createPeer(enc, lanText) {
-    const info = await wgInfo(true);
-    if (!info.available) throw new Error(info.reason);
-    if (enc.vpn_pubkey) throw new Error('Este encoder ya tiene acceso VPN');
+const inCidr = (ip, cidr) => {
+    const c = parseCidr(cidr);
+    return !!c && isIPv4(ip) && Math.floor(ipToInt(ip) / c.size) * c.size === c.network;
+};
 
-    const subnet = parseCidr(info.subnet);
-    let lan = null;
-    if (lanText) {
-        lan = parseCidr(lanText);
-        if (!lan || lan.prefix < 16) return Promise.reject(new Error('Red LAN del sitio no válida (ej. 192.168.101.0/24)'));
-        if (overlaps(lan, subnet)) throw new Error('La red LAN del sitio no puede solaparse con la del túnel');
-        for (const other of encoders.values()) {
-            const o = other.id !== enc.id && parseCidr(other.vpn_lan);
-            if (o && overlaps(o, lan)) throw new Error(`La red ${lan.text} ya la usa "${other.name}": cada sitio necesita una LAN distinta`);
+// Redes e IPs del propio servidor (sin el túnel): una LAN de sitio no puede pisarlas y el proxy no
+// puede apuntar a ellas
+function localNets() {
+    const out = [];
+    for (const [name, addrs] of Object.entries(os.networkInterfaces())) {
+        if (name === WG_IF) continue;
+        for (const a of addrs || []) {
+            if (a.family !== 'IPv4' && a.family !== 4) continue;
+            const c = a.cidr && parseCidr(a.cidr);
+            if (c) out.push({ ...c, iface: name, address: a.address });
         }
     }
+    return out;
+}
+
+function serverAddresses() {
+    const set = new Set();
+    for (const addrs of Object.values(os.networkInterfaces())) {
+        for (const a of addrs || []) if (a.family === 'IPv4' || a.family === 4) set.add(a.address);
+    }
+    return set;
+}
+
+// Sitio al que pertenece un equipo: el que tiene su IP en la LAN del sitio o es la IP del túnel del
+// router (equipos a los que se llega por un puerto redirigido)
+function siteOfHost(host) {
+    if (!isIPv4(host)) return null;
+    for (const s of sites.values()) {
+        if (host === s.vpn_ip || (s.vpn_lan && inCidr(host, s.vpn_lan))) return s;
+    }
+    return null;
+}
+const siteOf = (enc) => siteOfHost(enc.host);
+
+function validateSite(body) {
+    const name = String(body.name || '').trim();
+    if (!name || name.length > 64) return { error: 'El nombre del sitio es obligatorio (máximo 64 caracteres)' };
+    return { value: { name, notes: String(body.notes || '').slice(0, 500), lan: String(body.lan || '').trim() } };
+}
+
+// Comprueba la red LAN de un sitio: no puede pisar el túnel, otro sitio ni una red del servidor
+// (si no, el servidor mandaría su propio tráfico por el túnel y perdería la red de la oficina)
+function checkLan(lanText, subnet, exceptId) {
+    if (!lanText) return null;
+    const lan = parseCidr(lanText);
+    if (!lan || lan.prefix < 16) throw new Error('Red LAN del sitio no válida (ej. 192.168.101.0/24)');
+    if (subnet && overlaps(lan, subnet)) throw new Error('La red LAN del sitio no puede solaparse con la del túnel');
+    for (const n of localNets()) {
+        if (overlaps(lan, n)) {
+            throw new Error(`La red ${lan.text} es la del propio servidor (${n.iface} ${n.text}): deja la LAN vacía y llega a los equipos por puertos redirigidos en el router del sitio`);
+        }
+    }
+    for (const other of sites.values()) {
+        const o = other.id !== exceptId && parseCidr(other.vpn_lan);
+        if (o && overlaps(o, lan)) {
+            throw new Error(`La red ${lan.text} ya la usa el sitio "${other.name}": deja la LAN vacía y llega a los equipos por puertos redirigidos en el router`);
+        }
+    }
+    return lan;
+}
+
+async function createSite({ name, notes, lan: lanText }) {
+    const info = await wgInfo(true);
+    if (!info.available) throw new Error(info.reason);
+    const subnet = parseCidr(info.subnet);
+    const lan = checkLan(lanText, subnet, null);
 
     // Primera IP libre del túnel (la .1 suele ser el servidor)
-    const used = new Set([info.serverIp, ...[...encoders.values()].map(e => e.vpn_ip).filter(Boolean)]);
+    const used = new Set([info.serverIp, ...[...sites.values()].map(s => s.vpn_ip).filter(Boolean)]);
     let ip = null;
     for (let n = subnet.network + 2; n < subnet.network + subnet.size - 1; n++) {
         if (!used.has(intToIp(n))) { ip = intToIp(n); break; }
@@ -214,53 +305,73 @@ async function createPeer(enc, lanText) {
     const priv = await run('wg', ['genkey']);
     const pub = await run('wg', ['pubkey'], priv + '\n');
     const psk = await run('wg', ['genpsk']);
-    const allowed = [`${ip}/32`, ...(lan ? [lan.text] : [])].join(', ');
-    const safeName = enc.name.replace(/[\r\n]/g, ' ');
-    const block = `\n# tsst-encoder-${enc.id} ${safeName}\n[Peer]\nPublicKey = ${pub}\nPresharedKey = ${psk}\nAllowedIPs = ${allowed}\n# /tsst-encoder-${enc.id}\n`;
-
-    const conf = (await fs.promises.readFile(WG_CONF, 'utf8')).replace(peerBlockRe(enc.id), '\n');
-    await fs.promises.writeFile(WG_CONF, conf.replace(/\s*$/, '\n') + block, { mode: 0o600 });
-    await dbRun('UPDATE encoders SET vpn_ip = ?, vpn_lan = ?, vpn_pubkey = ?, vpn_privkey = ?, vpn_psk = ? WHERE id = ?',
-        [ip, lan ? lan.text : '', pub, priv, psk, enc.id]);
-
-    const warnings = [];
-    if (info.up) {
-        await applyWg().catch(e => warnings.push(`No se pudo aplicar en caliente: ${e.message}`));
-        // wg-quick sólo crea las rutas al arrancar; para la LAN del sitio la añadimos ya
-        if (lan) await run('ip', ['route', 'replace', lan.text, 'dev', WG_IF]).catch(e => warnings.push(`Ruta ${lan.text}: ${e.message}`));
-    } else {
-        warnings.push(`La interfaz ${WG_IF} no está levantada (systemctl start wg-quick@${WG_IF})`);
+    const r = await dbRun('INSERT INTO vpn_sites (name, notes, vpn_ip, vpn_lan, vpn_pubkey, vpn_privkey, vpn_psk) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [name, notes, ip, lan ? lan.text : '', pub, priv, psk]);
+    const site = { id: r.lastID, name, notes, vpn_ip: ip, vpn_lan: lan ? lan.text : '', vpn_pubkey: pub, vpn_privkey: priv, vpn_psk: psk, legacy_encoder_id: null };
+    try {
+        await writeSiteBlock(site, siteBlock(site));
+    } catch (e) {
+        await dbRun('DELETE FROM vpn_sites WHERE id = ?', [site.id]).catch(() => {});
+        throw new Error(`No se pudo escribir ${WG_CONF}: ${e.message}`);
     }
+    return { id: site.id, warnings: await applySite(info, null, site.vpn_lan) };
+}
+
+// Aplica en caliente el cambio de un sitio: peers y la ruta de su LAN (wg-quick sólo las crea al arrancar)
+async function applySite(info, oldLan, newLan) {
+    const warnings = [];
+    if (!info.up) {
+        warnings.push(`La interfaz ${WG_IF} no está levantada (systemctl start wg-quick@${WG_IF})`);
+        return warnings;
+    }
+    await applyWg().catch(e => warnings.push(`No se pudo aplicar en caliente: ${e.message}`));
+    if (oldLan && oldLan !== newLan) await run('ip', ['route', 'del', oldLan, 'dev', WG_IF]).catch(() => {});
+    if (newLan) await run('ip', ['route', 'replace', newLan, 'dev', WG_IF]).catch(e => warnings.push(`Ruta ${newLan}: ${e.message}`));
     return warnings;
 }
 
-async function removePeer(enc) {
-    if (!enc.vpn_pubkey) return;
-    try {
-        const conf = await fs.promises.readFile(WG_CONF, 'utf8');
-        await fs.promises.writeFile(WG_CONF, conf.replace(peerBlockRe(enc.id), '\n').replace(/\n{3,}/g, '\n\n'), { mode: 0o600 });
-        await run('wg', ['set', WG_IF, 'peer', enc.vpn_pubkey, 'remove']).catch(() => {});
-        if (enc.vpn_lan) await run('ip', ['route', 'del', enc.vpn_lan, 'dev', WG_IF]).catch(() => {});
-    } catch (e) {
-        console.error(`[ENCODERS] Quitando el peer de ${enc.name}:`, e.message);
+async function updateSite(site, { name, notes, lan: lanText }) {
+    let lanOut = site.vpn_lan;
+    let warnings = [];
+    if (lanText !== site.vpn_lan) {
+        // Cambiar la LAN reescribe el peer con las mismas claves: el router no hay que tocarlo
+        const info = await wgInfo(true);
+        if (!info.available) throw new Error(info.reason);
+        const lan = checkLan(lanText, parseCidr(info.subnet), site.id);
+        lanOut = lan ? lan.text : '';
+        await writeSiteBlock(site, siteBlock({ ...site, name, vpn_lan: lanOut }));
+        await dbRun('UPDATE vpn_sites SET legacy_encoder_id = NULL WHERE id = ?', [site.id]);
+        warnings = await applySite(info, site.vpn_lan, lanOut);
     }
-    await dbRun("UPDATE encoders SET vpn_ip = '', vpn_lan = '', vpn_pubkey = '', vpn_privkey = '', vpn_psk = '' WHERE id = ?", [enc.id]);
+    await dbRun('UPDATE vpn_sites SET name = ?, notes = ?, vpn_lan = ? WHERE id = ?', [name, notes, lanOut, site.id]);
+    return warnings;
 }
 
-async function clientConfig(enc) {
+async function deleteSite(site) {
+    try {
+        await writeSiteBlock(site, '');
+        await run('wg', ['set', WG_IF, 'peer', site.vpn_pubkey, 'remove']).catch(() => {});
+        if (site.vpn_lan) await run('ip', ['route', 'del', site.vpn_lan, 'dev', WG_IF]).catch(() => {});
+    } catch (e) {
+        console.error(`[ENCODERS] Quitando el peer del sitio ${site.name}:`, e.message);
+    }
+    await dbRun('DELETE FROM vpn_sites WHERE id = ?', [site.id]);
+}
+
+async function clientConfig(site) {
     const info = await wgInfo();
     let endpoint = WG_ENDPOINT || 'IP_PUBLICA_DEL_SERVIDOR';
     if (!/:\d+$/.test(endpoint)) endpoint += `:${info.listenPort || 51820}`;
     return [
-        `# Router del encoder "${enc.name}" -> servidor TSST`,
-        `# IP del router en el túnel: ${enc.vpn_ip}${enc.vpn_lan ? ` · LAN del sitio: ${enc.vpn_lan}` : ''}`,
+        `# Sitio "${site.name}" -> servidor TSST`,
+        `# IP del router en el túnel: ${site.vpn_ip}${site.vpn_lan ? ` · LAN del sitio: ${site.vpn_lan}` : ' · sin LAN enrutada (puertos redirigidos)'}`,
         '[Interface]',
-        `PrivateKey = ${enc.vpn_privkey}`,
-        `Address = ${enc.vpn_ip}/32`,
+        `PrivateKey = ${site.vpn_privkey}`,
+        `Address = ${site.vpn_ip}/32`,
         '',
         '[Peer]',
         `PublicKey = ${info.publicKey || 'CLAVE_PUBLICA_DEL_SERVIDOR'}`,
-        `PresharedKey = ${enc.vpn_psk}`,
+        `PresharedKey = ${site.vpn_psk}`,
         `Endpoint = ${endpoint}`,
         `AllowedIPs = ${info.subnet || '10.8.0.0/24'}`,
         'PersistentKeepalive = 25',
@@ -465,24 +576,26 @@ async function refreshOne(enc) {
 
 let checking = false;
 async function checkAll() {
-    if (checking || !encoders.size) return;
+    if (checking || (!encoders.size && !sites.size)) return;
     checking = true;
     try {
-        const anyVpn = [...encoders.values()].some(e => e.vpn_pubkey);
-        const peers = anyVpn ? await wgPeers() : new Map();
+        // Túnel de cada sitio: lo comparten todos sus equipos
+        const peers = sites.size ? await wgPeers() : new Map();
         const now = Date.now() / 1000;
+        siteStatus.clear();
+        for (const s of sites.values()) {
+            const p = peers.get(s.vpn_pubkey);
+            const age = p && p.handshake ? now - p.handshake : null;
+            siteStatus.set(s.id, { up: age !== null && age < HANDSHAKE_STALE_S, handshakeAge: age, endpoint: p ? p.endpoint : '', rx: p ? p.rx : 0, tx: p ? p.tx : 0 });
+        }
         await Promise.all([...encoders.values()].map(async (enc) => {
             const r = await probe(enc.host, enc.web_port);
             const prev = status.get(enc.id) || {};
-            let vpn = null;
-            if (enc.vpn_pubkey) {
-                const p = peers.get(enc.vpn_pubkey);
-                const age = p && p.handshake ? now - p.handshake : null;
-                vpn = { up: age !== null && age < HANDSHAKE_STALE_S, handshakeAge: age, endpoint: p ? p.endpoint : '', rx: p ? p.rx : 0, tx: p ? p.tx : 0 };
-            }
+            const site = siteOf(enc);
+            const vpn = site ? { ...siteStatus.get(site.id), site: site.id } : null;
             if (prev.online !== undefined && prev.online !== r.ok) {
                 console.log(`[ENCODERS] ${enc.name} (${enc.host}) ${r.ok ? 'en línea' : `sin conexión: ${r.error}`}`);
-                require('./telegram').encoder(enc.name, enc.host, r.ok, r.error);
+                require('./telegram').encoder(enc.name, enc.host, r.ok, r.error, enc.kind);
             }
             // La API sólo se consulta si la web responde (si no, cada vuelta esperaría el timeout)
             const api = r.ok ? await pollApi(enc) : (prev.api ? { ...prev.api, ok: false, error: 'Sin conexión' } : null);
@@ -508,7 +621,11 @@ async function checkAll() {
                 proxyError: prev.proxyError
             });
         }));
-        if (io) require('./access').broadcast('encoders_status', statusList()); // require perezoso: evita ciclo de carga
+        if (io) {
+            const access = require('./access'); // require perezoso: evita ciclo de carga
+            access.broadcast('encoders_status', statusList());
+            access.broadcast('vpn_sites_status', siteStatusList()); // sólo administradores (filterFor falla cerrado)
+        }
     } finally {
         checking = false;
     }
@@ -518,15 +635,47 @@ function statusList() {
     return [...encoders.keys()].map(id => ({ id, ...(status.get(id) || {}) }));
 }
 
+function siteStatusList() {
+    return [...sites.keys()].map(id => ({ id, ...(siteStatus.get(id) || {}) }));
+}
+
+// Salida del servidor que recibe cada canal de un decoder: [canal 1, canal 2...]
+function decoderOutputsOf(row) {
+    try {
+        const v = JSON.parse(row.output_ids || '[]');
+        if (Array.isArray(v) && v.length) return v.map(x => (x === null || x === undefined || x === '' ? null : Number(x)));
+    } catch { /* columna corrupta: como si no hubiera */ }
+    return [null];
+}
+
+// Sitio tal como lo ve el admin (sin claves): su túnel y qué equipos van por él
+function publicSite(s) {
+    return {
+        id: s.id, name: s.name, notes: s.notes, vpn_ip: s.vpn_ip, vpn_lan: s.vpn_lan,
+        status: siteStatus.get(s.id) || null,
+        devices: [...encoders.values()].filter(e => siteOf(e) === s).map(e => ({ id: e.id, name: e.name, kind: e.kind || 'encoder' }))
+    };
+}
+
 /* =======================================
  *  API
  * ======================================= */
 function publicEncoder(enc, user) {
-    const { vpn_privkey, vpn_psk, api_pass, input_channels, ...rest } = enc;
+    // Las columnas vpn_* son de la versión anterior (el acceso iba en cada encoder): ya no se usan
+    const { vpn_privkey, vpn_psk, vpn_pubkey, vpn_ip, vpn_lan, api_pass, input_channels, output_ids, ...rest } = enc;
+    const kind = enc.kind || 'encoder';
     const channels = encoderChannelsOf(enc).map(c => (c === null ? null : Number(c)));
-    const out = { ...rest, channels, api_has_pass: !!api_pass, proxy_port: PROXY_BASE + enc.proxy_slot, vpn: !!enc.vpn_pubkey, status: status.get(enc.id) || null };
-    if (user && user.role !== auth.ROLE_ADMIN) { // el operador no ve cómo llegar al encoder
-        for (const k of ['host', 'web_port', 'vpn_ip', 'vpn_lan', 'vpn_pubkey', 'api_user', 'api_has_pass']) delete out[k];
+    const site = siteOf(enc);
+    const out = {
+        ...rest, kind, channels, outputs: kind === 'decoder' ? decoderOutputsOf(enc) : [],
+        api_has_pass: !!api_pass, proxy_port: PROXY_BASE + enc.proxy_slot,
+        vpn: !!site, site: site ? { id: site.id, name: site.name, vpn_ip: site.vpn_ip, vpn_lan: site.vpn_lan } : null,
+        status: status.get(enc.id) || null
+    };
+    if (user && user.role !== auth.ROLE_ADMIN) { // el operador no ve cómo llegar al equipo
+        for (const k of ['host', 'web_port', 'site', 'api_user', 'api_has_pass']) delete out[k];
+        // De las salidas que recibe un decoder, sólo las que el operador ve
+        out.outputs = out.outputs.map(o => (o !== null && require('./access').canSeeOutput(user, o) ? o : null));
         // Sólo las entradas que le ha asignado el admin (o todas); de la VPN sólo si está arriba
         delete out.proxy_port;
         const visible = require('./access').visibleEncoderInputs(user, enc.id);
@@ -541,6 +690,10 @@ function publicEncoder(enc, user) {
 }
 
 async function reload() {
+    const siteRows = await dbAll('SELECT * FROM vpn_sites ORDER BY id');
+    sites.clear();
+    siteRows.forEach(s => sites.set(s.id, s));
+    for (const id of [...siteStatus.keys()]) if (!sites.has(id)) siteStatus.delete(id);
     const rows = await dbAll('SELECT * FROM encoders ORDER BY id');
     const ids = new Set(rows.map(r => r.id));
     for (const id of [...encoders.keys()]) {
@@ -572,13 +725,36 @@ function registerRoutes(app) {
         res.json({ ...rest, proxyBase: PROXY_BASE });
     }));
 
+    // Comprobaciones que necesitan la BBDD: las salidas del decoder existen y la IP encaja con el
+    // sitio elegido (su LAN o la IP del router en el túnel)
+    const checkDevice = async (value, body) => {
+        const outs = value.outputs.filter(o => o !== null);
+        if (outs.length) {
+            const found = new Set((await dbAll(`SELECT id FROM outputs WHERE id IN (${outs.map(() => '?').join(',')})`, outs)).map(r => r.id));
+            const missing = outs.find(o => !found.has(o));
+            if (missing !== undefined) return `La salida ${missing} no existe`;
+        }
+        if (body.site_id !== undefined && body.site_id !== null && body.site_id !== '') {
+            const site = sites.get(parseInt(body.site_id, 10));
+            if (!site) return 'El sitio VPN elegido no existe';
+            if (siteOfHost(value.host) !== site) {
+                return site.vpn_lan
+                    ? `La IP ${value.host} no es del sitio "${site.name}": usa una IP de su LAN (${site.vpn_lan}) o la del router en el túnel (${site.vpn_ip}) con un puerto redirigido`
+                    : `La IP ${value.host} no es del sitio "${site.name}": ese sitio no enruta su LAN, usa la IP del router en el túnel (${site.vpn_ip}) con el puerto que redirige a este equipo`;
+            }
+        }
+        return null;
+    };
+
     app.post('/api/encoders', auth.requireAdmin, wrap(async (req, res) => {
         const { error, value } = validateEncoder(req.body || {});
         if (error) return res.status(400).json({ error });
+        const bad = await checkDevice(value, req.body);
+        if (bad) return res.status(400).json({ error: bad });
         const slot = freeSlot();
-        if (slot < 0) return res.status(400).json({ error: `Máximo ${MAX_SLOTS} encoders` });
-        const r = await dbRun(`INSERT INTO encoders (name, model, host, web_port, https, channel, input_channels, notes, proxy_slot, driver, api_user, api_pass) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [value.name, value.model, value.host, value.web_port, value.https, value.channel, value.input_channels, value.notes, slot, value.driver, value.api_user, value.api_pass || '']);
+        if (slot < 0) return res.status(400).json({ error: `Máximo ${MAX_SLOTS} equipos` });
+        const r = await dbRun(`INSERT INTO encoders (name, model, kind, host, web_port, https, channel, input_channels, output_ids, notes, proxy_slot, driver, api_user, api_pass) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [value.name, value.model, value.kind, value.host, value.web_port, value.https, value.channel, value.input_channels, value.output_ids, value.notes, slot, value.driver, value.api_user, value.api_pass || '']);
         await reload();
         await require('./access').reload();
         notify();
@@ -591,10 +767,12 @@ function registerRoutes(app) {
         if (!encoders.has(id)) return res.status(404).json({ error: 'No encontrado' });
         const { error, value } = validateEncoder(req.body || {});
         if (error) return res.status(400).json({ error });
+        const bad = await checkDevice(value, req.body);
+        if (bad) return res.status(400).json({ error: bad });
         // Sin usuario de API no se guarda contraseña; si no se envía una nueva, se conserva la anterior
         const pass = !value.api_user ? '' : (value.api_pass !== undefined ? value.api_pass : encoders.get(id).api_pass);
-        await dbRun('UPDATE encoders SET name = ?, model = ?, host = ?, web_port = ?, https = ?, channel = ?, input_channels = ?, notes = ?, driver = ?, api_user = ?, api_pass = ? WHERE id = ?',
-            [value.name, value.model, value.host, value.web_port, value.https, value.channel, value.input_channels, value.notes, value.driver, value.api_user, pass, id]);
+        await dbRun('UPDATE encoders SET name = ?, model = ?, kind = ?, host = ?, web_port = ?, https = ?, channel = ?, input_channels = ?, output_ids = ?, notes = ?, driver = ?, api_user = ?, api_pass = ? WHERE id = ?',
+            [value.name, value.model, value.kind, value.host, value.web_port, value.https, value.channel, value.input_channels, value.output_ids, value.notes, value.driver, value.api_user, pass, id]);
         forgetDriver(id); // la IP o el fabricante pueden haber cambiado
         await reload();
         await require('./access').reload();
@@ -607,7 +785,7 @@ function registerRoutes(app) {
         const id = parseInt(req.params.id, 10);
         const enc = encoders.get(id);
         if (!enc) return res.status(404).json({ error: 'No encontrado' });
-        await removePeer(enc);
+        // El túnel es del sitio: borrar un equipo no corta a los demás equipos del sitio
         await dbRun('DELETE FROM encoders WHERE id = ?', [id]);
         await dbRun('DELETE FROM encoder_access WHERE encoder_id = ?', [id]);
         await reload();
@@ -616,24 +794,56 @@ function registerRoutes(app) {
         res.json({ deleted: true });
     }));
 
-    app.post('/api/encoders/:id/vpn', auth.requireAdmin, wrap(async (req, res) => {
-        const id = parseInt(req.params.id, 10);
-        const enc = encoders.get(id);
-        if (!enc) return res.status(404).json({ error: 'No encontrado' });
-        const warnings = await createPeer(enc, String((req.body && req.body.lan) || '').trim());
+    /* ---- Sitios VPN (sólo administradores): un acceso WireGuard por router o pasarela del sitio ---- */
+    const siteParam = (req, res) => {
+        const site = sites.get(parseInt(req.params.id, 10));
+        if (!site) res.status(404).json({ error: 'Sitio no encontrado' });
+        return site;
+    };
+
+    app.get('/api/vpn-sites', auth.requireAdmin, (req, res) => {
+        res.set('Cache-Control', 'no-store');
+        res.json([...sites.values()].map(publicSite));
+    });
+
+    app.post('/api/vpn-sites', auth.requireAdmin, wrap(async (req, res) => {
+        const { error, value } = validateSite(req.body || {});
+        if (error) return res.status(400).json({ error });
+        const { id, warnings } = await createSite(value);
         await reload();
         notify();
-        res.json({ ...publicEncoder(encoders.get(id)), warnings });
+        checkAll().catch(() => {});
+        res.status(201).json({ ...publicSite(sites.get(id)), warnings });
     }));
 
-    app.delete('/api/encoders/:id/vpn', auth.requireAdmin, wrap(async (req, res) => {
-        const id = parseInt(req.params.id, 10);
-        const enc = encoders.get(id);
-        if (!enc) return res.status(404).json({ error: 'No encontrado' });
-        await removePeer(enc);
+    app.put('/api/vpn-sites/:id', auth.requireAdmin, wrap(async (req, res) => {
+        const site = siteParam(req, res);
+        if (!site) return;
+        const { error, value } = validateSite(req.body || {});
+        if (error) return res.status(400).json({ error });
+        const warnings = await updateSite(site, value);
         await reload();
         notify();
-        res.json(publicEncoder(encoders.get(id)));
+        checkAll().catch(() => {});
+        res.json({ ...publicSite(sites.get(site.id)), warnings });
+    }));
+
+    app.delete('/api/vpn-sites/:id', auth.requireAdmin, wrap(async (req, res) => {
+        const site = siteParam(req, res);
+        if (!site) return;
+        await deleteSite(site);
+        await reload();
+        notify();
+        res.json({ deleted: true });
+    }));
+
+    // Archivo para importar en el router del sitio (lleva su clave privada: sólo administradores)
+    app.get('/api/vpn-sites/:id/wireguard.conf', auth.requireAdmin, wrap(async (req, res) => {
+        const site = siteParam(req, res);
+        if (!site) return;
+        const file = `tsst-${site.name.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || site.id}.conf`;
+        res.set('Cache-Control', 'no-store');
+        res.attachment(file).type('text/plain').send(await clientConfig(site));
     }));
 
     /* ---- Control por API: el admin y los operadores con el encoder asignado.
@@ -750,15 +960,6 @@ function registerRoutes(app) {
     app.post('/api/encoders/:id/control/reboot', auth.requireAdmin, order('reinicia el encoder', async (req, api, enc) => {
         await api.reboot(enc);
     }));
-
-    // Archivo para importar en el router (lleva su clave privada: sólo administradores)
-    app.get('/api/encoders/:id/wireguard.conf', auth.requireAdmin, wrap(async (req, res) => {
-        const enc = encoders.get(parseInt(req.params.id, 10));
-        if (!enc || !enc.vpn_pubkey) return res.status(404).json({ error: 'Este encoder no tiene acceso VPN' });
-        const file = `tsst-${enc.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || enc.id}.conf`;
-        res.set('Cache-Control', 'no-store');
-        res.attachment(file).type('text/plain').send(await clientConfig(enc));
-    }));
 }
 
 /* =======================================
@@ -807,4 +1008,4 @@ function shutdown() {
     for (const id of [...proxies.keys()]) stopProxy(id);
 }
 
-module.exports = { init, registerRoutes, addMetrics, shutdown, statusList, notify, _test: { parseCidr, validateEncoder, stripPanelCookie } };
+module.exports = { init, registerRoutes, addMetrics, shutdown, statusList, notify, _test: { parseCidr, inCidr, validateEncoder, stripPanelCookie, siteBlockRe, decoderOutputsOf } };

@@ -115,6 +115,31 @@ function initDB() {
         // Encoders de varias entradas: señal del servidor de cada entrada, JSON [canal|null, ...].
         // Vacío = una entrada, la del campo channel
         db.run("ALTER TABLE encoders ADD COLUMN input_channels TEXT NOT NULL DEFAULT ''", () => {});
+        // Tipo de equipo: 'encoder' (envía señales al servidor) o 'decoder' (recibe salidas del servidor).
+        // output_ids: salida del servidor que recibe cada canal del decoder, JSON [id salida|null, ...]
+        db.run("ALTER TABLE encoders ADD COLUMN kind TEXT NOT NULL DEFAULT 'encoder'", () => {});
+        db.run("ALTER TABLE encoders ADD COLUMN output_ids TEXT NOT NULL DEFAULT ''", () => {});
+
+        // Sitios VPN: un acceso WireGuard por router (o pasarela) de cada sitio, que sirve a todos los
+        // equipos de ese sitio. Un equipo pertenece al sitio cuya LAN o IP del túnel contiene su IP.
+        db.run(`CREATE TABLE IF NOT EXISTS vpn_sites (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL DEFAULT '',
+            notes TEXT NOT NULL DEFAULT '',
+            vpn_ip TEXT NOT NULL DEFAULT '',
+            vpn_lan TEXT NOT NULL DEFAULT '',
+            vpn_pubkey TEXT NOT NULL DEFAULT '',
+            vpn_privkey TEXT NOT NULL DEFAULT '',
+            vpn_psk TEXT NOT NULL DEFAULT '',
+            legacy_encoder_id INTEGER
+        )`);
+        // Antes el acceso VPN iba dentro de cada encoder: pasa a un sitio con las mismas claves (el router
+        // no se toca) y legacy_encoder_id recuerda la marca de su bloque en wg0.conf (# tsst-encoder-<id>)
+        db.run(`INSERT INTO vpn_sites (name, vpn_ip, vpn_lan, vpn_pubkey, vpn_privkey, vpn_psk, legacy_encoder_id)
+                SELECT name, vpn_ip, vpn_lan, vpn_pubkey, vpn_privkey, vpn_psk, id FROM encoders
+                WHERE vpn_pubkey <> '' AND id NOT IN (SELECT legacy_encoder_id FROM vpn_sites WHERE legacy_encoder_id IS NOT NULL)`);
+        db.run(`UPDATE encoders SET vpn_ip = '', vpn_lan = '', vpn_pubkey = '', vpn_privkey = '', vpn_psk = ''
+                WHERE vpn_pubkey <> '' AND id IN (SELECT legacy_encoder_id FROM vpn_sites WHERE legacy_encoder_id IS NOT NULL)`);
 
         // Sesiones vivas: un token sólo vale si su sid sigue aquí (ver auth.js)
         db.run(`CREATE TABLE IF NOT EXISTS sessions (

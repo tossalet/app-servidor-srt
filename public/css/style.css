@@ -581,6 +581,19 @@ input:checked + .slider:before { transform: translateX(18px); }
 .enc-empty i { font-size: 2rem; color: var(--text-muted); margin-bottom: 0.75rem; }
 .enc-steps { font-size: 0.85rem; line-height: 1.6; padding-left: 1.25rem; margin-bottom: 1rem; }
 .enc-warn { color: var(--color-yellow); font-size: 0.85rem; line-height: 1.5; }
+.enc-kind-icon { font-size: 0.85rem; color: var(--text-muted); margin-right: 8px; }
+.enc-toolbar { display: flex; justify-content: flex-end; margin-bottom: 1rem; }
+/* Sitios VPN: una tarjeta por router o pasarela, con sus equipos */
+.enc-sites { display: flex; flex-direction: column; gap: 10px; margin-bottom: 1rem; max-height: 60vh; overflow-y: auto; }
+.enc-site { border: 1px solid var(--panel-border); border-radius: 10px; padding: 0.85rem; background: rgba(0,0,0,0.15); display: flex; flex-direction: column; gap: 8px; font-size: 0.85rem; }
+.enc-site-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.enc-site-head .enc-btn { width: 32px; height: 32px; font-size: 0.85rem; }
+.enc-site-devs { display: flex; flex-wrap: wrap; gap: 6px; }
+.enc-site-dev { background: rgba(255,255,255,0.06); border-radius: 6px; padding: 2px 8px; font-size: 0.8rem; }
+.enc-site-dev i { color: var(--text-muted); margin-right: 4px; }
+@media (max-width: 520px) {
+    .enc-site-head { flex-wrap: wrap; }
+}
 /* Ventana de control por API del encoder */
 .ctl-h { font-family: var(--font-heading); font-size: 0.95rem; margin: 1.25rem 0 0.6rem; }
 .ctl-stream { border: 1px solid var(--panel-border); border-radius: 10px; padding: 0.85rem; margin-bottom: 0.6rem; background: rgba(0,0,0,0.15); }

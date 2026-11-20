@@ -75,6 +75,9 @@
             
             <section class="encoders-container" id="encodersContainer" style="display:none; padding-bottom: 2rem;">
                 <div id="encoders-vpn-banner" class="enc-banner" style="display:none;"></div>
+                <div id="encoders-toolbar" class="enc-toolbar" style="display:none;">
+                    <button type="button" class="btn-secondary" onclick="openVpnSites()" title="Accesos WireGuard de los routers o pasarelas de cada sitio"><i class="fa-solid fa-shield-halved"></i> Sitios VPN <span id="enc-sites-count" class="enc-muted"></span></button>
+                </div>
                 <div id="encodersGrid" class="enc-grid"></div>
             </section>
 
@@ -468,7 +471,7 @@
     <div class="modal-overlay" id="encoderModal">
         <div class="modal">
             <div class="modal-header">
-                <h3 id="enc_title">Añadir encoder</h3>
+                <h3 id="enc_title">Añadir equipo</h3>
                 <button class="close-btn" onclick="closeModal('encoderModal')"><i class="fa-solid fa-xmark"></i></button>
             </div>
             <form id="formEncoder" onsubmit="submitEncoder(event)">
@@ -485,7 +488,21 @@
                 </div>
                 <div class="form-group row">
                     <div class="half">
-                        <label>IP del encoder (vista desde el servidor)</label>
+                        <label>Tipo de equipo</label>
+                        <select id="enc_kind" class="form-control" onchange="onEncoderKindChange()">
+                            <option value="encoder">Encoder (envía señales al servidor)</option>
+                            <option value="decoder">Decoder (recibe salidas del servidor)</option>
+                        </select>
+                    </div>
+                    <div class="half">
+                        <label>Sitio VPN</label>
+                        <select id="enc_site" class="form-control" onchange="onEncoderSiteChange(true)"></select>
+                    </div>
+                </div>
+                <small class="enc-muted" id="enc_site_hint" style="display:block; margin:-6px 0 12px;"></small>
+                <div class="form-group row">
+                    <div class="half">
+                        <label>IP del equipo (vista desde el servidor)</label>
                         <input type="text" id="enc_host" placeholder="192.168.101.20" required>
                     </div>
                     <div class="half">
@@ -495,7 +512,7 @@
                 </div>
                 <div class="form-group row">
                     <div class="half">
-                        <label>Entradas del encoder (HDMI/SDI)</label>
+                        <label id="enc_count_label">Entradas del encoder (HDMI/SDI)</label>
                         <select id="enc_input_count" class="form-control" onchange="renderEncoderInputRows()">
                             <option value="1">1 entrada</option>
                             <option value="2">2 entradas</option>
@@ -511,9 +528,10 @@
                     </div>
                 </div>
                 <div class="form-group">
-                    <label>Señal SRT que envía cada entrada</label>
+                    <label id="enc_inputs_label">Señal SRT que envía cada entrada</label>
                     <div id="enc_inputs" class="enc-input-rows"></div>
                 </div>
+                <div id="enc_api_group">
                 <div class="form-group row">
                     <div class="half">
                         <label>Control por API</label>
@@ -535,11 +553,11 @@
                     <input type="password" id="enc_api_pass" maxlength="128" placeholder="admin" autocomplete="new-password">
                     <small class="enc-muted" id="enc_api_hint" style="display:block; margin-top:5px;">Vacío: URAY y HW Stream usan admin / admin de fábrica. La contraseña no se vuelve a mostrar.</small>
                 </div>
+                </div>
                 <div class="form-group">
                     <label>Notas</label>
                     <input type="text" id="enc_notes" maxlength="500" placeholder="Router Teltonika RUT241 · SIM 600 123 456">
                 </div>
-                <small style="color:var(--text-muted); font-size:0.75rem; display:block;">Con túnel WireGuard, pon la IP que tiene el encoder en la red del router del sitio (por ejemplo 192.168.101.20). Si el router redirige el puerto web, pon la IP del router en el túnel.</small>
                 <div class="modal-actions">
                     <button type="button" class="btn-secondary" onclick="closeModal('encoderModal')">Cancelar</button>
                     <button type="submit" class="btn-primary">Guardar</button>
@@ -550,9 +568,9 @@
 
     <!-- VPN Modal -->
     <div class="modal-overlay" id="encoderVpnModal">
-        <div class="modal" style="width: 520px;">
+        <div class="modal" style="width: 640px;">
             <div class="modal-header">
-                <h3 id="vpn_title">Acceso WireGuard</h3>
+                <h3 id="vpn_title">Sitios VPN</h3>
                 <button class="close-btn" onclick="closeModal('encoderVpnModal')"><i class="fa-solid fa-xmark"></i></button>
             </div>
             <div id="vpn_body"></div>
