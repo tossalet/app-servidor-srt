@@ -20,10 +20,18 @@ const encoders = require('./encoders');
 const telegram = require('./telegram');
 const si = require('systeminformation');
 
+const security = require('./security');
+
 const app = express();
+app.disable('x-powered-by'); // No anunciar Express
 const server = tlsConfig.createServer(app);
-// Sin CORS: el panel se sirve desde el mismo origen y la cookie de sesión es SameSite=Strict
-const io = new Server(server);
+// Sin CORS: el panel se sirve desde el mismo origen y la cookie de sesión es SameSite=Strict.
+// Los WebSocket no pasan por CORS: se rechaza cualquier conexión que venga de otra web.
+// El panel no envía nada por el socket (sólo recibe): mensajes entrantes de 16 KB como mucho.
+const io = new Server(server, {
+    allowRequest: (req, cb) => cb(null, security.sameOrigin(req.headers)),
+    maxHttpBufferSize: 16 * 1024
+});
 io.use(auth.socketAuth);
 access.setIo(io);
 // Permisos por entrada: se cargan después de los usuarios
@@ -53,8 +61,12 @@ function isAllowedMediaPath(p) {
     return allowedMediaRoots.some(root => abs === root || abs.startsWith(root + path.sep));
 }
 
-// Middleware
-app.use(express.json());
+// Middleware. Seguridad primero (ver security.js): vigilancia, cabeceras, límite y mismo origen
+app.use(security.watch);
+app.use(security.headers);
+app.use(security.rateLimit);
+app.use(express.json({ limit: '100kb' }));
+app.use(security.csrf);
 // Prometheus: token o acceso local (va antes del login, que exige cookie)
 app.get('/metrics', metrics.authorize, metrics.handler);
 // Todo (panel, API, miniaturas, grabaciones) exige sesión salvo la pantalla de login
@@ -800,6 +812,10 @@ io.on('connection', (socket) => {
     }
 });
 
+// Errores de las rutas: sin trazas ni rutas internas hacia el navegador
+app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
+app.use(security.errorHandler);
+
 // Un fallo puntual en una promesa no debe tumbar todos los streams
 process.on('unhandledRejection', (err) => console.error('[UNHANDLED]', err));
 
@@ -821,6 +837,7 @@ process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 // Start Server
 const PORT = process.env.PORT || 4000;
 telegram.init();
+security.audit();
 server.listen(PORT, () => {
     console.log(`TSST SERVER running on port ${PORT} (${tlsConfig.protocol.toUpperCase()})`);
 });

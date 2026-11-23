@@ -1,4 +1,5 @@
-const sqlite3 = require('sqlite3').verbose();
+// verbose() guarda trazas largas de cada consulta: sólo para depurar, nunca en producción
+const sqlite3 = process.env.NODE_ENV === 'production' ? require('sqlite3') : require('sqlite3').verbose();
 const path = require('path');
 
 const fs = require('fs');
@@ -178,8 +179,18 @@ function initDB() {
                 SELECT 1, 20000, 1024, 49151 WHERE NOT EXISTS (SELECT 1 FROM ports)`);
 
         // Al ir en serie, esto se ejecuta cuando todo lo anterior ha terminado
-        db.run('SELECT 1', () => resolveReady());
+        db.run('SELECT 1', () => { protectFiles(); resolveReady(); });
     });
+}
+
+// La base de datos guarda hashes de contraseñas, claves WireGuard y credenciales de los encoders:
+// sólo la lee el usuario del servicio (en Linux; en Windows no hay modos POSIX)
+function protectFiles() {
+    if (process.platform === 'win32') return;
+    if (dataDir !== __dirname) { try { fs.chmodSync(dataDir, 0o700); } catch (e) {} }
+    for (const f of [dbPath, dbPath + '-wal', dbPath + '-shm', path.join(dataDir, 'session.secret')]) {
+        try { fs.chmodSync(f, 0o600); } catch (e) { /* aún no existe */ }
+    }
 }
 
 module.exports = db;

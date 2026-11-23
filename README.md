@@ -101,6 +101,12 @@ El panel, la API, las miniaturas, las grabaciones y la telemetría en vivo piden
   - La sesión se cierra al cerrar el navegador o salir de él en el móvil, tras un margen de 60 s que permite recargar la página o volver enseguida.
   - Cambiar una contraseña o borrar un usuario cierra sus sesiones al momento.
   - Tras 5 intentos fallidos, la IP queda bloqueada de forma progresiva: 30 s, 60 s… hasta 15 min.
+  - Cabeceras de seguridad (CSP, anti-iframe, nosniff…) y, con HTTPS, HSTS. Las respuestas de la API no se guardan en caché.
+  - Protección CSRF: lo que cambia algo (crear, editar, borrar, encender…) sólo se acepta si viene del propio panel. Tampoco desde la web de un encoder abierta por el proxy. El socket rechaza conexiones de otras webs.
+  - Límite de peticiones a la API por IP: 600 por minuto y 120 escrituras. Vídeo, audio, HLS y miniaturas no cuentan.
+  - Vigilancia: escaneos (`/.env`, `/wp-admin`…), rutas con `..`, peticiones de otras webs y errores 401/403/429 repetidos suman puntos por IP. Al pasar el umbral se avisa en el log (`[SECURITY]`) y por Telegram, una vez cada 30 min por IP.
+  - La base de datos y `session.secret` sólo los lee el usuario del servicio (permisos 600, carpeta `data/` 700).
+  - Al arrancar se revisa la configuración y se avisa en el log si falta `NODE_ENV=production` o HTTPS.
 - El panel va por HTTP en la red local, salvo que actives HTTPS (abajo). Para acceder desde Internet, usa HTTPS o una VPN.
 
 ## HTTPS (opcional)
@@ -289,3 +295,6 @@ Las métricas SRT sólo existen cuando la señal va por `srt-live-transmit`.
 | `SESSION_GRACE_SECONDS` | Segundos sin ningún panel conectado antes de cerrar la sesión (por defecto 60) |
 | `TLS_CERT_FILE`, `TLS_KEY_FILE` | Certificado (fullchain) y clave en PEM: activan HTTPS en el panel y los proxies |
 | `GRAFANA_PROTOCOL` | `https` si Grafana lleva el certificado (lo pone el instalador) |
+| `RATE_LIMIT_PER_MIN` | Peticiones a la API por minuto y por IP (por defecto 600) |
+| `RATE_LIMIT_WRITES_PER_MIN` | Peticiones que cambian algo, por minuto y por IP (por defecto 120) |
+| `TRUSTED_ORIGINS` | Orígenes extra aceptados por la protección CSRF, separados por comas (p. ej. un proxy inverso con otro nombre) |

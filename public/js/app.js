@@ -90,6 +90,12 @@ function escapeHtml(str) {
     return String(str ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+// Texto dentro de '...' en un onclick="...": el HTML deshace &#39; antes de ejecutar el JS, así que
+// escapeHtml solo no basta. Para valores que vienen del equipo (ids de salidas o grabaciones del encoder).
+function jsStr(str) {
+    return escapeHtml(String(str ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/[\r\n\u2028\u2029]/g, ' '));
+}
+
 async function loadSession() {
     const res = await fetch('/api/auth/me');
     if (!res.ok) return;
@@ -3431,7 +3437,7 @@ const srtJoinLatency = (base, ms) => (ms === '' || ms === null || ms === undefin
 
 // Una fila por emisión: [protocolo + modo] [piloto] [ruta | puerto] [ms] [guardar] [play/stop]
 function ctlOutputHtml(o, canEdit) {
-    const id = escapeHtml(o.id);
+    const id = jsStr(o.id);
     const mode = o.mode ? `<small>${escapeHtml(String(o.mode).toUpperCase())}</small>` : '';
     const badge = `<span class="ctl-out-badge ${escapeHtml(o.kind)}">${escapeHtml(String(o.kind).toUpperCase())}${mode}</span>`;
     const led = `<span class="ctl-led ${o.enabled ? 'on' : ''}" title="${o.enabled ? 'Activa' : 'Parada'}" role="img" aria-label="${o.enabled ? 'Activa' : 'Parada'}"></span>`;
@@ -3497,7 +3503,7 @@ const CTL_REC_TEXT = {
     full: 'Soporte lleno', nostorage: 'Sin soporte (no hay USB/SD/NAS montado)', nosignal: 'Sin señal de entrada'
 };
 function ctlRecordHtml(r) {
-    const id = escapeHtml(r.id);
+    const id = jsStr(r.id);
     const label = escapeHtml(r.label);
     const ledCls = r.state === 'recording' ? 'on rec' : r.state === 'paused' ? 'paused' : '';
     const text = CTL_REC_TEXT[r.state] || r.state;

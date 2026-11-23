@@ -1,1 +1,18 @@
+node_modules
+# Nunca dentro de la imagen: datos, secretos y claves de esta instalación
+.env
+.env.*
+*.db
+*.db-shm
+*.db-wal
+*.db.bak
+session.secret
+data/
+media/
 certs/
+VPN/
+*.log
+.git
+.claude/
+.superpowers/
+*.pdf

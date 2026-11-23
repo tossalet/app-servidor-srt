@@ -244,7 +244,8 @@ function registerFailure(ip) {
 
 // Recursos accesibles sin sesión: la pantalla de login y lo que necesita para pintarse
 const PUBLIC_PATHS = new Set(['/login.html', '/js/login.js', '/css/style.css', '/favicon.svg', '/api/auth/login', '/api/status']);
-const PUBLIC_PREFIXES = ['/images/'];
+// Iconos (Font Awesome): librería pública que también usa la pantalla de login
+const PUBLIC_PREFIXES = ['/images/', '/vendor/fontawesome/'];
 // Lo único que puede hacer un usuario con cambio de contraseña pendiente
 const MUST_CHANGE_ALLOWED = new Set(['/api/auth/me', '/api/auth/password', '/api/auth/logout']);
 
@@ -315,7 +316,9 @@ function registerRoutes(app, io) {
         const ok = await verifyPassword(password || '', u ? u.password : dummyHash);
         if (!u || !ok) {
             registerFailure(ip);
-            console.warn(`[AUTH] Login fallido para "${username}" desde ${ip}`);
+            // Sin saltos de línea ni caracteres de control: un usuario inventado no puede falsear el log
+            const shown = String(username || '').replace(/[\u0000-\u001f\u007f-\u009f]/g, '?').slice(0, 64);
+            console.warn(`[AUTH] Login fallido para "${shown}" desde ${ip}`);
             require('./telegram').login(username, ip, false);
             return res.status(401).json({ error: 'Usuario o contraseña incorrectos' });
         }
