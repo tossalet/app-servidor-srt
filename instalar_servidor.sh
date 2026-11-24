@@ -267,6 +267,38 @@ udevadm trigger --subsystem-match=block --action=change
 
 echo "📂 Configurando el entorno de la aplicación..."
 APP_DIR="/opt/srt-server"
+NEW_DIR="${APP_DIR}.new"
+GITHUB_REPO="https://github.com/tossalet/app-servidor-srt.git"
+
+# La versión nueva se descarga y prepara APARTE. La instalación actual no se toca hasta que
+# la nueva está completa: si GitHub no responde (sin Internet, DNS...), el panel sigue como estaba.
+echo "📥 Descargando la aplicación desde GitHub..."
+rm -rf "$NEW_DIR"
+DOWNLOADED=""
+for TRY in 1 2 3; do
+    if git clone --depth 1 "$GITHUB_REPO" "$NEW_DIR" && [ -f "$NEW_DIR/server.js" ]; then
+        DOWNLOADED=yes
+        break
+    fi
+    rm -rf "$NEW_DIR"
+    [ "$TRY" -lt 3 ] && echo "⚠️ No se ha podido descargar (intento $TRY de 3). Reintento en 10 s..." && sleep 10
+done
+if [ -z "$DOWNLOADED" ]; then
+    echo "❌ No se ha podido descargar la aplicación de $GITHUB_REPO."
+    echo "   Comprueba que este equipo tiene Internet y resuelve nombres: git ls-remote $GITHUB_REPO HEAD"
+    echo "   La instalación actual NO se ha tocado: el panel sigue funcionando como antes."
+    exit 1
+fi
+
+echo "⚙️ Instalando dependencias de Node (npm install)..."
+if ! (cd "$NEW_DIR" && npm install --omit=dev); then
+    rm -rf "$NEW_DIR"
+    echo "❌ Ha fallado npm install. La instalación actual NO se ha tocado: el panel sigue funcionando como antes."
+    exit 1
+fi
+
+# Todo listo: ahora sí se para el servicio (la base de datos no cambia mientras se copia)
+systemctl stop tsst-srt.service 2>/dev/null
 BACKUP_DIR=""
 # Conservar la base de datos (inputs/outputs configurados) y variables extra (.env) en reinstalaciones
 if [ -d "$APP_DIR/data" ] || [ -f "$APP_DIR/.env" ]; then
@@ -274,22 +306,14 @@ if [ -d "$APP_DIR/data" ] || [ -f "$APP_DIR/.env" ]; then
     [ -d "$APP_DIR/data" ] && cp -a "$APP_DIR/data" "$BACKUP_DIR/"
     [ -f "$APP_DIR/.env" ] && cp -a "$APP_DIR/.env" "$BACKUP_DIR/env.old"
 fi
-rm -rf $APP_DIR
-mkdir -p $APP_DIR
-
-# Descargamos la aplicación a su carpeta definitiva en linux (/opt/) desde GitHub
-echo "Copiando archivos..."
-# IMPORTANTE: Cambia esta URL por la de tu repositorio de GitHub real.
-GITHUB_REPO="https://github.com/tossalet/app-servidor-srt.git"
-git clone $GITHUB_REPO $APP_DIR
-cd $APP_DIR
-
 if [ -n "$BACKUP_DIR" ] && [ -d "$BACKUP_DIR/data" ]; then
-    cp -a "$BACKUP_DIR/data" "$APP_DIR/"
+    cp -a "$BACKUP_DIR/data" "$NEW_DIR/"
 fi
-
-echo "⚙️ Instalando dependencias de Node (npm install)..."
-npm install --omit=dev
+# La instalación anterior queda en /opt/srt-server.old (con su base de datos) por si hay que volver
+rm -rf "${APP_DIR}.old"
+[ -d "$APP_DIR" ] && mv "$APP_DIR" "${APP_DIR}.old"
+mv "$NEW_DIR" "$APP_DIR"
+cd "$APP_DIR"
 
 # Crear archivo .env para el puerto
 echo "PORT=$WEB_PORT" > .env

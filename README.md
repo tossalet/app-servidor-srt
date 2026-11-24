@@ -8,7 +8,7 @@ Servidor para recibir y entregar señales SRT, UDP y RTMP, con panel web. Pensad
 sudo bash instalar_servidor.sh
 ```
 
-Instala Node.js 22, FFmpeg y los drivers de Intel Quick Sync. También ajusta el sistema para vídeo en directo: buffers UDP grandes, CPU en modo `performance`, suspensión desactivada y prioridad alta para el servicio. Si reinstalas, se conservan la base de datos y las variables que añadiste al `.env`.
+Instala Node.js 22, FFmpeg y los drivers de Intel Quick Sync. También ajusta el sistema para vídeo en directo: buffers UDP grandes, CPU en modo `performance`, suspensión desactivada y prioridad alta para el servicio. Si reinstalas, se conservan la base de datos y las variables que añadiste al `.env`. La versión nueva se descarga y se prepara aparte: si GitHub no responde o falla `npm install`, el instalador se detiene y la instalación actual sigue funcionando. La anterior queda en `/opt/srt-server.old` (con su base de datos) por si hay que volver atrás.
 
 Opcionalmente instala la **monitorización** (Prometheus + Grafana, ver más abajo).
 
